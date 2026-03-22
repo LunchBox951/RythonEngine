@@ -1,0 +1,44 @@
+# os-eco
+.canopy/
+.mulch/
+.overstory/
+.seeds/
+.gitattributes
+start-coordinator
+
+# AI session context
+.claude/
+AGENTS.md
+
+# Rust
+/target/
+*.rlib
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+dist/
+*.so
+*.dylib
+*.pyd
+.venv/
+.python-version
+
+# Engine runtime
+engine.json
+saves/
+*.bundle
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
