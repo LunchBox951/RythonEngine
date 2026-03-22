@@ -1,0 +1,10 @@
+[package]
+name = "rython-scheduler"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rython-core.workspace = true
+crossbeam-channel.workspace = true
+rayon.workspace = true
+parking_lot.workspace = true

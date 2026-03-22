@@ -1,0 +1,11 @@
+[package]
+name = "rython-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+glam.workspace = true
+downcast-rs.workspace = true

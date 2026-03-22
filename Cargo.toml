@@ -1,0 +1,50 @@
+[workspace]
+members = [
+    "crates/rython-core",
+    "crates/rython-scheduler",
+    "crates/rython-modules",
+    "crates/rython-ecs",
+    "crates/rython-window",
+    "crates/rython-input",
+    "crates/rython-renderer",
+    "crates/rython-physics",
+    "crates/rython-audio",
+    "crates/rython-resources",
+    "crates/rython-ui",
+    "crates/rython-scripting",
+    "crates/rython-engine",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+# Layer 0
+rython-core = { path = "crates/rython-core" }
+# Layer 1
+rython-scheduler = { path = "crates/rython-scheduler" }
+rython-modules = { path = "crates/rython-modules" }
+# Layer 2
+rython-ecs = { path = "crates/rython-ecs" }
+rython-window = { path = "crates/rython-window" }
+rython-input = { path = "crates/rython-input" }
+rython-renderer = { path = "crates/rython-renderer" }
+rython-physics = { path = "crates/rython-physics" }
+rython-audio = { path = "crates/rython-audio" }
+rython-resources = { path = "crates/rython-resources" }
+# Layer 3
+rython-ui = { path = "crates/rython-ui" }
+rython-scripting = { path = "crates/rython-scripting" }
+
+# External
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+glam = { version = "0.29", features = ["serde"] }
+crossbeam-channel = "0.5"
+rayon = "1"
+parking_lot = "0.12"
+downcast-rs = "1"
+toml = "0.8"

@@ -1,0 +1,12 @@
+[package]
+name = "rython-modules"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rython-core.workspace = true
+parking_lot.workspace = true
+downcast-rs.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

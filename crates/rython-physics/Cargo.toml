@@ -1,0 +1,10 @@
+[package]
+name = "rython-physics"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rython-core.workspace = true
+rython-scheduler.workspace = true
+rython-modules.workspace = true
+rython-ecs.workspace = true

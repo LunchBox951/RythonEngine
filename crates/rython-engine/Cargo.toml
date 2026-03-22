@@ -1,0 +1,21 @@
+[package]
+name = "rython-engine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rython-core.workspace = true
+rython-scheduler.workspace = true
+rython-modules.workspace = true
+rython-ecs.workspace = true
+rython-window.workspace = true
+rython-input.workspace = true
+rython-renderer.workspace = true
+rython-physics.workspace = true
+rython-audio.workspace = true
+rython-resources.workspace = true
+rython-ui.workspace = true
+rython-scripting.workspace = true
+
+[dev-dependencies]
+toml.workspace = true
