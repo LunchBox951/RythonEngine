@@ -49,29 +49,29 @@ pub fn generate_cube() -> MeshData {
     // Vertex order per face: bottom-right, bottom-left, top-left, top-right.
     type FaceData = ([f32; 3], [[f32; 3]; 4]);
     let faces: [FaceData; 6] = [
-        // +X
+        // +X (v1↔v3 swapped: cross(v1-v0, v2-v0) now points +X)
         ([1.0, 0.0, 0.0], [
-            [ 0.5, -0.5, -0.5], [ 0.5, -0.5,  0.5], [ 0.5,  0.5,  0.5], [ 0.5,  0.5, -0.5],
+            [ 0.5, -0.5, -0.5], [ 0.5,  0.5, -0.5], [ 0.5,  0.5,  0.5], [ 0.5, -0.5,  0.5],
         ]),
-        // -X
+        // -X (v1↔v3 swapped: cross points -X)
         ([-1.0, 0.0, 0.0], [
-            [-0.5, -0.5,  0.5], [-0.5, -0.5, -0.5], [-0.5,  0.5, -0.5], [-0.5,  0.5,  0.5],
+            [-0.5, -0.5,  0.5], [-0.5,  0.5,  0.5], [-0.5,  0.5, -0.5], [-0.5, -0.5, -0.5],
         ]),
-        // +Y
+        // +Y (unchanged — winding was correct)
         ([0.0, 1.0, 0.0], [
             [-0.5,  0.5,  0.5], [ 0.5,  0.5,  0.5], [ 0.5,  0.5, -0.5], [-0.5,  0.5, -0.5],
         ]),
-        // -Y
+        // -Y (unchanged — winding was correct)
         ([0.0, -1.0, 0.0], [
             [-0.5, -0.5, -0.5], [ 0.5, -0.5, -0.5], [ 0.5, -0.5,  0.5], [-0.5, -0.5,  0.5],
         ]),
-        // +Z
+        // +Z (v1↔v3 swapped: cross points +Z)
         ([0.0, 0.0, 1.0], [
-            [ 0.5, -0.5,  0.5], [-0.5, -0.5,  0.5], [-0.5,  0.5,  0.5], [ 0.5,  0.5,  0.5],
+            [ 0.5, -0.5,  0.5], [ 0.5,  0.5,  0.5], [-0.5,  0.5,  0.5], [-0.5, -0.5,  0.5],
         ]),
-        // -Z
+        // -Z (v1↔v3 swapped: cross points -Z)
         ([0.0, 0.0, -1.0], [
-            [-0.5, -0.5, -0.5], [ 0.5, -0.5, -0.5], [ 0.5,  0.5, -0.5], [-0.5,  0.5, -0.5],
+            [-0.5, -0.5, -0.5], [-0.5,  0.5, -0.5], [ 0.5,  0.5, -0.5], [ 0.5, -0.5, -0.5],
         ]),
     ];
     // Per-vertex UVs: BR=(0,0), BL=(1,0), TL=(1,1), TR=(0,1)
@@ -835,6 +835,44 @@ mod tests {
         let mesh = generate_cube();
         let bytes: &[u8] = bytemuck::cast_slice(&mesh.vertices);
         assert_eq!(bytes.len(), 24 * 32, "24 vertices × 32 bytes each = 768 bytes");
+    }
+
+    /// Regression test: all 6 faces must have CCW winding when viewed from outside.
+    /// cross(v1-v0, v2-v0) must point in the same direction as the face normal for
+    /// each of the two triangles [0,1,2] and [0,2,3] in every face.
+    #[test]
+    fn test_generate_cube_winding_order() {
+        let mesh = generate_cube();
+        // Faces are laid out sequentially: 4 verts each, 6 faces.
+        for face_idx in 0..6 {
+            let base = face_idx * 4;
+            let v: Vec<[f32; 3]> = (0..4).map(|i| mesh.vertices[base + i].position).collect();
+            let n = mesh.vertices[base].normal;
+
+            // Triangle 0: indices [0, 1, 2]
+            let e1 = [v[1][0]-v[0][0], v[1][1]-v[0][1], v[1][2]-v[0][2]];
+            let e2 = [v[2][0]-v[0][0], v[2][1]-v[0][1], v[2][2]-v[0][2]];
+            let cross = [
+                e1[1]*e2[2] - e1[2]*e2[1],
+                e1[2]*e2[0] - e1[0]*e2[2],
+                e1[0]*e2[1] - e1[1]*e2[0],
+            ];
+            let dot = cross[0]*n[0] + cross[1]*n[1] + cross[2]*n[2];
+            assert!(dot > 0.0,
+                "face {face_idx} tri0 [0,1,2]: cross product points inward (dot={dot:.4}, normal={n:?})");
+
+            // Triangle 1: indices [0, 2, 3]
+            let e1 = [v[2][0]-v[0][0], v[2][1]-v[0][1], v[2][2]-v[0][2]];
+            let e2 = [v[3][0]-v[0][0], v[3][1]-v[0][1], v[3][2]-v[0][2]];
+            let cross = [
+                e1[1]*e2[2] - e1[2]*e2[1],
+                e1[2]*e2[0] - e1[0]*e2[2],
+                e1[0]*e2[1] - e1[1]*e2[0],
+            ];
+            let dot = cross[0]*n[0] + cross[1]*n[1] + cross[2]*n[2];
+            assert!(dot > 0.0,
+                "face {face_idx} tri1 [0,2,3]: cross product points inward (dot={dot:.4}, normal={n:?})");
+        }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
