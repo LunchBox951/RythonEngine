@@ -191,19 +191,19 @@ impl App {
                         .and_then(|v| v.extract())
                         .unwrap_or(-10.0);
                     camera.set_position(px, py_val, pz);
-                    let yaw: f32 = cam
-                        .getattr("rot_yaw")
+                    let tx: f32 = cam
+                        .getattr("target_x")
                         .and_then(|v| v.extract())
                         .unwrap_or(0.0);
-                    let pitch: f32 = cam
-                        .getattr("rot_pitch")
+                    let ty: f32 = cam
+                        .getattr("target_y")
                         .and_then(|v| v.extract())
                         .unwrap_or(0.0);
-                    camera.set_look_at(
-                        px + yaw.sin() * pitch.cos(),
-                        py_val - pitch.sin(),
-                        pz + yaw.cos() * pitch.cos(),
-                    );
+                    let tz: f32 = cam
+                        .getattr("target_z")
+                        .and_then(|v| v.extract())
+                        .unwrap_or(0.0);
+                    camera.set_look_at(tx, ty, tz);
                 }
             }
         });
