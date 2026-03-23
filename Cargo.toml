@@ -59,4 +59,10 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 gltf = "1"
 fontdue = "0.8"
 hound = "3"
-rapier3d = { version = "0.22", features = ["simd-stable"] }
+log = "0.4"
+winit = "0.30"
+gilrs = "0.10"
+kira = "0.8"
+wgpu = "22"
+bytemuck = "1"
+env_logger = "0.11"
