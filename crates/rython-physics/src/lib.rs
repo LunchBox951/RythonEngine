@@ -1,5 +1,1125 @@
 #![deny(warnings)]
 
-/// Physics stub — full implementation in a later layer.
+use std::collections::HashMap;
 
-pub struct PhysicsWorld;
+use crossbeam_channel::unbounded;
+use rapier3d::prelude::*;
+use rython_core::{EngineError, SchedulerHandle};
+use rython_ecs::{ColliderComponent, EntityId, RigidBodyComponent, Scene, TransformComponent};
+use rython_modules::Module;
+use serde::{Deserialize, Serialize};
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+
+fn default_gravity() -> [f32; 3] {
+    [0.0, -9.81, 0.0]
+}
+fn default_timestep() -> f32 {
+    1.0 / 60.0
+}
+fn default_max_substeps() -> u32 {
+    4
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhysicsConfig {
+    #[serde(default = "default_gravity")]
+    pub gravity: [f32; 3],
+    #[serde(default = "default_timestep")]
+    pub fixed_timestep: f32,
+    #[serde(default = "default_max_substeps")]
+    pub max_substeps: u32,
+    #[serde(default)]
+    pub lock_2d: Option<String>,
+}
+
+impl Default for PhysicsConfig {
+    fn default() -> Self {
+        Self {
+            gravity: default_gravity(),
+            fixed_timestep: default_timestep(),
+            max_substeps: default_max_substeps(),
+            lock_2d: None,
+        }
+    }
+}
+
+// ── Body entry ────────────────────────────────────────────────────────────────
+
+struct BodyEntry {
+    rigid_body_handle: RigidBodyHandle,
+    collider_handle: ColliderHandle,
+    last_valid_position: [f32; 3],
+}
+
+// ── Physics World ─────────────────────────────────────────────────────────────
+
+pub struct PhysicsWorld {
+    config: PhysicsConfig,
+    rigid_body_set: RigidBodySet,
+    collider_set: ColliderSet,
+    integration_parameters: IntegrationParameters,
+    physics_pipeline: PhysicsPipeline,
+    island_manager: IslandManager,
+    broad_phase: BroadPhaseMultiSap,
+    narrow_phase: NarrowPhase,
+    impulse_joint_set: ImpulseJointSet,
+    multibody_joint_set: MultibodyJointSet,
+    ccd_solver: CCDSolver,
+    entity_to_body: HashMap<EntityId, BodyEntry>,
+    collider_to_entity: HashMap<ColliderHandle, EntityId>,
+}
+
+impl PhysicsWorld {
+    pub fn new(config: PhysicsConfig) -> Self {
+        let mut integration_parameters = IntegrationParameters::default();
+        integration_parameters.dt = config.fixed_timestep;
+
+        Self {
+            config,
+            rigid_body_set: RigidBodySet::new(),
+            collider_set: ColliderSet::new(),
+            integration_parameters,
+            physics_pipeline: PhysicsPipeline::new(),
+            island_manager: IslandManager::new(),
+            broad_phase: BroadPhaseMultiSap::new(),
+            narrow_phase: NarrowPhase::new(),
+            impulse_joint_set: ImpulseJointSet::new(),
+            multibody_joint_set: MultibodyJointSet::new(),
+            ccd_solver: CCDSolver::new(),
+            entity_to_body: HashMap::new(),
+            collider_to_entity: HashMap::new(),
+        }
+    }
+
+    pub fn with_default_config() -> Self {
+        Self::new(PhysicsConfig::default())
+    }
+
+    pub fn set_gravity(&mut self, gravity: [f32; 3]) {
+        self.config.gravity = gravity;
+    }
+
+    pub fn set_2d_mode(&mut self, mode: Option<&str>) {
+        self.config.lock_2d = mode.map(|s| s.to_string());
+    }
+
+    // ── Full per-frame sync cycle ─────────────────────────────────────────────
+
+    pub fn sync_step(&mut self, scene: &Scene) {
+        self.register_new_bodies(scene);
+        self.unregister_removed_bodies(scene);
+        self.push_transforms(scene);
+        self.step_simulation(scene);
+        self.pull_transforms(scene);
+    }
+
+    // ── Register ─────────────────────────────────────────────────────────────
+
+    fn register_new_bodies(&mut self, scene: &Scene) {
+        let entities = scene.components.entities_with::<RigidBodyComponent>();
+        for entity in entities {
+            if self.entity_to_body.contains_key(&entity) {
+                continue;
+            }
+            let rb_comp = match scene.components.get::<RigidBodyComponent>(entity) {
+                Some(c) => c,
+                None => continue,
+            };
+            let col_comp = match scene.components.get::<ColliderComponent>(entity) {
+                Some(c) => c,
+                None => continue,
+            };
+            let transform = scene.components.get::<TransformComponent>(entity).unwrap_or_default();
+            self.register_body(entity, &rb_comp, &col_comp, &transform);
+        }
+    }
+
+    fn register_body(
+        &mut self,
+        entity: EntityId,
+        rb_comp: &RigidBodyComponent,
+        col_comp: &ColliderComponent,
+        transform: &TransformComponent,
+    ) {
+        let locked_axes = self.compute_locked_axes();
+
+        let rb_builder = match rb_comp.body_type.as_str() {
+            "static" | "fixed" => RigidBodyBuilder::fixed(),
+            "kinematic" => RigidBodyBuilder::kinematic_position_based(),
+            _ => RigidBodyBuilder::dynamic(),
+        };
+
+        let rb = rb_builder
+            .translation(vector![transform.x, transform.y, transform.z])
+            .gravity_scale(rb_comp.gravity_factor)
+            .locked_axes(locked_axes)
+            .build();
+
+        let rb_handle = self.rigid_body_set.insert(rb);
+
+        let col = self.make_collider(col_comp, rb_comp);
+        let col_handle =
+            self.collider_set.insert_with_parent(col, rb_handle, &mut self.rigid_body_set);
+
+        self.collider_to_entity.insert(col_handle, entity);
+        self.entity_to_body.insert(
+            entity,
+            BodyEntry {
+                rigid_body_handle: rb_handle,
+                collider_handle: col_handle,
+                last_valid_position: [transform.x, transform.y, transform.z],
+            },
+        );
+    }
+
+    fn make_collider(&self, col_comp: &ColliderComponent, rb_comp: &RigidBodyComponent) -> Collider {
+        let builder = match col_comp.shape.as_str() {
+            "sphere" | "ball" => ColliderBuilder::ball(col_comp.size[0] / 2.0),
+            _ => ColliderBuilder::cuboid(
+                col_comp.size[0] / 2.0,
+                col_comp.size[1] / 2.0,
+                col_comp.size[2] / 2.0,
+            ),
+        };
+
+        let groups = InteractionGroups::new(
+            Group::from_bits_truncate(rb_comp.collision_layer),
+            Group::from_bits_truncate(rb_comp.collision_mask),
+        );
+
+        builder
+            .collision_groups(groups)
+            .sensor(col_comp.is_trigger)
+            .active_events(ActiveEvents::COLLISION_EVENTS)
+            .build()
+    }
+
+    fn compute_locked_axes(&self) -> LockedAxes {
+        match self.config.lock_2d.as_deref() {
+            Some("xz") => {
+                LockedAxes::TRANSLATION_LOCKED_Y
+                    | LockedAxes::ROTATION_LOCKED_X
+                    | LockedAxes::ROTATION_LOCKED_Z
+            }
+            Some("xy") => {
+                LockedAxes::TRANSLATION_LOCKED_Z
+                    | LockedAxes::ROTATION_LOCKED_X
+                    | LockedAxes::ROTATION_LOCKED_Y
+            }
+            _ => LockedAxes::empty(),
+        }
+    }
+
+    // ── Unregister ────────────────────────────────────────────────────────────
+
+    fn unregister_removed_bodies(&mut self, scene: &Scene) {
+        let to_remove: Vec<EntityId> = self
+            .entity_to_body
+            .keys()
+            .copied()
+            .filter(|&e| !scene.components.has::<RigidBodyComponent>(e))
+            .collect();
+        for entity in to_remove {
+            self.remove_body(entity);
+        }
+    }
+
+    fn remove_body(&mut self, entity: EntityId) {
+        let Some(entry) = self.entity_to_body.remove(&entity) else { return };
+        self.collider_to_entity.remove(&entry.collider_handle);
+        self.collider_set.remove(
+            entry.collider_handle,
+            &mut self.island_manager,
+            &mut self.rigid_body_set,
+            false,
+        );
+        self.rigid_body_set.remove(
+            entry.rigid_body_handle,
+            &mut self.island_manager,
+            &mut self.collider_set,
+            &mut self.impulse_joint_set,
+            &mut self.multibody_joint_set,
+            true,
+        );
+    }
+
+    // ── Push (static/kinematic → rapier) ─────────────────────────────────────
+
+    fn push_transforms(&mut self, scene: &Scene) {
+        for (entity, entry) in &self.entity_to_body {
+            let Some(rb) = self.rigid_body_set.get_mut(entry.rigid_body_handle) else {
+                continue;
+            };
+            if rb.is_fixed() || rb.is_kinematic() {
+                if let Some(t) = scene.components.get::<TransformComponent>(*entity) {
+                    rb.set_translation(vector![t.x, t.y, t.z], true);
+                }
+            }
+        }
+    }
+
+    // ── Step ─────────────────────────────────────────────────────────────────
+
+    fn step_simulation(&mut self, scene: &Scene) {
+        let gravity =
+            vector![self.config.gravity[0], self.config.gravity[1], self.config.gravity[2]];
+
+        let (collision_send, collision_recv) = unbounded();
+        let (contact_force_send, _) = unbounded();
+        let event_handler = ChannelEventCollector::new(collision_send, contact_force_send);
+
+        // Destructure to allow simultaneous mutable borrows of distinct fields.
+        let Self {
+            physics_pipeline,
+            integration_parameters,
+            island_manager,
+            broad_phase,
+            narrow_phase,
+            rigid_body_set,
+            collider_set,
+            impulse_joint_set,
+            multibody_joint_set,
+            ccd_solver,
+            collider_to_entity,
+            entity_to_body: _,
+            config: _,
+        } = self;
+
+        physics_pipeline.step(
+            &gravity,
+            integration_parameters,
+            island_manager,
+            broad_phase,
+            narrow_phase,
+            rigid_body_set,
+            collider_set,
+            impulse_joint_set,
+            multibody_joint_set,
+            ccd_solver,
+            None,
+            &(),
+            &event_handler,
+        );
+
+        // Process collision events.
+        while let Ok(event) = collision_recv.try_recv() {
+            match event {
+                CollisionEvent::Started(h1, h2, flags) => {
+                    let e1 = collider_to_entity.get(&h1).copied();
+                    let e2 = collider_to_entity.get(&h2).copied();
+                    if let (Some(e1), Some(e2)) = (e1, e2) {
+                        if flags.contains(CollisionEventFlags::SENSOR) {
+                            scene.emit(
+                                "trigger",
+                                serde_json::json!({
+                                    "entity_a": e1.0,
+                                    "entity_b": e2.0,
+                                    "event_type": "enter",
+                                }),
+                            );
+                        } else {
+                            // Look up contact normal from the narrow phase.
+                            let normal = narrow_phase
+                                .contact_pairs()
+                                .filter(|p| p.has_any_active_contact)
+                                .find(|p| {
+                                    (p.collider1 == h1 && p.collider2 == h2)
+                                        || (p.collider1 == h2 && p.collider2 == h1)
+                                })
+                                .and_then(|p| p.manifolds.first())
+                                .map(|m| {
+                                    let n = m.data.normal;
+                                    [n.x, n.y, n.z]
+                                })
+                                .unwrap_or([0.0, 1.0, 0.0]);
+
+                            scene.emit(
+                                "collision",
+                                serde_json::json!({
+                                    "entity_a": e1.0,
+                                    "entity_b": e2.0,
+                                    "normal": normal,
+                                }),
+                            );
+                        }
+                    }
+                }
+                CollisionEvent::Stopped(h1, h2, flags) => {
+                    if flags.contains(CollisionEventFlags::SENSOR) {
+                        let e1 = collider_to_entity.get(&h1).copied();
+                        let e2 = collider_to_entity.get(&h2).copied();
+                        if let (Some(e1), Some(e2)) = (e1, e2) {
+                            scene.emit(
+                                "trigger",
+                                serde_json::json!({
+                                    "entity_a": e1.0,
+                                    "entity_b": e2.0,
+                                    "event_type": "exit",
+                                }),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Pull (rapier → ECS, dynamic only) ────────────────────────────────────
+
+    fn pull_transforms(&mut self, scene: &Scene) {
+        let entities: Vec<EntityId> = self.entity_to_body.keys().copied().collect();
+
+        for entity in entities {
+            // Extract position and handle before taking any mutable borrows.
+            let (pos, rb_handle) = {
+                let entry = match self.entity_to_body.get(&entity) {
+                    Some(e) => e,
+                    None => continue,
+                };
+                let rb = match self.rigid_body_set.get(entry.rigid_body_handle) {
+                    Some(r) => r,
+                    None => continue,
+                };
+                if !rb.is_dynamic() {
+                    continue;
+                }
+                let t = *rb.translation();
+                (t, entry.rigid_body_handle)
+            };
+
+            let (px, py, pz) = (pos.x, pos.y, pos.z);
+
+            if px.is_nan() || py.is_nan() || pz.is_nan() {
+                eprintln!(
+                    "[rython-physics] NaN position detected for entity {:?}; resetting",
+                    entity
+                );
+                let last = self.entity_to_body[&entity].last_valid_position;
+                let rb_mut = self.rigid_body_set.get_mut(rb_handle).unwrap();
+                rb_mut.set_translation(vector![last[0], last[1], last[2]], true);
+                rb_mut.set_linvel(vector![0.0, 0.0, 0.0], true);
+                continue;
+            }
+
+            if let Some(entry) = self.entity_to_body.get_mut(&entity) {
+                entry.last_valid_position = [px, py, pz];
+            }
+
+            scene.components.get_mut::<TransformComponent, _>(entity, |t| {
+                t.x = px;
+                t.y = py;
+                t.z = pz;
+            });
+        }
+    }
+
+    // ── Public force / velocity API ───────────────────────────────────────────
+
+    pub fn apply_force(&mut self, entity: EntityId, force: [f32; 3]) {
+        if let Some(entry) = self.entity_to_body.get(&entity) {
+            if let Some(rb) = self.rigid_body_set.get_mut(entry.rigid_body_handle) {
+                rb.add_force(vector![force[0], force[1], force[2]], true);
+            }
+        }
+    }
+
+    pub fn apply_impulse(&mut self, entity: EntityId, impulse: [f32; 3]) {
+        if let Some(entry) = self.entity_to_body.get(&entity) {
+            if let Some(rb) = self.rigid_body_set.get_mut(entry.rigid_body_handle) {
+                rb.apply_impulse(vector![impulse[0], impulse[1], impulse[2]], true);
+            }
+        }
+    }
+
+    pub fn set_linear_velocity(&mut self, entity: EntityId, velocity: [f32; 3]) {
+        if let Some(entry) = self.entity_to_body.get(&entity) {
+            if let Some(rb) = self.rigid_body_set.get_mut(entry.rigid_body_handle) {
+                rb.set_linvel(vector![velocity[0], velocity[1], velocity[2]], true);
+            }
+        }
+    }
+
+    pub fn get_linear_velocity(&self, entity: EntityId) -> Option<[f32; 3]> {
+        let entry = self.entity_to_body.get(&entity)?;
+        let rb = self.rigid_body_set.get(entry.rigid_body_handle)?;
+        let v = rb.linvel();
+        Some([v.x, v.y, v.z])
+    }
+
+    pub fn get_body_position(&self, entity: EntityId) -> Option<[f32; 3]> {
+        let entry = self.entity_to_body.get(&entity)?;
+        let rb = self.rigid_body_set.get(entry.rigid_body_handle)?;
+        let t = rb.translation();
+        Some([t.x, t.y, t.z])
+    }
+
+    pub fn body_count(&self) -> usize {
+        self.entity_to_body.len()
+    }
+
+    /// Test helper: directly set rapier body translation (bypasses ECS).
+    #[cfg(test)]
+    pub fn set_body_translation_raw(&mut self, entity: EntityId, pos: [f32; 3]) {
+        if let Some(entry) = self.entity_to_body.get(&entity) {
+            if let Some(rb) = self.rigid_body_set.get_mut(entry.rigid_body_handle) {
+                rb.set_translation(vector![pos[0], pos[1], pos[2]], true);
+            }
+        }
+    }
+}
+
+// ── Module ────────────────────────────────────────────────────────────────────
+
+pub struct PhysicsModule {
+    config: PhysicsConfig,
+    world: Option<PhysicsWorld>,
+}
+
+impl PhysicsModule {
+    pub fn new(config: PhysicsConfig) -> Self {
+        Self { config, world: None }
+    }
+
+    pub fn with_default_config() -> Self {
+        Self::new(PhysicsConfig::default())
+    }
+}
+
+impl Module for PhysicsModule {
+    fn name(&self) -> &str {
+        "physics"
+    }
+
+    fn on_load(&mut self, _scheduler: &dyn SchedulerHandle) -> Result<(), EngineError> {
+        self.world = Some(PhysicsWorld::new(self.config.clone()));
+        Ok(())
+    }
+
+    fn on_unload(&mut self, _scheduler: &dyn SchedulerHandle) -> Result<(), EngineError> {
+        self.world = None;
+        Ok(())
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use std::any::TypeId;
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+    use rython_ecs::{ColliderComponent, Component, RigidBodyComponent, Scene, TransformComponent};
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    fn comp<C: Component>(c: C) -> (TypeId, Box<dyn Component>) {
+        (TypeId::of::<C>(), Box::new(c) as Box<dyn Component>)
+    }
+
+    fn transform(x: f32, y: f32, z: f32) -> TransformComponent {
+        TransformComponent { x, y, z, ..Default::default() }
+    }
+
+    fn dyn_rb() -> RigidBodyComponent {
+        RigidBodyComponent {
+            body_type: "dynamic".to_string(),
+            mass: 1.0,
+            gravity_factor: 1.0,
+            collision_layer: 1,
+            collision_mask: 1,
+        }
+    }
+
+    fn rb_with(body_type: &str, gravity_factor: f32, layer: u32, mask: u32) -> RigidBodyComponent {
+        RigidBodyComponent {
+            body_type: body_type.to_string(),
+            mass: 1.0,
+            gravity_factor,
+            collision_layer: layer,
+            collision_mask: mask,
+        }
+    }
+
+    fn box_col(size: [f32; 3]) -> ColliderComponent {
+        ColliderComponent { shape: "box".to_string(), size, is_trigger: false }
+    }
+
+    fn trigger_col(size: [f32; 3]) -> ColliderComponent {
+        ColliderComponent { shape: "box".to_string(), size, is_trigger: true }
+    }
+
+    fn spawn(
+        scene: &Scene,
+        t: TransformComponent,
+        rb: RigidBodyComponent,
+        col: ColliderComponent,
+    ) -> EntityId {
+        let h = scene.queue_spawn(vec![comp(t), comp(rb), comp(col)]);
+        scene.drain_commands();
+        h.get().unwrap()
+    }
+
+    fn world() -> PhysicsWorld {
+        PhysicsWorld::with_default_config()
+    }
+
+    fn world_zero_gravity() -> PhysicsWorld {
+        PhysicsWorld::new(PhysicsConfig { gravity: [0.0, 0.0, 0.0], ..Default::default() })
+    }
+
+    fn world_2d(mode: &str) -> PhysicsWorld {
+        PhysicsWorld::new(PhysicsConfig {
+            lock_2d: Some(mode.to_string()),
+            gravity: [0.0, 0.0, 0.0],
+            ..Default::default()
+        })
+    }
+
+    // ── T-PHYS-01: Gravity — Free Fall ────────────────────────────────────────
+
+    #[test]
+    fn t_phys_01_gravity_free_fall() {
+        let scene = Scene::new();
+        let e = spawn(&scene, transform(0.0, 100.0, 0.0), dyn_rb(), box_col([1.0, 1.0, 1.0]));
+
+        let mut w = world();
+        for _ in 0..60 {
+            w.sync_step(&scene);
+        }
+
+        let t = scene.components.get::<TransformComponent>(e).unwrap();
+        // y = 100 - 0.5 * 9.81 * 1^2 = 95.095, tol ±0.5
+        assert!((t.y - 95.095).abs() < 0.5, "y={} expected ~95.095", t.y);
+        assert!(t.x.abs() < 0.01, "x should be 0");
+        assert!(t.z.abs() < 0.01, "z should be 0");
+    }
+
+    // ── T-PHYS-02: Gravity Factor ─────────────────────────────────────────────
+
+    #[test]
+    fn t_phys_02_gravity_factor() {
+        let scene = Scene::new();
+        let a = spawn(
+            &scene,
+            transform(0.0, 100.0, 0.0),
+            rb_with("dynamic", 1.0, 1, 1),
+            box_col([0.5, 0.5, 0.5]),
+        );
+        let b = spawn(
+            &scene,
+            transform(10.0, 100.0, 0.0),
+            rb_with("dynamic", 0.5, 1, 1),
+            box_col([0.5, 0.5, 0.5]),
+        );
+
+        let mut w = world();
+        for _ in 0..60 {
+            w.sync_step(&scene);
+        }
+
+        let ta = scene.components.get::<TransformComponent>(a).unwrap();
+        let tb = scene.components.get::<TransformComponent>(b).unwrap();
+        let disp_a = 100.0 - ta.y;
+        let disp_b = 100.0 - tb.y;
+
+        assert!(disp_a > 0.0 && disp_b > 0.0, "both should fall");
+        // B falls roughly half as far
+        let ratio = disp_a / disp_b;
+        assert!((ratio - 2.0).abs() < 0.2, "A/B displacement ratio={} expected ~2", ratio);
+    }
+
+    // ── T-PHYS-03: Zero Gravity ───────────────────────────────────────────────
+
+    #[test]
+    fn t_phys_03_zero_gravity() {
+        let scene = Scene::new();
+        let e = spawn(&scene, transform(0.0, 10.0, 0.0), dyn_rb(), box_col([1.0, 1.0, 1.0]));
+
+        let mut w = world_zero_gravity();
+        for _ in 0..60 {
+            w.sync_step(&scene);
+        }
+
+        let t = scene.components.get::<TransformComponent>(e).unwrap();
+        assert!((t.y - 10.0).abs() < 0.01, "y={} expected 10.0", t.y);
+        assert!(t.x.abs() < 0.01);
+        assert!(t.z.abs() < 0.01);
+    }
+
+    // ── T-PHYS-04: Static Body Does Not Move ──────────────────────────────────
+
+    #[test]
+    fn t_phys_04_static_body_no_move() {
+        let scene = Scene::new();
+        let e = spawn(
+            &scene,
+            transform(5.0, 5.0, 5.0),
+            rb_with("static", 1.0, 1, 1),
+            box_col([1.0, 1.0, 1.0]),
+        );
+
+        let mut w = world();
+        w.sync_step(&scene); // register
+        w.apply_force(e, [1000.0, 1000.0, 1000.0]);
+        for _ in 0..60 {
+            w.sync_step(&scene);
+        }
+
+        let t = scene.components.get::<TransformComponent>(e).unwrap();
+        assert!((t.x - 5.0).abs() < 0.01, "x={}", t.x);
+        assert!((t.y - 5.0).abs() < 0.01, "y={}", t.y);
+        assert!((t.z - 5.0).abs() < 0.01, "z={}", t.z);
+    }
+
+    // ── T-PHYS-05: Kinematic Body Push from ECS ───────────────────────────────
+
+    #[test]
+    fn t_phys_05_kinematic_push() {
+        let scene = Scene::new();
+        let e = spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("kinematic", 1.0, 1, 1),
+            box_col([1.0, 1.0, 1.0]),
+        );
+
+        let mut w = world();
+        w.sync_step(&scene); // register
+
+        // Move via ECS
+        scene.components.get_mut::<TransformComponent, _>(e, |t| {
+            t.x = 10.0;
+        });
+        w.sync_step(&scene);
+
+        let pos = w.get_body_position(e).unwrap();
+        assert!((pos[0] - 10.0).abs() < 0.01, "rapier x={} expected 10.0", pos[0]);
+
+        // TransformComponent should still be at 10.0 (kinematic never pulled)
+        let t = scene.components.get::<TransformComponent>(e).unwrap();
+        assert!((t.x - 10.0).abs() < 0.01);
+    }
+
+    // ── T-PHYS-06: Dynamic Body Pull to ECS ──────────────────────────────────
+
+    #[test]
+    fn t_phys_06_dynamic_pull_to_ecs() {
+        let scene = Scene::new();
+        // Static floor at y=0
+        spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("static", 1.0, 1, 1),
+            box_col([10.0, 0.5, 10.0]),
+        );
+        let dyn_e = spawn(
+            &scene,
+            transform(0.0, 10.0, 0.0),
+            dyn_rb(),
+            box_col([1.0, 1.0, 1.0]),
+        );
+
+        let mut w = world();
+        let mut prev_y = 10.0f32;
+        for _ in 0..30 {
+            w.sync_step(&scene);
+            let t = scene.components.get::<TransformComponent>(dyn_e).unwrap();
+            // Y should decrease (body falling)
+            assert!(t.y <= prev_y + 0.01, "y={} should not increase", t.y);
+            prev_y = t.y;
+        }
+
+        // TransformComponent should match rapier position
+        let ecs_y = scene.components.get::<TransformComponent>(dyn_e).unwrap().y;
+        let rapier_y = w.get_body_position(dyn_e).unwrap()[1];
+        assert!((ecs_y - rapier_y).abs() < 0.001, "ecs_y={} rapier_y={}", ecs_y, rapier_y);
+    }
+
+    // ── T-PHYS-07: Collision Detection — Two Dynamic Bodies ───────────────────
+
+    #[test]
+    fn t_phys_07_collision_detection() {
+        let scene = Scene::new();
+        let a = spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 1, 1),
+            box_col([1.0, 1.0, 1.0]),
+        );
+        let b = spawn(
+            &scene,
+            transform(0.5, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 1, 1),
+            box_col([1.0, 1.0, 1.0]),
+        );
+
+        let events: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(vec![]));
+        let ev = events.clone();
+        scene.subscribe("collision", move |_, payload| {
+            ev.lock().unwrap().push(payload.clone());
+        });
+
+        let mut w = PhysicsWorld::new(PhysicsConfig {
+            gravity: [0.0, 0.0, 0.0],
+            ..Default::default()
+        });
+
+        for _ in 0..5 {
+            w.sync_step(&scene);
+        }
+
+        let evs = events.lock().unwrap();
+        assert!(!evs.is_empty(), "expected CollisionEvent within 5 frames");
+        let ev0 = &evs[0];
+        let ea = ev0["entity_a"].as_u64().unwrap();
+        let eb = ev0["entity_b"].as_u64().unwrap();
+        let ids: std::collections::HashSet<u64> = [ea, eb].into();
+        assert!(ids.contains(&a.0) && ids.contains(&b.0), "event must contain both entity IDs");
+
+        // Normal approximately along X
+        let normal = ev0["normal"].as_array().unwrap();
+        let nx = normal[0].as_f64().unwrap().abs();
+        assert!(nx > 0.5, "normal.x={} should be dominant (along X)", nx);
+    }
+
+    // ── T-PHYS-08: Collision Layers — Matching Mask ───────────────────────────
+
+    #[test]
+    fn t_phys_08_collision_layers_matching() {
+        let scene = Scene::new();
+        // A: layer=1, mask=2 ; B: layer=2, mask=1 → should collide
+        spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 1, 2),
+            box_col([1.0, 1.0, 1.0]),
+        );
+        spawn(
+            &scene,
+            transform(0.5, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 2, 1),
+            box_col([1.0, 1.0, 1.0]),
+        );
+
+        let count = Arc::new(Mutex::new(0u32));
+        let c = count.clone();
+        scene.subscribe("collision", move |_, _| *c.lock().unwrap() += 1);
+
+        let mut w = PhysicsWorld::new(PhysicsConfig {
+            gravity: [0.0, 0.0, 0.0],
+            ..Default::default()
+        });
+        for _ in 0..5 {
+            w.sync_step(&scene);
+        }
+        assert!(*count.lock().unwrap() > 0, "collision event expected");
+    }
+
+    // ── T-PHYS-09: Collision Layers — Non-Matching Mask ──────────────────────
+
+    #[test]
+    fn t_phys_09_collision_layers_no_match() {
+        let scene = Scene::new();
+        // A: layer=1, mask=4 ; B: layer=2, mask=4 → 1&4=0, no collision
+        spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 1, 4),
+            box_col([1.0, 1.0, 1.0]),
+        );
+        spawn(
+            &scene,
+            transform(0.5, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 2, 4),
+            box_col([1.0, 1.0, 1.0]),
+        );
+
+        let count = Arc::new(Mutex::new(0u32));
+        let c = count.clone();
+        scene.subscribe("collision", move |_, _| *c.lock().unwrap() += 1);
+
+        let mut w = PhysicsWorld::new(PhysicsConfig {
+            gravity: [0.0, 0.0, 0.0],
+            ..Default::default()
+        });
+        for _ in 0..10 {
+            w.sync_step(&scene);
+        }
+        assert_eq!(*count.lock().unwrap(), 0, "no collision event expected");
+    }
+
+    // ── T-PHYS-10: Trigger Volume — Enter Event ───────────────────────────────
+
+    #[test]
+    fn t_phys_10_trigger_enter() {
+        let scene = Scene::new();
+        // Trigger at origin
+        spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("static", 0.0, 1, 1),
+            trigger_col([2.0, 2.0, 2.0]),
+        );
+        // Dynamic body falling into it from above
+        let dyn_e = spawn(
+            &scene,
+            transform(0.0, 0.5, 0.0),
+            dyn_rb(),
+            box_col([0.5, 0.5, 0.5]),
+        );
+
+        let entered: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+        let e = entered.clone();
+        scene.subscribe("trigger", move |_, payload| {
+            if payload["event_type"].as_str() == Some("enter") {
+                *e.lock().unwrap() = true;
+            }
+        });
+
+        let mut w = world();
+        for _ in 0..30 {
+            w.sync_step(&scene);
+        }
+
+        assert!(*entered.lock().unwrap(), "trigger enter event expected");
+
+        // Body should pass through (no contact forces prevent it)
+        let _ = dyn_e;
+    }
+
+    // ── T-PHYS-11: Trigger Volume — Exit Event ────────────────────────────────
+
+    #[test]
+    fn t_phys_11_trigger_exit() {
+        let scene = Scene::new();
+        // Trigger at y=5 with height 2 → y=[4,6]
+        spawn(
+            &scene,
+            transform(0.0, 5.0, 0.0),
+            rb_with("static", 0.0, 1, 1),
+            trigger_col([2.0, 2.0, 2.0]),
+        );
+        // Body starts inside, falls through and exits below
+        spawn(
+            &scene,
+            transform(0.0, 5.0, 0.0),
+            dyn_rb(),
+            box_col([0.4, 0.4, 0.4]),
+        );
+
+        let exited: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+        let ex = exited.clone();
+        scene.subscribe("trigger", move |_, payload| {
+            if payload["event_type"].as_str() == Some("exit") {
+                *ex.lock().unwrap() = true;
+            }
+        });
+
+        let mut w = world();
+        for _ in 0..120 {
+            w.sync_step(&scene);
+        }
+
+        assert!(*exited.lock().unwrap(), "trigger exit event expected");
+    }
+
+    // ── T-PHYS-12: Apply Impulse ──────────────────────────────────────────────
+
+    #[test]
+    fn t_phys_12_apply_impulse() {
+        let scene = Scene::new();
+        let e = spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 1, 1),
+            box_col([1.0, 1.0, 1.0]),
+        );
+
+        let mut w = world_zero_gravity();
+        w.sync_step(&scene); // register
+        w.apply_impulse(e, [0.0, 100.0, 0.0]);
+        w.sync_step(&scene);
+
+        let vel = w.get_linear_velocity(e).unwrap();
+        assert!(vel[1] > 0.0, "vy={} should be > 0 after upward impulse", vel[1]);
+
+        let t = scene.components.get::<TransformComponent>(e).unwrap();
+        assert!(t.y > 0.0, "y={} should be > 0 after step", t.y);
+    }
+
+    // ── T-PHYS-13: Set Linear Velocity ───────────────────────────────────────
+
+    #[test]
+    fn t_phys_13_set_linear_velocity() {
+        let scene = Scene::new();
+        let e = spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 1, 1),
+            box_col([1.0, 1.0, 1.0]),
+        );
+
+        let mut w = world_zero_gravity();
+        w.sync_step(&scene); // register
+        w.set_linear_velocity(e, [5.0, 0.0, 0.0]);
+
+        for _ in 0..60 {
+            w.sync_step(&scene);
+        }
+
+        let t = scene.components.get::<TransformComponent>(e).unwrap();
+        // 5.0 * 1.0s = 5.0, tol ±0.1
+        assert!((t.x - 5.0).abs() < 0.1, "x={} expected ~5.0", t.x);
+    }
+
+    // ── T-PHYS-14: 2D Lock — XZ Plane ────────────────────────────────────────
+
+    #[test]
+    fn t_phys_14_2d_lock_xz() {
+        let scene = Scene::new();
+        let e = spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 1, 1),
+            box_col([1.0, 1.0, 1.0]),
+        );
+
+        let mut w = world_2d("xz");
+        w.sync_step(&scene);
+        w.apply_impulse(e, [1.0, 1.0, 1.0]);
+
+        for _ in 0..30 {
+            w.sync_step(&scene);
+        }
+
+        let t = scene.components.get::<TransformComponent>(e).unwrap();
+        assert!(t.y.abs() < 0.01, "y={} should remain 0 with XZ lock", t.y);
+        // X and Z should move
+        let total_xz = (t.x * t.x + t.z * t.z).sqrt();
+        assert!(total_xz > 0.01, "body should move in XZ plane");
+    }
+
+    // ── T-PHYS-15: 2D Lock — XY Plane ────────────────────────────────────────
+
+    #[test]
+    fn t_phys_15_2d_lock_xy() {
+        let scene = Scene::new();
+        let e = spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 1, 1),
+            box_col([1.0, 1.0, 1.0]),
+        );
+
+        let mut w = world_2d("xy");
+        w.sync_step(&scene);
+        w.apply_impulse(e, [1.0, 1.0, 1.0]);
+
+        for _ in 0..30 {
+            w.sync_step(&scene);
+        }
+
+        let t = scene.components.get::<TransformComponent>(e).unwrap();
+        assert!(t.z.abs() < 0.01, "z={} should remain 0 with XY lock", t.z);
+        let total_xy = (t.x * t.x + t.y * t.y).sqrt();
+        assert!(total_xy > 0.01, "body should move in XY plane");
+    }
+
+    // ── T-PHYS-16: Body Registration on Component Attach ─────────────────────
+
+    #[test]
+    fn t_phys_16_body_registration_on_attach() {
+        let scene = Scene::new();
+        // Spawn with no physics components
+        let h = scene.queue_spawn(vec![comp(transform(0.0, 0.0, 0.0))]);
+        scene.drain_commands();
+        let e = h.get().unwrap();
+
+        let mut w = world();
+        w.sync_step(&scene);
+        assert_eq!(w.body_count(), 0, "no body before attach");
+
+        // Attach via queue
+        scene.queue_attach(e, dyn_rb());
+        scene.queue_attach(e, box_col([1.0, 1.0, 1.0]));
+        scene.drain_commands();
+
+        w.sync_step(&scene);
+        assert_eq!(w.body_count(), 1, "body should exist after attach");
+
+        // Verify body type is dynamic
+        let pos = w.get_body_position(e).unwrap();
+        assert!(!pos[0].is_nan());
+    }
+
+    // ── T-PHYS-17: Body Removal on Component Detach ───────────────────────────
+
+    #[test]
+    fn t_phys_17_body_removal_on_detach() {
+        let scene = Scene::new();
+        let e = spawn(&scene, transform(0.0, 0.0, 0.0), dyn_rb(), box_col([1.0, 1.0, 1.0]));
+
+        let mut w = world();
+        w.sync_step(&scene);
+        assert_eq!(w.body_count(), 1);
+
+        // Detach RigidBodyComponent
+        scene.queue_detach::<RigidBodyComponent>(e);
+        scene.drain_commands();
+
+        w.sync_step(&scene);
+        assert_eq!(w.body_count(), 0, "body should be removed after detach");
+        assert!(w.get_body_position(e).is_none());
+    }
+
+    // ── T-PHYS-18: NaN Resilience ─────────────────────────────────────────────
+
+    #[test]
+    fn t_phys_18_nan_resilience() {
+        let scene = Scene::new();
+        let e = spawn(&scene, transform(0.0, 0.0, 0.0), dyn_rb(), box_col([1.0, 1.0, 1.0]));
+
+        let mut w = world_zero_gravity();
+        w.sync_step(&scene); // establishes last_valid_position = (0,0,0)
+
+        // Inject NaN into rapier body
+        w.set_body_translation_raw(e, [f32::NAN, 0.0, 0.0]);
+
+        // Should not panic; NaN detected and reset
+        w.sync_step(&scene);
+
+        let t = scene.components.get::<TransformComponent>(e).unwrap();
+        assert!(!t.x.is_nan() && !t.y.is_nan() && !t.z.is_nan(), "TransformComponent must not be NaN");
+
+        // Position should be reset to last valid (0,0,0)
+        let pos = w.get_body_position(e).unwrap();
+        assert!(!pos[0].is_nan());
+    }
+
+    // ── Module lifecycle ──────────────────────────────────────────────────────
+
+    #[test]
+    fn t_phys_module_load_unload() {
+        struct NoopSched;
+        impl SchedulerHandle for NoopSched {
+            fn submit_sequential(
+                &self,
+                _f: Box<dyn FnOnce() -> Result<(), EngineError> + Send + 'static>,
+                _priority: rython_core::Priority,
+                _owner: rython_core::OwnerId,
+            ) {
+            }
+            fn cancel_owned(&self, _owner: rython_core::OwnerId) {}
+        }
+        let sched = NoopSched;
+        let mut m = PhysicsModule::with_default_config();
+        assert!(m.world.is_none());
+        m.on_load(&sched).unwrap();
+        assert!(m.world.is_some());
+        m.on_unload(&sched).unwrap();
+        assert!(m.world.is_none());
+        assert_eq!(m.name(), "physics");
+    }
+}
