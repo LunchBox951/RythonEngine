@@ -345,8 +345,9 @@ mod tests {
         );
 
         // Click inside button bounds (x: 0.4..0.6, y: 0.4..0.46)
-        let consumed = ui.on_mouse_click(0.5, 0.43);
-        assert!(consumed, "click inside button should be consumed");
+        let cb = ui.on_mouse_click(0.5, 0.43);
+        assert!(cb.is_some(), "click inside button should be consumed");
+        if let Some(cb) = cb { cb(); }
         assert!(*clicked.lock().unwrap(), "on_click callback should fire");
     }
 
@@ -368,8 +369,9 @@ mod tests {
         );
 
         // Click outside button bounds
-        let consumed = ui.on_mouse_click(0.1, 0.1);
-        assert!(!consumed, "click outside button should not be consumed");
+        let cb = ui.on_mouse_click(0.1, 0.1);
+        assert!(cb.is_none(), "click outside button should not be consumed");
+        if let Some(cb) = cb { cb(); }
         assert!(!*clicked.lock().unwrap(), "on_click should not fire");
     }
 

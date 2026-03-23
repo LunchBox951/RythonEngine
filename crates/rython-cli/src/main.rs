@@ -314,14 +314,19 @@ impl App {
         // UI: route mouse move and clicks from accumulated events this frame
         let norm_x = (self.cursor_pos.0 / width.max(1) as f64) as f32;
         let norm_y = (self.cursor_pos.1 / height.max(1) as f64) as f32;
-        {
+        let click_cb = {
             let mut ui = self.ui_manager.lock();
             ui.on_mouse_move(norm_x, norm_y);
+            let mut cb = None;
             for event in &self.raw_events {
                 if matches!(event, RawInputEvent::MouseButtonPressed(MouseButton::Left)) {
-                    ui.on_mouse_click(norm_x, norm_y);
+                    cb = ui.on_mouse_click(norm_x, norm_y);
                 }
             }
+            cb
+        }; // lock dropped here — callbacks may re-enter the UI manager safely
+        if let Some(cb) = click_cb {
+            cb();
         }
 
         // Clear per-frame events

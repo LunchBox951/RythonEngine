@@ -367,8 +367,9 @@ impl UIManager {
         }
     }
 
-    /// Process a mouse click at (x, y). Returns true if the event was consumed by a widget.
-    pub fn on_mouse_click(&mut self, x: f32, y: f32) -> bool {
+    /// Process a mouse click at (x, y). Returns the callback to invoke (if any) so the caller
+    /// can fire it *after* releasing the UI lock, avoiding re-entrant deadlocks.
+    pub fn on_mouse_click(&mut self, x: f32, y: f32) -> Option<Arc<dyn Fn() + Send + Sync>> {
         // Collect candidates first to avoid borrow conflicts with callback invocation
         let mut candidates: Vec<(WidgetId, f32)> = self
             .widgets
@@ -392,14 +393,10 @@ impl UIManager {
                 w.focused = true;
             }
 
-            // Fire callback if present
-            let callback = self.widgets[&widget_id].on_click.clone();
-            if let Some(cb) = callback {
-                cb();
-            }
-            true // consumed
+            // Return callback — caller must invoke it after releasing the lock
+            self.widgets[&widget_id].on_click.clone()
         } else {
-            false // not consumed
+            None
         }
     }
 
