@@ -39,6 +39,8 @@ from rython._scheduler import SchedulerBridge as _SchedulerBridge
 from rython._renderer import RendererBridge as _RendererBridge
 from rython._time import TimeBridge as _TimeBridge
 from rython._engine import EngineBridge as _EngineBridge
+from rython._input import InputBridge as _InputBridge
+from rython._audio import AudioBridge as _AudioBridge
 from rython._stubs import SubModule as _SubModule
 
 # Singleton instances that scripts import as attributes of the rython module.
@@ -54,8 +56,8 @@ engine: _EngineBridge = _EngineBridge()  # type: ignore[assignment]
 
 # Sub-modules not yet fully implemented
 physics: _SubModule = _SubModule("physics")
-audio: _SubModule = _SubModule("audio")
-input: _SubModule = _SubModule("input")
+audio: _AudioBridge = _AudioBridge()  # type: ignore[assignment]
+input: _InputBridge = _InputBridge()  # type: ignore[assignment]
 ui: _SubModule = _SubModule("ui")
 resources: _SubModule = _SubModule("resources")
 modules: _SubModule = _SubModule("modules")

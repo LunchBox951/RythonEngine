@@ -117,6 +117,10 @@ impl PlaybackHandle {
     pub fn id(self) -> u64 {
         self.0
     }
+
+    pub fn from_raw(id: u64) -> Self {
+        Self(id)
+    }
 }
 
 // ─── Listener State ───────────────────────────────────────────────────────────

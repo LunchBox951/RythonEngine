@@ -1,0 +1,169 @@
+use std::any::TypeId;
+use std::collections::HashMap;
+
+use pyo3::exceptions::PyRuntimeError;
+use pyo3::prelude::*;
+use pyo3::types::PyDict;
+use rython_ecs::component::{MeshComponent, TagComponent, TransformComponent};
+use rython_ecs::EntityId;
+
+use super::{
+    entity::EntityPy, json_to_py_dict, py_value_to_json, register_script_class, scene_store,
+    types::TransformPy,
+};
+
+// ─── Scene bridge ─────────────────────────────────────────────────────────────
+
+#[pyclass(name = "SceneBridge")]
+pub struct SceneBridge {}
+
+#[pymethods]
+impl SceneBridge {
+    /// Spawn a new entity with optional components passed as keyword args.
+    ///
+    /// Supported kwargs:
+    /// - `transform=rython.Transform(...)` → TransformComponent
+    /// - `mesh="mesh_id"` or `mesh={"mesh_id": ..., "texture_id": ..., "visible": ...}` → MeshComponent
+    /// - `tags=["tag1", "tag2"]` → TagComponent
+    #[pyo3(signature = (**kwargs))]
+    fn spawn(&self, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<EntityPy> {
+        let guard = scene_store().lock();
+        let scene = guard
+            .as_ref()
+            .ok_or_else(|| PyErr::new::<PyRuntimeError, _>("No active scene"))?;
+
+        let mut components: Vec<(TypeId, Box<dyn rython_ecs::component::Component>)> = Vec::new();
+
+        if let Some(kw) = kwargs {
+            for (key, val) in kw.iter() {
+                let key_str: String = key.extract()?;
+                match key_str.as_str() {
+                    "transform" => {
+                        if let Ok(t) = val.extract::<PyRef<TransformPy>>() {
+                            components.push((
+                                TypeId::of::<TransformComponent>(),
+                                Box::new(TransformComponent {
+                                    x: t.x,
+                                    y: t.y,
+                                    z: t.z,
+                                    rot_x: t.rot_x,
+                                    rot_y: t.rot_y,
+                                    rot_z: t.rot_z,
+                                    scale: t.scale,
+                                }),
+                            ));
+                        }
+                    }
+                    "mesh" => {
+                        if let Ok(s) = val.extract::<String>() {
+                            components.push((
+                                TypeId::of::<MeshComponent>(),
+                                Box::new(MeshComponent { mesh_id: s, ..Default::default() }),
+                            ));
+                        } else if let Ok(map) =
+                            val.extract::<HashMap<String, Bound<'_, PyAny>>>()
+                        {
+                            let mesh_id = map
+                                .get("mesh_id")
+                                .and_then(|v| v.extract::<String>().ok())
+                                .unwrap_or_default();
+                            let texture_id = map
+                                .get("texture_id")
+                                .and_then(|v| v.extract::<String>().ok())
+                                .unwrap_or_default();
+                            let visible = map
+                                .get("visible")
+                                .and_then(|v| v.extract::<bool>().ok())
+                                .unwrap_or(true);
+                            components.push((
+                                TypeId::of::<MeshComponent>(),
+                                Box::new(MeshComponent {
+                                    mesh_id,
+                                    texture_id,
+                                    visible,
+                                    ..Default::default()
+                                }),
+                            ));
+                        }
+                    }
+                    "tags" => {
+                        if let Ok(tags) = val.extract::<Vec<String>>() {
+                            components.push((
+                                TypeId::of::<TagComponent>(),
+                                Box::new(TagComponent { tags }),
+                            ));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let handle = scene.queue_spawn(components);
+        scene.drain_commands();
+
+        let eid = handle.get().ok_or_else(|| PyErr::new::<PyRuntimeError, _>("Spawn failed"))?;
+        Ok(EntityPy { id: eid.0 })
+    }
+
+    /// Emit a custom named event with keyword payload.
+    #[pyo3(signature = (event_name, **kwargs))]
+    fn emit(&self, event_name: &str, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
+        let mut payload = serde_json::json!({});
+        if let Some(kw) = kwargs {
+            for (key, val) in kw.iter() {
+                let key_str: String = key.extract()?;
+                let json_val = py_value_to_json(&val)?;
+                payload[key_str] = json_val;
+            }
+        }
+
+        let guard = scene_store().lock();
+        if let Some(scene) = guard.as_ref() {
+            scene.emit(event_name, payload);
+        }
+        Ok(())
+    }
+
+    /// Subscribe a Python callable to a named event.
+    fn subscribe(&self, event_name: &str, handler: Py<PyAny>) -> PyResult<u64> {
+        let guard = scene_store().lock();
+        let scene =
+            guard.as_ref().ok_or_else(|| PyErr::new::<PyRuntimeError, _>("No active scene"))?;
+
+        let id = scene.subscribe(event_name, move |_name, payload| {
+            Python::attach(|py| {
+                let kwargs = json_to_py_dict(py, payload).ok();
+                let result = handler.bind(py).call((), kwargs.as_ref());
+                if let Err(e) = result {
+                    e.print(py);
+                }
+            });
+        });
+        Ok(id)
+    }
+
+    /// Attach a Python script class to an entity.
+    fn attach_script(
+        &self,
+        entity: &EntityPy,
+        script_class: Py<PyAny>,
+        py: Python<'_>,
+    ) -> PyResult<()> {
+        let class_name: String = script_class.bind(py).getattr("__name__")?.extract()?;
+        register_script_class(&class_name, script_class);
+
+        let guard = scene_store().lock();
+        if let Some(scene) = guard.as_ref() {
+            let entity_id = EntityId(entity.id);
+            scene.components.insert(entity_id, crate::component::ScriptComponent {
+                class_name: class_name.clone(),
+            });
+        }
+        Ok(())
+    }
+
+    fn __repr__(&self) -> String {
+        "rython.scene".to_string()
+    }
+}

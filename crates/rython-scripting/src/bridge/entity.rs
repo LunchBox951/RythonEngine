@@ -1,0 +1,74 @@
+use pyo3::prelude::*;
+use rython_ecs::component::{TagComponent, TransformComponent};
+use rython_ecs::EntityId;
+
+use super::{scene_store, types::TransformPy};
+
+// ─── Entity wrapper ───────────────────────────────────────────────────────────
+
+#[pyclass(name = "Entity")]
+pub struct EntityPy {
+    #[pyo3(get, set)]
+    pub id: u64,
+}
+
+#[pymethods]
+impl EntityPy {
+    #[new]
+    #[pyo3(signature = (id = 0))]
+    pub fn new(id: u64) -> Self {
+        Self { id }
+    }
+
+    #[getter]
+    fn transform(&self) -> TransformPy {
+        let guard = scene_store().lock();
+        if let Some(scene) = guard.as_ref() {
+            let entity = EntityId(self.id);
+            if let Some(t) = scene.components.get::<TransformComponent>(entity) {
+                return TransformPy::from_component(&t, entity);
+            }
+        }
+        TransformPy::new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+    }
+
+    fn has_tag(&self, tag: &str) -> bool {
+        let guard = scene_store().lock();
+        if let Some(scene) = guard.as_ref() {
+            let entity = EntityId(self.id);
+            return scene
+                .components
+                .get_ref::<TagComponent, _, _>(entity, |t| t.tags.contains(&tag.to_string()))
+                .unwrap_or(false);
+        }
+        false
+    }
+
+    fn add_tag(&self, tag: &str) {
+        let tag_owned = tag.to_string();
+        let guard = scene_store().lock();
+        if let Some(scene) = guard.as_ref() {
+            let entity = EntityId(self.id);
+            let tag_clone = tag_owned.clone();
+            let existed = scene.components.get_mut(entity, |t: &mut TagComponent| {
+                if !t.tags.contains(&tag_clone) {
+                    t.tags.push(tag_clone.clone());
+                }
+            });
+            if !existed {
+                scene.components.insert(entity, TagComponent { tags: vec![tag_owned] });
+            }
+        }
+    }
+
+    fn despawn(&self) {
+        let guard = scene_store().lock();
+        if let Some(scene) = guard.as_ref() {
+            scene.queue_despawn(EntityId(self.id));
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Entity({})", self.id)
+    }
+}
