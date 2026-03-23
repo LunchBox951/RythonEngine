@@ -8,3 +8,9 @@ rython-core.workspace = true
 rython-scheduler.workspace = true
 rython-modules.workspace = true
 rython-window.workspace = true
+gilrs.workspace = true
+parking_lot.workspace = true
+
+[[test]]
+name = "acceptance"
+path = "tests/acceptance.rs"

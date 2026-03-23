@@ -1,5 +1,7 @@
 #![deny(warnings)]
 
-/// Window management stub — full implementation in a later layer.
+pub mod raw_events;
+pub mod window_module;
 
-pub struct Window;
+pub use raw_events::*;
+pub use window_module::WindowModule;
