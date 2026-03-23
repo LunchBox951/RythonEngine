@@ -16,6 +16,7 @@ rython-renderer.workspace = true
 rython-input.workspace = true
 rython-window.workspace = true
 rython-audio.workspace = true
+rython-physics.workspace = true
 pyo3 = { version = "0.28", features = ["auto-initialize"] }
 parking_lot.workspace = true
 serde.workspace = true

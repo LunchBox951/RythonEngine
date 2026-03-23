@@ -2,7 +2,7 @@ use pyo3::prelude::*;
 use rython_ecs::component::{TagComponent, TransformComponent};
 use rython_ecs::EntityId;
 
-use super::{scene_store, types::TransformPy};
+use super::{physics::physics_store, scene_store, types::{TransformPy, Vec3Py}};
 
 // ─── Entity wrapper ───────────────────────────────────────────────────────────
 
@@ -66,6 +66,36 @@ impl EntityPy {
         if let Some(scene) = guard.as_ref() {
             scene.queue_despawn(EntityId(self.id));
         }
+    }
+
+    // ─── Physics methods ──────────────────────────────────────────────────────
+
+    fn apply_force(&self, x: f32, y: f32, z: f32) {
+        if let Some(world) = physics_store() {
+            world.lock().apply_force(EntityId(self.id), [x, y, z]);
+        }
+    }
+
+    fn apply_impulse(&self, x: f32, y: f32, z: f32) {
+        if let Some(world) = physics_store() {
+            world.lock().apply_impulse(EntityId(self.id), [x, y, z]);
+        }
+    }
+
+    fn set_velocity(&self, x: f32, y: f32, z: f32) {
+        if let Some(world) = physics_store() {
+            world.lock().set_linear_velocity(EntityId(self.id), [x, y, z]);
+        }
+    }
+
+    #[getter]
+    fn velocity(&self) -> Vec3Py {
+        if let Some(world) = physics_store() {
+            if let Some([vx, vy, vz]) = world.lock().get_linear_velocity(EntityId(self.id)) {
+                return Vec3Py::new(vx, vy, vz);
+            }
+        }
+        Vec3Py::new(0.0, 0.0, 0.0)
     }
 
     fn __repr__(&self) -> String {

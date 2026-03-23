@@ -6,6 +6,7 @@ pub mod camera;
 pub mod engine;
 pub mod entity;
 pub mod input;
+pub mod physics;
 pub mod renderer;
 pub mod scene;
 pub mod scheduler;
@@ -17,6 +18,7 @@ pub use audio::set_active_audio;
 pub use camera::CameraPy;
 pub use entity::EntityPy;
 pub use input::set_active_input;
+pub use physics::set_active_physics;
 pub use types::{TransformPy, Vec3Py};
 // call_entry_point, clear_recurring_callbacks, drain_draw_commands,
 // ensure_rython_module, flush_recurring_callbacks, get_script_class,
@@ -233,7 +235,10 @@ pub fn ensure_rython_module(py: Python<'_>, scene: Arc<Scene>) -> PyResult<()> {
     let aud = Py::new(py, audio::AudioBridge {})?;
     rython.add("audio", aud)?;
 
-    for name in &["physics", "ui", "resources", "modules"] {
+    let phys = Py::new(py, physics::PhysicsBridge {})?;
+    rython.add("physics", phys)?;
+
+    for name in &["ui", "resources", "modules"] {
         let stub = Py::new(py, SubModulePy { name: name.to_string() })?;
         rython.add(*name, stub)?;
     }
