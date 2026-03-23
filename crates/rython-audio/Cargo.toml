@@ -5,5 +5,7 @@ edition.workspace = true
 
 [dependencies]
 rython-core.workspace = true
-rython-scheduler.workspace = true
 rython-modules.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+kira.workspace = true
