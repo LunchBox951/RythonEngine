@@ -3,7 +3,7 @@ Pure-Python stub for rython sub-modules not yet implemented.
 
 ``physics``, ``audio``, ``input``, ``ui``, ``resources``, and ``modules``
 are all instances of :class:`SubModule`.  Accessing any attribute on them
-raises ``NotImplementedError`` to mirror the runtime ``PyValueError`` raised
+raises ``ValueError`` to mirror the runtime ``PyValueError`` raised
 by the Rust SubModule bridge.
 """
 
@@ -16,7 +16,7 @@ class SubModule:
     """
     Placeholder for a rython sub-module that has not yet been implemented.
 
-    Accessing any attribute raises ``NotImplementedError``.
+    Accessing any attribute raises ``ValueError``.
     """
 
     def __init__(self, name: str) -> None:
@@ -24,7 +24,7 @@ class SubModule:
 
     def __getattr__(self, attr: str) -> Any:
         name = object.__getattribute__(self, "_name")
-        raise NotImplementedError(f"rython.{name} is a stub")
+        raise ValueError(f"rython.{name} is a stub")
 
     def __repr__(self) -> str:
         name = object.__getattribute__(self, "_name")
