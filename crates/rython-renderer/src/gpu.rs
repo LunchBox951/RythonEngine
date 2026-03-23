@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::camera::Camera;
-use crate::command::{DrawMesh, DrawText};
+use crate::command::{DrawMesh, DrawRect, DrawText};
 use crate::config::RendererConfig;
 use crate::shaders::{IMAGE_WGSL, MESH_WGSL, PRIMITIVE_WGSL, TEXT_WGSL};
 use thiserror::Error;
@@ -538,6 +538,23 @@ struct CameraUniform {
 struct ModelUniform {
     model: [[f32; 4]; 4],
     color: [f32; 4],
+}
+
+/// Primitive (rect/circle/line) uniform — matches PRIMITIVE_WGSL layout (48 bytes).
+///
+///   0–15:  rect: vec4<f32>   — clip-space (x, y, w, h)
+///  16–31:  color: vec4<f32>  — RGBA 0.0–1.0
+///  32–35:  mode: u32         — 0=rect_fill
+///  36–47:  _pad: [u32; 3]
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct PrimitiveUniform {
+    rect: [f32; 4],
+    color: [f32; 4],
+    mode: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
 
 /// Text glyph uniform — matches TEXT_WGSL layout (48 bytes).
@@ -1117,6 +1134,123 @@ impl RendererState {
                             resource: wgpu::BindingResource::Sampler(atlas_sampler),
                         },
                     ],
+                });
+
+                pass.set_bind_group(0, &bg, &[]);
+                pass.draw(0..6, 0..1);
+            }
+        }
+
+        self.gpu.queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    /// Render a batch of `DrawRect` commands using the primitive pipeline.
+    ///
+    /// Each filled rect is drawn as a clip-space quad (6 vertices, no index buffer).
+    /// If `rect.border` is `Some`, four thin border quads are drawn over the fill.
+    ///
+    /// MSAA handling mirrors `render_text`: when `gpu.sample_count > 1` and an MSAA
+    /// texture is available, it is used as the render attachment and `color_view`
+    /// becomes the resolve target.
+    pub fn render_rects(
+        &self,
+        rects: &[DrawRect],
+        color_view: &wgpu::TextureView,
+        _width: u32,
+        _height: u32,
+    ) {
+        if rects.is_empty() {
+            return;
+        }
+
+        let (att_view, resolve_target): (&wgpu::TextureView, Option<&wgpu::TextureView>) =
+            if self.gpu.sample_count > 1 {
+                match self.msaa_texture.as_ref() {
+                    Some((_, ref mv, ..)) => (mv, Some(color_view)),
+                    None => (color_view, None),
+                }
+            } else {
+                (color_view, None)
+            };
+
+        // Build all primitive uniforms: one fill quad per rect, plus up to 4 border quads.
+        let mut draws: Vec<PrimitiveUniform> = Vec::new();
+        for rect in rects {
+            let clip_x = rect.x * 2.0 - 1.0;
+            let clip_y = 1.0 - rect.y * 2.0;
+            let clip_w = rect.w * 2.0;
+            let clip_h = -(rect.h * 2.0);
+            draws.push(PrimitiveUniform {
+                rect: [clip_x, clip_y, clip_w, clip_h],
+                color: rect.color.to_linear(),
+                mode: 0,
+                _pad0: 0,
+                _pad1: 0,
+                _pad2: 0,
+            });
+
+            if let Some(border_color) = rect.border {
+                let bw = rect.border_width;
+                let bc = border_color.to_linear();
+                let border_rects = [
+                    (rect.x, rect.y, rect.w, bw),                         // top
+                    (rect.x, rect.y + rect.h - bw, rect.w, bw),           // bottom
+                    (rect.x, rect.y, bw, rect.h),                          // left
+                    (rect.x + rect.w - bw, rect.y, bw, rect.h),           // right
+                ];
+                for (bx, by, bw2, bh) in border_rects {
+                    draws.push(PrimitiveUniform {
+                        rect: [bx * 2.0 - 1.0, 1.0 - by * 2.0, bw2 * 2.0, -(bh * 2.0)],
+                        color: bc,
+                        mode: 0,
+                        _pad0: 0,
+                        _pad1: 0,
+                        _pad2: 0,
+                    });
+                }
+            }
+        }
+
+        let mut encoder = self.gpu.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("rect encoder") },
+        );
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("rect pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: att_view,
+                    resolve_target,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            pass.set_pipeline(&self.gpu.pipelines.primitive);
+
+            for uniform in &draws {
+                let bytes: &[u8] = bytemuck::bytes_of(uniform);
+                let ubuf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("rect_uniform"),
+                    size: bytes.len() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM,
+                    mapped_at_creation: true,
+                });
+                ubuf.slice(..).get_mapped_range_mut().copy_from_slice(bytes);
+                ubuf.unmap();
+
+                let bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("rect_bg"),
+                    layout: &self.gpu.bind_group_layouts.primitive,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: ubuf.as_entire_binding(),
+                    }],
                 });
 
                 pass.set_bind_group(0, &bg, &[]);
