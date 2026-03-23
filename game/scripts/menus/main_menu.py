@@ -12,7 +12,6 @@ def create() -> None:
     global _panel_id
 
     panel = rython.ui.create_panel(0.0, 0.0, 1.0, 1.0)
-    rython.ui.set_layout(panel, "vertical", 20.0, 40.0)
 
     title = rython.ui.create_label("GAUNTLET OF CUBES", 0.3, 0.1, 0.4, 0.1)
     # CC-BY 3.0 required attribution for Eric Taylor music

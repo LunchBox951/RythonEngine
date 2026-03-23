@@ -16,14 +16,12 @@ def create() -> None:
     global _panel_id, _music_vol_label_id, _sfx_vol_label_id
 
     panel = rython.ui.create_panel(0.25, 0.15, 0.5, 0.7)
-    rython.ui.set_layout(panel, "vertical", 12.0, 30.0)
 
     title = rython.ui.create_label("SETTINGS", 0.0, 0.0, 1.0, 0.1)
     rython.ui.add_child(panel, title)
 
     # Music volume row
     music_section = rython.ui.create_panel(0.0, 0.0, 1.0, 0.12)
-    rython.ui.set_layout(music_section, "horizontal", 8.0, 4.0)
     music_label = rython.ui.create_label("Music Vol:", 0.0, 0.0, 0.35, 1.0)
     music_minus = rython.ui.create_button("-", 0.0, 0.0, 0.12, 1.0)
     music_vol_lbl = rython.ui.create_label(f"{_music_vol}%", 0.0, 0.0, 0.22, 1.0)
@@ -37,7 +35,6 @@ def create() -> None:
 
     # SFX volume row
     sfx_section = rython.ui.create_panel(0.0, 0.0, 1.0, 0.12)
-    rython.ui.set_layout(sfx_section, "horizontal", 8.0, 4.0)
     sfx_label = rython.ui.create_label("SFX Vol:", 0.0, 0.0, 0.35, 1.0)
     sfx_minus = rython.ui.create_button("-", 0.0, 0.0, 0.12, 1.0)
     sfx_vol_lbl = rython.ui.create_label(f"{_sfx_vol}%", 0.0, 0.0, 0.22, 1.0)

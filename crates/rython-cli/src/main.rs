@@ -179,6 +179,7 @@ fn build_engine(
     // AudioManager — shared with scripting bridge for Python audio API
     let audio_manager = Arc::new(parking_lot::Mutex::new(AudioManager::new(Default::default())));
     set_active_audio(Arc::clone(&audio_manager));
+    audio_manager.lock().ensure_initialized().expect("failed to init audio");
 
     // PlayerController — managed directly in the main loop; register default input map
     let mut pc = PlayerController::new(0);

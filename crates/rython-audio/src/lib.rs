@@ -314,6 +314,13 @@ impl AudioManager {
         Self::new(AudioConfig::default())
     }
 
+    pub fn ensure_initialized(&mut self) -> Result<(), EngineError> {
+        if self.kira.is_none() {
+            self.kira = Some(KiraInner::new(&self.config)?);
+        }
+        Ok(())
+    }
+
     // ─── Pure logic (always runs, no audio hardware needed) ──────────────────
 
     /// Effective volume for a category after master scaling.

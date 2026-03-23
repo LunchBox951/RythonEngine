@@ -10,7 +10,6 @@ def create() -> None:
     """Build the pause menu widgets (hidden initially)."""
     global _panel_id
     panel = rython.ui.create_panel(0.3, 0.25, 0.4, 0.5)
-    rython.ui.set_layout(panel, "vertical", 16.0, 30.0)
 
     title = rython.ui.create_label("PAUSED", 0.0, 0.0, 1.0, 0.12)
     resume_btn = rython.ui.create_button("Resume", 0.0, 0.0, 1.0, 0.12)
