@@ -13,6 +13,7 @@ _spawn_pos: Tuple[float, float, float] = (0.0, 2.0, 0.0)
 def spawn(x: float = 0.0, y: float = 2.0, z: float = 0.0) -> Entity:
     """Spawn the player entity at (x, y, z) and store its handle."""
     global _entity, _spawn_pos
+    print(f'[DEBUG player.spawn] entry: x={x}, y={y}, z={z}')
     _spawn_pos = (x, y, z)
     _entity = rython.scene.spawn(
         transform=Transform(x=x, y=y, z=z),
@@ -21,6 +22,8 @@ def spawn(x: float = 0.0, y: float = 2.0, z: float = 0.0) -> Entity:
         rigid_body={"body_type": "dynamic", "mass": 1.0},
         collider={"shape": "box", "size": [0.8, 1.8, 0.8]},
     )
+    print(f'[DEBUG player.spawn] entity id={_entity}')
+    print('[DEBUG player.spawn] exit')
     return _entity
 
 

@@ -35,16 +35,22 @@ def create() -> None:
 
 
 def _on_play() -> None:
+    print('[DEBUG main_menu._on_play] entry')
     rython.audio.play("game/assets/sounds/ui/confirm_01.ogg", "sfx")
     hide()
+    print('[DEBUG main_menu._on_play] before scene.emit(start_game)')
     rython.scene.emit("start_game")
+    print('[DEBUG main_menu._on_play] after scene.emit(start_game) — returned')
 
 
 def _on_settings() -> None:
+    print(f'[DEBUG main_menu._on_settings] entry, _panel_id={_panel_id}')
     from game.scripts.menus import settings_menu
     rython.audio.play("game/assets/sounds/ui/click_01.ogg", "sfx")
     hide()
+    print('[DEBUG main_menu._on_settings] before settings_menu.show()')
     settings_menu.show()
+    print('[DEBUG main_menu._on_settings] after settings_menu.show()')
     game_state.set_state(game_state.SETTINGS)
 
 
@@ -54,6 +60,7 @@ def _on_quit() -> None:
 
 
 def show() -> None:
+    print(f'[DEBUG main_menu.show] entry, _panel_id={_panel_id}')
     global _music_handle
     if _panel_id is not None:
         rython.ui.show(_panel_id)
@@ -64,6 +71,7 @@ def show() -> None:
 
 
 def hide() -> None:
+    print(f'[DEBUG main_menu.hide] entry, _panel_id={_panel_id}')
     global _music_handle
     if _panel_id is not None:
         rython.ui.hide(_panel_id)

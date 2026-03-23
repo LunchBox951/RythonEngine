@@ -20,11 +20,13 @@ _tick_registered: bool = False
 
 def build() -> None:
     global _pickup_entities, _collected, _tick_registered
+    print('[DEBUG arena_1.build] entry')
     _pickup_entities = []
     _collected = 0
 
     # Ground — 20x20
     lb.spawn_static_block(0.0, -0.5, 0.0, 20.0, 1.0, 20.0)
+    print('[DEBUG arena_1.build] ground spawned')
 
     # Border walls
     lb.spawn_static_block(-10.0, 1.0, 0.0, 1.0, 2.0, 20.0)  # west
@@ -37,23 +39,28 @@ def build() -> None:
     lb.spawn_static_block(5.0, 3.0, -5.0, 4.0, 0.5, 4.0)
     lb.spawn_static_block(-5.0, 4.0, 5.0, 4.0, 0.5, 4.0)
     lb.spawn_static_block(5.0, 2.5, 5.0, 4.0, 0.5, 4.0)
+    print('[DEBUG arena_1.build] platforms spawned')
 
     # 3 score pickups
     p1 = lb.spawn_pickup(-5.0, 2.5, -5.0, pickup_type="score", value=100)
     p2 = lb.spawn_pickup(5.0, 3.5, -5.0, pickup_type="score", value=100)
     p3 = lb.spawn_pickup(0.0, 0.5, 0.0, pickup_type="score", value=100)
     _pickup_entities.extend([p1, p2, p3])
+    print(f'[DEBUG arena_1.build] pickups spawned: ids={[p1, p2, p3]}')
 
     # 1 slow skeleton (patrol speed overridden via waypoints at a slower pace)
     entity = lb.spawn_enemy(3.0, 1.0, 3.0, enemy_type="skeleton", is_boss=False)
     enemies.register(entity, enemy_type="skeleton", is_boss=False)
+    print(f'[DEBUG arena_1.build] enemy spawned: id={entity}')
 
     # Spawn player at centre
     player.spawn(0.0, 2.0, 0.0)
+    print('[DEBUG arena_1.build] player.spawn returned')
 
     # Music
     rython.audio.play("game/assets/music/arena1.mp3", "music", True)
     rython.audio.set_volume("music", 0.7)
+    print('[DEBUG arena_1.build] music started')
 
     if not _tick_registered:
         _tick_registered = True
