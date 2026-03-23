@@ -63,11 +63,18 @@ def show() -> None:
     print(f'[DEBUG main_menu.show] entry, _panel_id={_panel_id}')
     global _music_handle
     if _panel_id is not None:
-        rython.ui.show(_panel_id)
+        try:
+            rython.ui.show(_panel_id)
+        except Exception as e:
+            print(f'[DEBUG main_menu.show] ui.show raised: {e}')
+    print('[DEBUG main_menu.show] after ui.show, before audio.play')
     if _music_handle == -1:
-        _music_handle = rython.audio.play(
-            "game/assets/music/menu.mp3", "music", looping=True
-        )
+        try:
+            _music_handle = rython.audio.play(
+                "game/assets/music/menu.mp3", "music", looping=True
+            )
+        except Exception as e:
+            print(f'[DEBUG main_menu.show] audio.play raised: {e}')
 
 
 def hide() -> None:

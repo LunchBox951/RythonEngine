@@ -184,10 +184,10 @@ fn build_engine(
     // PlayerController — managed directly in the main loop; register default input map
     let mut pc = PlayerController::new(0);
     let mut default_map = InputMap::new("default");
-    default_map.bind_axis("move_x", AxisBinding::KBAxis { negative: KeyCode::A, positive: KeyCode::D });
-    default_map.bind_axis("move_x", AxisBinding::KBAxis { negative: KeyCode::Left, positive: KeyCode::Right });
-    default_map.bind_axis("move_z", AxisBinding::KBAxis { negative: KeyCode::W, positive: KeyCode::S });
-    default_map.bind_axis("move_z", AxisBinding::KBAxis { negative: KeyCode::Up, positive: KeyCode::Down });
+    default_map.bind_axis("move_x", AxisBinding::KBAxis { negative: KeyCode::D, positive: KeyCode::A });
+    default_map.bind_axis("move_x", AxisBinding::KBAxis { negative: KeyCode::Right, positive: KeyCode::Left });
+    default_map.bind_axis("move_z", AxisBinding::KBAxis { negative: KeyCode::S, positive: KeyCode::W });
+    default_map.bind_axis("move_z", AxisBinding::KBAxis { negative: KeyCode::Down, positive: KeyCode::Up });
     default_map.bind_button("jump", ButtonBinding::Keyboard(KeyCode::Space));
     default_map.bind_button("pause", ButtonBinding::Keyboard(KeyCode::Escape));
     pc.register_map(default_map);

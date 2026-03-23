@@ -295,6 +295,9 @@ pub struct AudioManager {
     handle_categories: HashMap<u64, AudioCategory>,
     ambient_groups: HashMap<String, AmbientGroupDef>,
     active_count: usize,
+    /// Set when all sounds stop; causes kira to reinitialize on the next play()
+    /// call to avoid CPAL backend state corruption from stop+restart cycles.
+    needs_reinit: bool,
 }
 
 impl AudioManager {
@@ -307,6 +310,7 @@ impl AudioManager {
             handle_categories: HashMap::new(),
             ambient_groups: HashMap::new(),
             active_count: 0,
+            needs_reinit: false,
         }
     }
 
@@ -424,6 +428,22 @@ impl AudioManager {
             return Ok(PlaybackHandle(id));
         }
 
+        // Reinitialize the kira backend if all sounds were previously stopped —
+        // CPAL can get into a corrupted state after a stop+restart cycle on Linux.
+        if self.needs_reinit {
+            self.needs_reinit = false;
+            if self.kira.is_some() {
+                self.kira = None;
+                match KiraInner::new(&self.config) {
+                    Ok(inner) => {
+                        inner.apply_volumes(&self.config);
+                        self.kira = Some(inner);
+                    }
+                    Err(_) => {} // audio stays silent rather than crashing
+                }
+            }
+        }
+
         let id = self.next_id;
         self.next_id += 1;
         self.handle_categories.insert(id, request.category);
@@ -443,6 +463,9 @@ impl AudioManager {
         let id = handle.0;
         if self.handle_categories.remove(&id).is_some() {
             self.active_count = self.active_count.saturating_sub(1);
+            if self.active_count == 0 {
+                self.needs_reinit = true;
+            }
             if let Some(ref mut kira) = self.kira {
                 kira.stop_sound(id);
             }
@@ -468,6 +491,9 @@ impl AudioManager {
             if let Some(ref mut kira) = self.kira {
                 kira.stop_sound(id);
             }
+        }
+        if self.active_count == 0 {
+            self.needs_reinit = true;
         }
         Ok(())
     }
