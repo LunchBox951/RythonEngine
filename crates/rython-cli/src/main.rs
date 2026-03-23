@@ -292,10 +292,24 @@ impl App {
             }
         }
 
-        // Render text overlays from script draw commands and UI
-        let text_cmds: Vec<rython_renderer::DrawText> = script_cmds
+        // Collect all overlay draw commands from scripts and UI
+        let all_overlay_cmds: Vec<rython_renderer::DrawCommand> =
+            script_cmds.into_iter().chain(ui_cmds).collect();
+
+        // Render solid-color rect overlays (UI button backgrounds, panels, etc.)
+        let rect_cmds: Vec<rython_renderer::DrawRect> = all_overlay_cmds
+            .iter()
+            .filter_map(|cmd| {
+                if let rython_renderer::DrawCommand::Rect(r) = cmd { Some(r.clone()) } else { None }
+            })
+            .collect();
+        if !rect_cmds.is_empty() {
+            renderer.render_rects(&rect_cmds, &color_view, width, height);
+        }
+
+        // Render text overlays
+        let text_cmds: Vec<rython_renderer::DrawText> = all_overlay_cmds
             .into_iter()
-            .chain(ui_cmds.into_iter())
             .filter_map(|cmd| {
                 if let rython_renderer::DrawCommand::Text(t) = cmd { Some(t) } else { None }
             })
