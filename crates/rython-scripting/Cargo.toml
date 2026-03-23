@@ -12,6 +12,7 @@ rython-core.workspace = true
 rython-scheduler.workspace = true
 rython-modules.workspace = true
 rython-ecs.workspace = true
+rython-renderer.workspace = true
 pyo3 = { version = "0.28", features = ["auto-initialize"] }
 parking_lot.workspace = true
 serde.workspace = true

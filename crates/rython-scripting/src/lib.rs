@@ -6,8 +6,10 @@ pub mod config;
 pub mod system;
 
 pub use bridge::{
-    call_entry_point, ensure_rython_module, get_script_class, load_bundle,
-    register_script_class, set_active_scene, EntityPy, TransformPy, Vec3Py,
+    call_entry_point, clear_recurring_callbacks, drain_draw_commands, ensure_rython_module,
+    flush_recurring_callbacks, get_script_class, load_bundle, register_script_class,
+    reset_quit_requested, set_active_scene, set_elapsed_secs, was_quit_requested, CameraPy,
+    EntityPy, TransformPy, Vec3Py,
 };
 pub use component::ScriptComponent;
 pub use config::ScriptingConfig;
