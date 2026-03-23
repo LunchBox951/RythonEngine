@@ -18,8 +18,8 @@ use rython_physics::PhysicsModule;
 use rython_renderer::{Camera, RendererConfig, RendererState};
 use rython_resources::ResourceManager;
 use rython_scripting::{
-    drain_draw_commands, flush_recurring_callbacks, reset_quit_requested, set_elapsed_secs,
-    ScriptingConfig, ScriptingModule, was_quit_requested,
+    drain_draw_commands, drain_ui_draw_commands, flush_recurring_callbacks, reset_quit_requested,
+    set_elapsed_secs, ScriptingConfig, ScriptingModule, was_quit_requested,
 };
 use rython_ui::{Theme, UIManager};
 use rython_window::WindowModule;
@@ -170,8 +170,9 @@ impl App {
         let world_transforms = TransformSystem::run(&self.scene.components, &self.scene.hierarchy);
         let ecs_cmds = RenderSystem::run(&self.scene.components, &world_transforms);
 
-        // Drain script draw commands
+        // Drain script draw commands (from renderer bridge) and UI draw commands
         let script_cmds = drain_draw_commands();
+        let ui_cmds = drain_ui_draw_commands();
 
         // Build camera from Python bridge state
         let mut camera = Camera::new();
@@ -287,9 +288,10 @@ impl App {
             }
         }
 
-        // Render text overlays from script draw commands
+        // Render text overlays from script draw commands and UI
         let text_cmds: Vec<rython_renderer::DrawText> = script_cmds
             .into_iter()
+            .chain(ui_cmds.into_iter())
             .filter_map(|cmd| {
                 if let rython_renderer::DrawCommand::Text(t) = cmd { Some(t) } else { None }
             })

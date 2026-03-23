@@ -41,6 +41,7 @@ from rython._time import TimeBridge as _TimeBridge
 from rython._engine import EngineBridge as _EngineBridge
 from rython._input import InputBridge as _InputBridge
 from rython._audio import AudioBridge as _AudioBridge
+from rython._ui import UIBridge as _UIBridge
 from rython._stubs import SubModule as _SubModule
 
 # Singleton instances that scripts import as attributes of the rython module.
@@ -58,7 +59,7 @@ engine: _EngineBridge = _EngineBridge()  # type: ignore[assignment]
 physics: _SubModule = _SubModule("physics")
 audio: _AudioBridge = _AudioBridge()  # type: ignore[assignment]
 input: _InputBridge = _InputBridge()  # type: ignore[assignment]
-ui: _SubModule = _SubModule("ui")
+ui: _UIBridge = _UIBridge()  # type: ignore[assignment]
 resources: _SubModule = _SubModule("resources")
 modules: _SubModule = _SubModule("modules")
 
