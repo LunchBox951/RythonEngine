@@ -31,11 +31,6 @@ impl SceneBridge {
     /// - `collider={"shape": "box"|"sphere"|"capsule", "size": [f32; 3], "is_trigger": bool}` → ColliderComponent
     #[pyo3(signature = (**kwargs))]
     fn spawn(&self, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<EntityPy> {
-        let guard = scene_store().lock();
-        let scene = guard
-            .as_ref()
-            .ok_or_else(|| PyErr::new::<PyRuntimeError, _>("No active scene"))?;
-
         let mut components: Vec<(TypeId, Box<dyn rython_ecs::component::Component>)> = Vec::new();
 
         if let Some(kw) = kwargs {
@@ -158,6 +153,11 @@ impl SceneBridge {
             }
         }
 
+        let scene = {
+            let guard = scene_store().lock();
+            guard.as_ref().cloned().ok_or_else(|| PyErr::new::<PyRuntimeError, _>("No active scene"))?
+        };
+
         let handle = scene.queue_spawn(components);
         scene.drain_commands();
 
@@ -177,8 +177,11 @@ impl SceneBridge {
             }
         }
 
-        let guard = scene_store().lock();
-        if let Some(scene) = guard.as_ref() {
+        let scene = {
+            let guard = scene_store().lock();
+            guard.as_ref().cloned()
+        };
+        if let Some(scene) = scene {
             scene.emit(event_name, payload);
         }
         Ok(())
@@ -186,9 +189,10 @@ impl SceneBridge {
 
     /// Subscribe a Python callable to a named event.
     fn subscribe(&self, event_name: &str, handler: Py<PyAny>) -> PyResult<u64> {
-        let guard = scene_store().lock();
-        let scene =
-            guard.as_ref().ok_or_else(|| PyErr::new::<PyRuntimeError, _>("No active scene"))?;
+        let scene = {
+            let guard = scene_store().lock();
+            guard.as_ref().cloned().ok_or_else(|| PyErr::new::<PyRuntimeError, _>("No active scene"))?
+        };
 
         let id = scene.subscribe(event_name, move |_name, payload| {
             Python::attach(|py| {
@@ -212,8 +216,11 @@ impl SceneBridge {
         let class_name: String = script_class.bind(py).getattr("__name__")?.extract()?;
         register_script_class(&class_name, script_class);
 
-        let guard = scene_store().lock();
-        if let Some(scene) = guard.as_ref() {
+        let scene = {
+            let guard = scene_store().lock();
+            guard.as_ref().cloned()
+        };
+        if let Some(scene) = scene {
             let entity_id = EntityId(entity.id);
             scene.components.insert(entity_id, crate::component::ScriptComponent {
                 class_name: class_name.clone(),

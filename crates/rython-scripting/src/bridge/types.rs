@@ -96,8 +96,8 @@ impl TransformPy {
 
     fn write_back(&self) {
         let Some(eid) = self.entity_id else { return };
-        let guard = scene_store().lock();
-        if let Some(scene) = guard.as_ref() {
+        let scene = { let guard = scene_store().lock(); guard.as_ref().cloned() };
+        if let Some(scene) = scene {
             let entity = EntityId(eid);
             let (x, y, z, rx, ry, rz, s) =
                 (self.x, self.y, self.z, self.rot_x, self.rot_y, self.rot_z, self.scale);

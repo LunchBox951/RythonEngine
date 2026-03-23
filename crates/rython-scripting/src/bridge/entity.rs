@@ -22,8 +22,8 @@ impl EntityPy {
 
     #[getter]
     fn transform(&self) -> TransformPy {
-        let guard = scene_store().lock();
-        if let Some(scene) = guard.as_ref() {
+        let scene = { let guard = scene_store().lock(); guard.as_ref().cloned() };
+        if let Some(scene) = scene {
             let entity = EntityId(self.id);
             if let Some(t) = scene.components.get::<TransformComponent>(entity) {
                 return TransformPy::from_component(&t, entity);
@@ -33,8 +33,8 @@ impl EntityPy {
     }
 
     fn has_tag(&self, tag: &str) -> bool {
-        let guard = scene_store().lock();
-        if let Some(scene) = guard.as_ref() {
+        let scene = { let guard = scene_store().lock(); guard.as_ref().cloned() };
+        if let Some(scene) = scene {
             let entity = EntityId(self.id);
             return scene
                 .components
@@ -46,8 +46,8 @@ impl EntityPy {
 
     fn add_tag(&self, tag: &str) {
         let tag_owned = tag.to_string();
-        let guard = scene_store().lock();
-        if let Some(scene) = guard.as_ref() {
+        let scene = { let guard = scene_store().lock(); guard.as_ref().cloned() };
+        if let Some(scene) = scene {
             let entity = EntityId(self.id);
             let tag_clone = tag_owned.clone();
             let existed = scene.components.get_mut(entity, |t: &mut TagComponent| {
@@ -62,8 +62,8 @@ impl EntityPy {
     }
 
     fn despawn(&self) {
-        let guard = scene_store().lock();
-        if let Some(scene) = guard.as_ref() {
+        let scene = { let guard = scene_store().lock(); guard.as_ref().cloned() };
+        if let Some(scene) = scene {
             scene.queue_despawn(EntityId(self.id));
         }
     }
