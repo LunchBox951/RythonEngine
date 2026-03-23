@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use rython_ecs::component::{MeshComponent, TagComponent, TransformComponent};
+use rython_ecs::component::{
+    ColliderComponent, MeshComponent, RigidBodyComponent, TagComponent, TransformComponent,
+};
 use rython_ecs::EntityId;
 
 use super::{
@@ -25,6 +27,8 @@ impl SceneBridge {
     /// - `transform=rython.Transform(...)` → TransformComponent
     /// - `mesh="mesh_id"` or `mesh={"mesh_id": ..., "texture_id": ..., "visible": ...}` → MeshComponent
     /// - `tags=["tag1", "tag2"]` → TagComponent
+    /// - `rigid_body={"body_type": "dynamic"|"static"|"kinematic", "mass": f32, "gravity_factor": f32}` → RigidBodyComponent
+    /// - `collider={"shape": "box"|"sphere"|"capsule", "size": [f32; 3], "is_trigger": bool}` → ColliderComponent
     #[pyo3(signature = (**kwargs))]
     fn spawn(&self, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<EntityPy> {
         let guard = scene_store().lock();
@@ -91,6 +95,61 @@ impl SceneBridge {
                             components.push((
                                 TypeId::of::<TagComponent>(),
                                 Box::new(TagComponent { tags }),
+                            ));
+                        }
+                    }
+                    "rigid_body" => {
+                        if let Ok(map) =
+                            val.extract::<HashMap<String, Bound<'_, PyAny>>>()
+                        {
+                            let body_type = map
+                                .get("body_type")
+                                .and_then(|v| v.extract::<String>().ok())
+                                .unwrap_or_else(|| "dynamic".to_string());
+                            let mass = map
+                                .get("mass")
+                                .and_then(|v| v.extract::<f32>().ok())
+                                .unwrap_or(1.0);
+                            let gravity_factor = map
+                                .get("gravity_factor")
+                                .and_then(|v| v.extract::<f32>().ok())
+                                .unwrap_or(1.0);
+                            components.push((
+                                TypeId::of::<RigidBodyComponent>(),
+                                Box::new(RigidBodyComponent {
+                                    body_type,
+                                    mass,
+                                    gravity_factor,
+                                    collision_layer: 1,
+                                    collision_mask: u32::MAX,
+                                }),
+                            ));
+                        }
+                    }
+                    "collider" => {
+                        if let Ok(map) =
+                            val.extract::<HashMap<String, Bound<'_, PyAny>>>()
+                        {
+                            let shape = map
+                                .get("shape")
+                                .and_then(|v| v.extract::<String>().ok())
+                                .unwrap_or_else(|| "box".to_string());
+                            let size_vec = map
+                                .get("size")
+                                .and_then(|v| v.extract::<Vec<f32>>().ok())
+                                .unwrap_or_else(|| vec![1.0, 1.0, 1.0]);
+                            let size = [
+                                size_vec.first().copied().unwrap_or(1.0),
+                                size_vec.get(1).copied().unwrap_or(1.0),
+                                size_vec.get(2).copied().unwrap_or(1.0),
+                            ];
+                            let is_trigger = map
+                                .get("is_trigger")
+                                .and_then(|v| v.extract::<bool>().ok())
+                                .unwrap_or(false);
+                            components.push((
+                                TypeId::of::<ColliderComponent>(),
+                                Box::new(ColliderComponent { shape, size, is_trigger }),
                             ));
                         }
                     }

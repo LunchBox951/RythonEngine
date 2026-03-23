@@ -21,6 +21,12 @@ class SceneBridge:
     * ``mesh`` — a mesh-id string **or** a dict with keys
       ``mesh_id``, ``texture_id``, ``visible``
     * ``tags`` — a list of strings
+    * ``rigid_body`` — a dict with keys ``body_type`` (``'dynamic'``,
+      ``'static'``, or ``'kinematic'``; default ``'dynamic'``), ``mass``
+      (float; default ``1.0``), ``gravity_factor`` (float; default ``1.0``)
+    * ``collider`` — a dict with keys ``shape`` (``'box'``, ``'sphere'``,
+      or ``'capsule'``; default ``'box'``), ``size`` (list of 3 floats;
+      default ``[1.0, 1.0, 1.0]``), ``is_trigger`` (bool; default ``False``)
     """
 
     def spawn(
@@ -29,6 +35,8 @@ class SceneBridge:
         transform: "Transform | None" = None,
         mesh: "str | dict[str, Any] | None" = None,
         tags: "list[str] | None" = None,
+        rigid_body: "dict[str, Any] | None" = None,
+        collider: "dict[str, Any] | None" = None,
         **kwargs: Any,
     ) -> "Entity":
         """
