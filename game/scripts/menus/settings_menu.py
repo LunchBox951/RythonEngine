@@ -14,13 +14,10 @@ _sfx_vol: int = 100
 def create() -> None:
     """Build settings menu widgets (hidden initially)."""
     global _panel_id, _music_vol_label_id, _sfx_vol_label_id
-    print('[DEBUG settings_menu.create] entry')
 
     panel = rython.ui.create_panel(0.25, 0.15, 0.5, 0.7)
-    print(f'[DEBUG settings_menu.create] panel id={panel}')
 
     title = rython.ui.create_label("SETTINGS", 0.0, 0.0, 1.0, 0.1)
-    print(f'[DEBUG settings_menu.create] title id={title}')
     rython.ui.add_child(panel, title)
 
     # Music volume row
@@ -29,7 +26,6 @@ def create() -> None:
     music_minus = rython.ui.create_button("-", 0.0, 0.0, 0.12, 1.0)
     music_vol_lbl = rython.ui.create_label(f"{_music_vol}%", 0.0, 0.0, 0.22, 1.0)
     music_plus = rython.ui.create_button("+", 0.0, 0.0, 0.12, 1.0)
-    print(f'[DEBUG settings_menu.create] music_section={music_section}, minus={music_minus}, vol_lbl={music_vol_lbl}, plus={music_plus}')
     rython.ui.add_child(music_section, music_label)
     rython.ui.add_child(music_section, music_minus)
     rython.ui.add_child(music_section, music_vol_lbl)
@@ -44,7 +40,6 @@ def create() -> None:
     sfx_minus = rython.ui.create_button("-", 0.0, 0.0, 0.12, 1.0)
     sfx_vol_lbl = rython.ui.create_label(f"{_sfx_vol}%", 0.0, 0.0, 0.22, 1.0)
     sfx_plus = rython.ui.create_button("+", 0.0, 0.0, 0.12, 1.0)
-    print(f'[DEBUG settings_menu.create] sfx_section={sfx_section}, minus={sfx_minus}, vol_lbl={sfx_vol_lbl}, plus={sfx_plus}')
     rython.ui.add_child(sfx_section, sfx_label)
     rython.ui.add_child(sfx_section, sfx_minus)
     rython.ui.add_child(sfx_section, sfx_vol_lbl)
@@ -55,7 +50,6 @@ def create() -> None:
 
     # Back button
     back_btn = rython.ui.create_button("Back", 0.0, 0.0, 1.0, 0.1)
-    print(f'[DEBUG settings_menu.create] back_btn id={back_btn}')
     rython.ui.add_child(panel, back_btn)
     rython.ui.set_layout(panel, "vertical", 0.02, 0.02)
 
@@ -67,7 +61,6 @@ def create() -> None:
 
     rython.ui.hide(panel)
     _panel_id = panel
-    print(f'[DEBUG settings_menu.create] done, _panel_id={_panel_id}')
 
     # Apply initial volumes
     rython.audio.set_volume("music", _music_vol / 100.0)
@@ -115,13 +108,10 @@ def _on_back() -> None:
 
 
 def show() -> None:
-    print(f'[DEBUG settings_menu.show] entry, _panel_id={_panel_id}')
     if _panel_id is not None:
         rython.ui.show(_panel_id)
-        print(f'[DEBUG settings_menu.show] after rython.ui.show({_panel_id})')
 
 
 def hide() -> None:
-    print(f'[DEBUG settings_menu.hide] entry, _panel_id={_panel_id}')
     if _panel_id is not None:
         rython.ui.hide(_panel_id)

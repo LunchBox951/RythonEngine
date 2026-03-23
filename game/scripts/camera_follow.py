@@ -13,14 +13,12 @@ _cam_z: float = -12.0
 def init() -> None:
     """Snap camera to player immediately (call on level load)."""
     global _cam_x, _cam_y, _cam_z
-    print('[DEBUG camera_follow.init] entry')
     px, py, pz = player.get_position()
     _cam_x = px + OFFSET[0]
     _cam_y = py + OFFSET[1]
     _cam_z = pz + OFFSET[2]
     rython.camera.set_position(_cam_x, _cam_y, _cam_z)
     rython.camera.set_look_at(px, py + 1.0, pz)
-    print(f'[DEBUG camera_follow.init] exit: cam=({_cam_x:.2f},{_cam_y:.2f},{_cam_z:.2f}), look_at=({px:.2f},{py+1.0:.2f},{pz:.2f})')
 
 
 def update(dt: float) -> None:

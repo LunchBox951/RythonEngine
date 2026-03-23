@@ -58,20 +58,14 @@ def _game_tick() -> None:
 
 
 def _on_start_game(**kwargs) -> None:
-    print('[DEBUG main._on_start_game] entry')
     game_state.reset_all()
-    print('[DEBUG main._on_start_game] after reset_all')
     game_state.set_state(game_state.PLAYING)
-    print('[DEBUG main._on_start_game] after set_state(PLAYING)')
     hud.show()
-    print('[DEBUG main._on_start_game] after hud.show, before scene.emit(load_level)')
     rython.scene.emit("load_level", level=1)
-    print('[DEBUG main._on_start_game] after scene.emit(load_level) — returned')
 
 
 def _on_load_level(**kwargs) -> None:
     level_num = kwargs.get("level", 1)
-    print(f'[DEBUG main._on_load_level] entry, level_num={level_num}')
     game_state.set_level(level_num)
     game_state.reset_for_level()
 
@@ -86,11 +80,8 @@ def _on_load_level(**kwargs) -> None:
     else:
         from game.scripts.levels import arena_3 as arena
 
-    print(f'[DEBUG main._on_load_level] before arena.build()')
     arena.build()
-    print(f'[DEBUG main._on_load_level] after arena.build(), before camera_follow.init()')
     camera_follow.init()
-    print(f'[DEBUG main._on_load_level] after camera_follow.init()')
 
 
 def _on_player_died(**kwargs) -> None:
