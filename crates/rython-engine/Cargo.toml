@@ -16,6 +16,10 @@ rython-audio.workspace = true
 rython-resources.workspace = true
 rython-ui.workspace = true
 rython-scripting.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+parking_lot.workspace = true
+log.workspace = true
 
 [dev-dependencies]
 toml.workspace = true
