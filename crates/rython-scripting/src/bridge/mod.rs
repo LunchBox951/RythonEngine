@@ -7,6 +7,7 @@ pub mod engine;
 pub mod entity;
 pub mod input;
 pub mod renderer;
+pub mod resources;
 pub mod scene;
 pub mod scheduler;
 pub mod time;
@@ -17,6 +18,7 @@ pub use audio::set_active_audio;
 pub use camera::CameraPy;
 pub use entity::EntityPy;
 pub use input::set_active_input;
+pub use resources::set_active_resources;
 pub use types::{TransformPy, Vec3Py};
 // call_entry_point, clear_recurring_callbacks, drain_draw_commands,
 // ensure_rython_module, flush_recurring_callbacks, get_script_class,
@@ -208,6 +210,7 @@ pub fn ensure_rython_module(py: Python<'_>, scene: Arc<Scene>) -> PyResult<()> {
     rython.add_class::<types::Vec3Py>()?;
     rython.add_class::<types::TransformPy>()?;
     rython.add_class::<entity::EntityPy>()?;
+    rython.add_class::<resources::AssetHandlePy>()?;
 
     let scene_bridge = Py::new(py, scene::SceneBridge {})?;
     rython.add("scene", scene_bridge)?;
@@ -233,7 +236,10 @@ pub fn ensure_rython_module(py: Python<'_>, scene: Arc<Scene>) -> PyResult<()> {
     let aud = Py::new(py, audio::AudioBridge {})?;
     rython.add("audio", aud)?;
 
-    for name in &["physics", "ui", "resources", "modules"] {
+    let res = Py::new(py, resources::ResourcesBridge {})?;
+    rython.add("resources", res)?;
+
+    for name in &["physics", "ui", "modules"] {
         let stub = Py::new(py, SubModulePy { name: name.to_string() })?;
         rython.add(*name, stub)?;
     }
