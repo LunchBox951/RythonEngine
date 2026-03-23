@@ -2615,6 +2615,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "env_logger",
+ "fontdue",
  "glam 0.29.3",
  "log",
  "pollster 0.3.0",

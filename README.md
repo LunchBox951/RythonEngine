@@ -211,8 +211,6 @@ Priority 40  Idle             -- Deferred maintenance, streaming loads, LRU evic
 |------|----------|
 | `docs/engine/` | Rust implementation docs: EngineBuilder, Module trait, crate reference, scheduler, how to write engine modules |
 | `docs/game/` | Python scripting docs: `rython` API, script classes, entity spawning, camera, events, complete examples |
-| `.spec/` | Detailed per-module specifications (task-scheduler, ecs, renderer, physics, audio, input, ui, resources, scripting, errors, threading) |
-| `SPEC.md` | Top-level architecture spec with acceptance tests |
 
 ---
 
