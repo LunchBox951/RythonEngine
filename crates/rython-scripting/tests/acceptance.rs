@@ -8,10 +8,12 @@ use std::sync::{Arc, Mutex};
 
 use pyo3::prelude::*;
 use rython_ecs::Scene;
-use rython_ecs::component::TransformComponent;
+use rython_ecs::component::{MeshComponent, TagComponent, TransformComponent};
+use rython_renderer::DrawCommand;
 use rython_scripting::{
-    ScriptComponent, ScriptSystem, ensure_rython_module, register_script_class,
-    set_active_scene, gil_dispatch_count, reset_gil_dispatch_count,
+    clear_recurring_callbacks, drain_draw_commands, ensure_rython_module, flush_recurring_callbacks,
+    gil_dispatch_count, register_script_class, reset_gil_dispatch_count, reset_quit_requested,
+    set_active_scene, set_elapsed_secs, was_quit_requested, ScriptComponent, ScriptSystem,
 };
 
 // ─── Test serialisation guard ─────────────────────────────────────────────────
@@ -702,6 +704,197 @@ class BatchScript19:
         let count = gil_dispatch_count();
         assert!(count <= 2, "GIL acquired at most 2 times per frame, got {count}");
     });
+}
+
+// ─── T-SCRIPT-21: spawn with mesh kwarg → MeshComponent ──────────────────────
+
+#[test]
+fn t_script_21_spawn_with_mesh_kwarg() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+entity_21 = rython.scene.spawn(
+    transform=rython.Transform(x=1.0),
+    mesh='cube_mesh',
+)
+",
+            None, None,
+        ).expect("spawn with mesh kwarg");
+
+        let main = py.import("__main__").unwrap();
+        let eid: u64 = main.getattr("entity_21").unwrap().getattr("id").unwrap().extract().unwrap();
+        let mesh = scene.components.get::<MeshComponent>(rython_ecs::EntityId(eid));
+        assert!(mesh.is_some(), "MeshComponent should be present");
+        assert_eq!(mesh.unwrap().mesh_id, "cube_mesh");
+    });
+}
+
+// ─── T-SCRIPT-22: spawn with tags kwarg → TagComponent ───────────────────────
+
+#[test]
+fn t_script_22_spawn_with_tags_kwarg() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+entity_22 = rython.scene.spawn(tags=['player', 'cube'])
+",
+            None, None,
+        ).expect("spawn with tags kwarg");
+
+        let main = py.import("__main__").unwrap();
+        let eid: u64 = main.getattr("entity_22").unwrap().getattr("id").unwrap().extract().unwrap();
+        let tags = scene.components.get::<TagComponent>(rython_ecs::EntityId(eid));
+        assert!(tags.is_some(), "TagComponent should be present");
+        let tags = tags.unwrap();
+        assert!(tags.tags.contains(&"player".to_string()), "should have 'player' tag");
+        assert!(tags.tags.contains(&"cube".to_string()), "should have 'cube' tag");
+    });
+}
+
+// ─── T-SCRIPT-23: CameraPy set_position / set_look_at ────────────────────────
+
+#[test]
+fn t_script_23_camera_set_position_and_look_at() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+rython.camera.set_position(0.0, 5.0, -10.0)
+rython.camera.set_look_at(0.0, 0.0, 0.0)
+cam_px = rython.camera.pos_x
+cam_py = rython.camera.pos_y
+cam_pz = rython.camera.pos_z
+",
+            None, None,
+        ).expect("camera API");
+
+        let main = py.import("__main__").unwrap();
+        let px: f32 = main.getattr("cam_px").unwrap().extract().unwrap();
+        let py_: f32 = main.getattr("cam_py").unwrap().extract().unwrap();
+        let pz: f32 = main.getattr("cam_pz").unwrap().extract().unwrap();
+        assert!((px - 0.0).abs() < 1e-5, "pos_x should be 0.0");
+        assert!((py_ - 5.0).abs() < 1e-5, "pos_y should be 5.0");
+        assert!((pz - (-10.0)).abs() < 1e-5, "pos_z should be -10.0");
+    });
+}
+
+// ─── T-SCRIPT-24: scheduler.register_recurring fires per flush ────────────────
+
+#[test]
+fn t_script_24_scheduler_register_recurring() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+    clear_recurring_callbacks();
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+tick_count_24 = 0
+def on_tick_24():
+    global tick_count_24
+    tick_count_24 += 1
+rython.scheduler.register_recurring(on_tick_24)
+",
+            None, None,
+        ).expect("register_recurring");
+
+        flush_recurring_callbacks(py);
+        flush_recurring_callbacks(py);
+
+        let main = py.import("__main__").unwrap();
+        let count: i64 = main.getattr("tick_count_24").unwrap().extract().unwrap();
+        assert_eq!(count, 2, "callback should fire once per flush");
+    });
+
+    clear_recurring_callbacks();
+}
+
+// ─── T-SCRIPT-25: renderer.draw_text enqueues a DrawCommand ──────────────────
+
+#[test]
+fn t_script_25_renderer_draw_text() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+    // drain any leftover commands from prior tests
+    let _ = drain_draw_commands();
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+rython.renderer.draw_text('Hello World', font_id='main', x=0.1, y=0.9, size=24)
+",
+            None, None,
+        ).expect("draw_text");
+    });
+
+    let cmds = drain_draw_commands();
+    assert_eq!(cmds.len(), 1, "one draw command expected");
+    match &cmds[0] {
+        DrawCommand::Text(dt) => {
+            assert_eq!(dt.text, "Hello World");
+            assert_eq!(dt.font_id, "main");
+            assert_eq!(dt.size, 24);
+        }
+        other => panic!("expected DrawCommand::Text, got {:?}", other),
+    }
+}
+
+// ─── T-SCRIPT-26: rython.time.elapsed returns set value ──────────────────────
+
+#[test]
+fn t_script_26_time_elapsed() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    set_elapsed_secs(3.14);
+
+    Python::attach(|py| {
+        py.run(c"import rython; elapsed_26 = rython.time.elapsed", None, None)
+            .expect("time.elapsed");
+
+        let main = py.import("__main__").unwrap();
+        let t: f64 = main.getattr("elapsed_26").unwrap().extract().unwrap();
+        assert!((t - 3.14).abs() < 1e-6, "elapsed should be 3.14, got {t}");
+    });
+}
+
+// ─── T-SCRIPT-27: engine.request_quit sets the quit flag ─────────────────────
+
+#[test]
+fn t_script_27_engine_request_quit() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+    reset_quit_requested();
+
+    assert!(!was_quit_requested(), "quit flag should start false");
+
+    Python::attach(|py| {
+        py.run(c"import rython; rython.engine.request_quit()", None, None)
+            .expect("request_quit");
+    });
+
+    assert!(was_quit_requested(), "quit flag should be set after request_quit()");
+    reset_quit_requested(); // clean up for future tests
 }
 
 // ─── T-SCRIPT-20: Entry Point Execution ──────────────────────────────────────
