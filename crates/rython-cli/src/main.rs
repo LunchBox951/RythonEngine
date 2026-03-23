@@ -170,8 +170,8 @@ impl App {
         let world_transforms = TransformSystem::run(&self.scene.components, &self.scene.hierarchy);
         let ecs_cmds = RenderSystem::run(&self.scene.components, &world_transforms);
 
-        // Drain script draw commands (text overlays — not rendered yet)
-        let _script_cmds = drain_draw_commands();
+        // Drain script draw commands
+        let script_cmds = drain_draw_commands();
 
         // Build camera from Python bridge state
         let mut camera = Camera::new();
@@ -225,8 +225,48 @@ impl App {
 
         let color_view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Clear pass
-        renderer.gpu.render_clear(&frame, renderer.config.clear_color);
+        // MSAA: ensure multisampled texture is ready
+        let sample_count = renderer.gpu.sample_count;
+        if sample_count > 1 {
+            let fmt = renderer.gpu.surface_format;
+            renderer.ensure_msaa_texture(width, height, fmt);
+        }
+
+        // MSAA-aware clear pass (inline to support resolve target)
+        {
+            let [r, g, b, a] = renderer.config.clear_color;
+            let clear_color = wgpu::Color {
+                r: r as f64 / 255.0,
+                g: g as f64 / 255.0,
+                b: b as f64 / 255.0,
+                a: a as f64 / 255.0,
+            };
+            let (att_view, att_resolve): (&wgpu::TextureView, Option<&wgpu::TextureView>) =
+                match (sample_count > 1, renderer.msaa_view()) {
+                    (true, Some(mv)) => (mv, Some(&color_view)),
+                    _ => (&color_view, None),
+                };
+            let mut enc = renderer.gpu.device.create_command_encoder(
+                &wgpu::CommandEncoderDescriptor { label: Some("clear encoder") },
+            );
+            {
+                let _pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("clear pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: att_view,
+                        resolve_target: att_resolve,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(clear_color),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+            }
+            renderer.gpu.queue.submit(std::iter::once(enc.finish()));
+        }
 
         // Collect mesh draw commands from ECS
         let mesh_cmds: Vec<rython_renderer::DrawMesh> = ecs_cmds
@@ -245,6 +285,17 @@ impl App {
             if let Some(depth_view) = renderer.depth_view() {
                 renderer.render_meshes(&mesh_cmds, &camera, &color_view, depth_view);
             }
+        }
+
+        // Render text overlays from script draw commands
+        let text_cmds: Vec<rython_renderer::DrawText> = script_cmds
+            .into_iter()
+            .filter_map(|cmd| {
+                if let rython_renderer::DrawCommand::Text(t) = cmd { Some(t) } else { None }
+            })
+            .collect();
+        if !text_cmds.is_empty() {
+            renderer.render_text(&text_cmds, &color_view, width, height);
         }
 
         frame.present();
@@ -286,7 +337,7 @@ impl ApplicationHandler for App {
             .expect("failed to create wgpu surface");
 
         let gpu = pollster::block_on(rython_renderer::GpuContext::new_for_surface(
-            instance, &surface,
+            instance, &surface, 4,
         ))
         .expect("failed to create GPU context");
 

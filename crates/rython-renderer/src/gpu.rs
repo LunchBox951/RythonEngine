@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::camera::Camera;
-use crate::command::DrawMesh;
+use crate::command::{DrawMesh, DrawText};
 use crate::config::RendererConfig;
 use crate::shaders::{IMAGE_WGSL, MESH_WGSL, PRIMITIVE_WGSL, TEXT_WGSL};
 use thiserror::Error;
@@ -76,11 +76,13 @@ pub struct GpuContext {
     pub pipelines: Pipelines,
     pub bind_group_layouts: BindGroupLayouts,
     pub surface_format: wgpu::TextureFormat,
+    /// MSAA sample count used when creating pipelines (1 = disabled).
+    pub sample_count: u32,
 }
 
 impl GpuContext {
-    /// Initialise a headless GPU context (no surface).  Useful for testing
-    /// pipeline compilation without a window.
+    /// Initialise a headless GPU context (no surface) with sample_count=1.
+    /// Useful for testing pipeline compilation without a window.
     pub async fn new_headless() -> Result<Self, RendererError> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
 
@@ -110,7 +112,9 @@ impl GpuContext {
         }
 
         let surface_format = wgpu::TextureFormat::Bgra8UnormSrgb;
-        let (pipelines, bind_group_layouts) = Self::create_pipelines(&device, surface_format)?;
+        let sample_count = 1u32;
+        let (pipelines, bind_group_layouts) =
+            Self::create_pipelines(&device, surface_format, sample_count)?;
 
         Ok(Self {
             instance,
@@ -120,6 +124,7 @@ impl GpuContext {
             pipelines,
             bind_group_layouts,
             surface_format,
+            sample_count,
         })
     }
 
@@ -129,6 +134,7 @@ impl GpuContext {
     pub async fn new_for_surface(
         instance: wgpu::Instance,
         surface: &wgpu::Surface<'_>,
+        sample_count: u32,
     ) -> Result<Self, RendererError> {
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -155,9 +161,19 @@ impl GpuContext {
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 
-        let (pipelines, bind_group_layouts) = Self::create_pipelines(&device, surface_format)?;
+        let (pipelines, bind_group_layouts) =
+            Self::create_pipelines(&device, surface_format, sample_count)?;
 
-        Ok(Self { instance, adapter, device, queue, pipelines, bind_group_layouts, surface_format })
+        Ok(Self {
+            instance,
+            adapter,
+            device,
+            queue,
+            pipelines,
+            bind_group_layouts,
+            surface_format,
+            sample_count,
+        })
     }
 
     /// Process pending GPU upload requests (called on main thread each render tick).
@@ -258,6 +274,7 @@ impl GpuContext {
     fn create_pipelines(
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
+        sample_count: u32,
     ) -> Result<(Pipelines, BindGroupLayouts), RendererError> {
         let (primitive, primitive_bgl) = Self::build_pipeline(
             device,
@@ -265,6 +282,7 @@ impl GpuContext {
             PRIMITIVE_WGSL,
             surface_format,
             false,
+            sample_count,
         )?;
         let (image, image_bgl) = Self::build_pipeline(
             device,
@@ -272,6 +290,7 @@ impl GpuContext {
             IMAGE_WGSL,
             surface_format,
             true,
+            sample_count,
         )?;
         let (text, text_bgl) = Self::build_pipeline(
             device,
@@ -279,9 +298,10 @@ impl GpuContext {
             TEXT_WGSL,
             surface_format,
             true,
+            sample_count,
         )?;
         let (mesh, mesh_camera_bgl, mesh_model_bgl) =
-            Self::build_mesh_pipeline(device, surface_format)?;
+            Self::build_mesh_pipeline(device, surface_format, sample_count)?;
 
         let pipelines = Pipelines { primitive, image, text, mesh };
         let bind_group_layouts = BindGroupLayouts {
@@ -300,6 +320,7 @@ impl GpuContext {
         wgsl: &str,
         format: wgpu::TextureFormat,
         alpha_blend: bool,
+        sample_count: u32,
     ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout), RendererError> {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(label),
@@ -386,7 +407,11 @@ impl GpuContext {
                 ..Default::default()
             },
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
             multiview: None,
             cache: None,
         });
@@ -397,6 +422,7 @@ impl GpuContext {
     fn build_mesh_pipeline(
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
+        sample_count: u32,
     ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout, wgpu::BindGroupLayout), RendererError> {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh"),
@@ -480,7 +506,11 @@ impl GpuContext {
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
             multiview: None,
             cache: None,
         });
@@ -510,6 +540,206 @@ struct ModelUniform {
     color: [f32; 4],
 }
 
+/// Text glyph uniform — matches TEXT_WGSL layout (48 bytes).
+///
+///   0–15:  rect: vec4<f32>    — clip-space (x, y, w, h)
+///  16–31:  uv_rect: vec4<f32> — atlas UV region (u0, v0, u1, v1)
+///  32–47:  color: vec4<f32>   — RGBA 0.0–1.0
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct TextUniform {
+    rect: [f32; 4],
+    uv_rect: [f32; 4],
+    color: [f32; 4],
+}
+
+// ── Glyph atlas ───────────────────────────────────────────────────────────────
+
+const ATLAS_SIZE: u32 = 512;
+
+/// Cached rasterized glyph entry in the atlas.
+#[derive(Clone, Copy)]
+struct GlyphEntry {
+    /// Normalized UV rect [u0, v0, u1, v1] within the 512×512 atlas.
+    uv_rect: [f32; 4],
+    /// Horizontal advance in pixels.
+    advance_width: f32,
+    /// Rendered glyph width in pixels (0 for invisible glyphs like space).
+    width: u32,
+    /// Rendered glyph height in pixels.
+    height: u32,
+}
+
+/// 512×512 R8Unorm glyph atlas with on-demand fontdue rasterization.
+struct GlyphAtlas {
+    font: fontdue::Font,
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    sampler: wgpu::Sampler,
+    cache: HashMap<(char, u32), GlyphEntry>,
+    next_x: u32,
+    next_y: u32,
+    row_height: u32,
+}
+
+impl GlyphAtlas {
+    /// Try to create an atlas by loading a system font. Returns None if no font is found.
+    fn try_new(device: &wgpu::Device) -> Option<Self> {
+        let font_paths = [
+            "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
+            "/usr/share/fonts/noto/NotoSansMono-Regular.ttf",
+            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+        ];
+
+        let font_bytes = font_paths.iter().find_map(|p| {
+            std::fs::read(p).ok().map(|b| { log::info!("GlyphAtlas: loaded font {}", p); b })
+        });
+
+        let font_bytes = match font_bytes {
+            Some(b) => b,
+            None => {
+                log::warn!("GlyphAtlas: no system font found; text rendering disabled");
+                return None;
+            }
+        };
+
+        let font = match fontdue::Font::from_bytes(
+            font_bytes.as_slice(),
+            fontdue::FontSettings::default(),
+        ) {
+            Ok(f) => f,
+            Err(e) => {
+                log::warn!("GlyphAtlas: font parse error: {}; text rendering disabled", e);
+                return None;
+            }
+        };
+
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("glyph_atlas"),
+            size: wgpu::Extent3d {
+                width: ATLAS_SIZE,
+                height: ATLAS_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("glyph_atlas_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        Some(Self {
+            font,
+            texture,
+            view,
+            sampler,
+            cache: HashMap::new(),
+            next_x: 0,
+            next_y: 0,
+            row_height: 0,
+        })
+    }
+
+    /// Return a cached `GlyphEntry`, rasterizing into the atlas on first use.
+    fn get_or_rasterize(&mut self, ch: char, size_px: u32, queue: &wgpu::Queue) -> GlyphEntry {
+        if let Some(entry) = self.cache.get(&(ch, size_px)) {
+            return *entry;
+        }
+
+        let (metrics, bitmap) = self.font.rasterize(ch, size_px as f32);
+
+        // Invisible glyph (space, control character, etc.)
+        if bitmap.is_empty() || metrics.width == 0 || metrics.height == 0 {
+            let entry = GlyphEntry {
+                uv_rect: [0.0; 4],
+                advance_width: metrics.advance_width,
+                width: 0,
+                height: 0,
+            };
+            self.cache.insert((ch, size_px), entry);
+            return entry;
+        }
+
+        let gw = metrics.width as u32;
+        let gh = metrics.height as u32;
+
+        // Row-pack: advance to next row if glyph doesn't fit on current row
+        if self.next_x + gw > ATLAS_SIZE {
+            self.next_y += self.row_height + 1;
+            self.next_x = 0;
+            self.row_height = 0;
+        }
+
+        // If atlas is full, return an invisible entry
+        if self.next_y + gh > ATLAS_SIZE {
+            log::warn!("GlyphAtlas: atlas full, skipping glyph '{}'", ch);
+            let entry = GlyphEntry {
+                uv_rect: [0.0; 4],
+                advance_width: metrics.advance_width,
+                width: 0,
+                height: 0,
+            };
+            self.cache.insert((ch, size_px), entry);
+            return entry;
+        }
+
+        let ax = self.next_x;
+        let ay = self.next_y;
+
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x: ax, y: ay, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            &bitmap,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(gw),
+                rows_per_image: Some(gh),
+            },
+            wgpu::Extent3d { width: gw, height: gh, depth_or_array_layers: 1 },
+        );
+
+        if gh > self.row_height {
+            self.row_height = gh;
+        }
+
+        let u0 = ax as f32 / ATLAS_SIZE as f32;
+        let v0 = ay as f32 / ATLAS_SIZE as f32;
+        let u1 = (ax + gw) as f32 / ATLAS_SIZE as f32;
+        let v1 = (ay + gh) as f32 / ATLAS_SIZE as f32;
+
+        self.next_x += gw + 1;
+
+        let entry = GlyphEntry {
+            uv_rect: [u0, v0, u1, v1],
+            advance_width: metrics.advance_width,
+            width: gw,
+            height: gh,
+        };
+        self.cache.insert((ch, size_px), entry);
+        entry
+    }
+}
+
+// ── RendererState ─────────────────────────────────────────────────────────────
+
 /// Renderer configuration extended with runtime GPU state.
 pub struct RendererState {
     pub gpu: GpuContext,
@@ -518,12 +748,23 @@ pub struct RendererState {
     pub mesh_cache: HashMap<String, MeshBuffers>,
     /// Cached depth texture (Depth32Float) and its current dimensions.
     depth_texture: Option<(wgpu::Texture, wgpu::TextureView, u32, u32)>,
+    /// MSAA resolve texture and its current dimensions + format.
+    msaa_texture: Option<(wgpu::Texture, wgpu::TextureView, u32, u32, wgpu::TextureFormat)>,
+    /// Lazily-initialized glyph atlas for text rendering.
+    glyph_atlas: Option<GlyphAtlas>,
 }
 
 impl RendererState {
     /// Construct a new RendererState with an empty mesh cache and no depth texture.
     pub fn new(gpu: GpuContext, config: RendererConfig) -> Self {
-        Self { gpu, config, mesh_cache: HashMap::new(), depth_texture: None }
+        Self {
+            gpu,
+            config,
+            mesh_cache: HashMap::new(),
+            depth_texture: None,
+            msaa_texture: None,
+            glyph_atlas: None,
+        }
     }
 
     pub fn clear_color_wgpu(&self) -> wgpu::Color {
@@ -580,7 +821,7 @@ impl RendererState {
                 label: Some("depth"),
                 size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
                 mip_level_count: 1,
-                sample_count: 1,
+                sample_count: self.gpu.sample_count,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Depth32Float,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -588,7 +829,7 @@ impl RendererState {
             });
             let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
             self.depth_texture = Some((tex, view, width, height));
-            log::debug!("depth texture created: {}×{}", width, height);
+            log::debug!("depth texture created: {}×{} (sample_count={})", width, height, self.gpu.sample_count);
         }
     }
 
@@ -597,11 +838,47 @@ impl RendererState {
         self.depth_texture.as_ref().map(|(_, view, _, _)| view)
     }
 
+    /// Ensure an MSAA resolve texture of the given dimensions and format exists.
+    /// Only creates a texture when `gpu.sample_count > 1`.
+    pub fn ensure_msaa_texture(&mut self, width: u32, height: u32, format: wgpu::TextureFormat) {
+        if self.gpu.sample_count <= 1 {
+            return;
+        }
+        let needs_new = self.msaa_texture
+            .as_ref()
+            .map_or(true, |&(_, _, w, h, f)| w != width || h != height || f != format);
+
+        if needs_new {
+            let tex = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("msaa"),
+                size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: self.gpu.sample_count,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+            self.msaa_texture = Some((tex, view, width, height, format));
+            log::debug!("MSAA texture created: {}×{} ({}x)", width, height, self.gpu.sample_count);
+        }
+    }
+
+    /// Returns a reference to the MSAA texture view, if one has been created.
+    pub fn msaa_view(&self) -> Option<&wgpu::TextureView> {
+        self.msaa_texture.as_ref().map(|(_, view, _, _, _)| view)
+    }
+
     /// Render a batch of `DrawMesh` commands using the mesh pipeline.
     ///
     /// Each command is looked up in the mesh cache; commands whose `mesh_id` has
     /// not been uploaded are silently skipped.  The caller is responsible for
     /// calling [`ensure_depth_texture`] before this and passing the resulting view.
+    ///
+    /// When `gpu.sample_count > 1` and an MSAA texture has been prepared via
+    /// [`ensure_msaa_texture`], the MSAA texture is used as the render attachment
+    /// and `color_view` becomes the resolve target.
     pub fn render_meshes(
         &self,
         commands: &[DrawMesh],
@@ -612,6 +889,17 @@ impl RendererState {
         if commands.is_empty() {
             return;
         }
+
+        // Determine MSAA attachment vs resolve target
+        let (mesh_color_view, resolve_target): (&wgpu::TextureView, Option<&wgpu::TextureView>) =
+            if self.gpu.sample_count > 1 {
+                match self.msaa_texture.as_ref() {
+                    Some((_, ref mv, ..)) => (mv, Some(color_view)),
+                    None => (color_view, None),
+                }
+            } else {
+                (color_view, None)
+            };
 
         // Camera uniform — shared across all mesh draws in this batch.
         let cam_uniform = CameraUniform {
@@ -644,8 +932,8 @@ impl RendererState {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("mesh pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: color_view,
-                    resolve_target: None,
+                    view: mesh_color_view,
+                    resolve_target,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -699,6 +987,140 @@ impl RendererState {
                 pass.set_vertex_buffer(0, mesh.vertex_buf.slice(..));
                 pass.set_index_buffer(mesh.index_buf.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+            }
+        }
+
+        self.gpu.queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    /// Render a batch of `DrawText` commands using the text pipeline and glyph atlas.
+    ///
+    /// Glyphs are rasterized on demand via fontdue and cached in a 512×512 R8Unorm
+    /// atlas texture.  Each glyph is rendered as a full-screen-space quad.
+    pub fn render_text(
+        &mut self,
+        commands: &[DrawText],
+        color_view: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+    ) {
+        if commands.is_empty() {
+            return;
+        }
+
+        // Lazily initialize the glyph atlas
+        if self.glyph_atlas.is_none() {
+            self.glyph_atlas = GlyphAtlas::try_new(&self.gpu.device);
+        }
+        if self.glyph_atlas.is_none() {
+            return; // no font available
+        }
+
+        // Phase 1: rasterize all needed glyphs and collect TextUniforms.
+        // This uses &mut self.glyph_atlas and &self.gpu.queue (different fields).
+        let mut draws: Vec<TextUniform> = Vec::new();
+        {
+            let queue = &self.gpu.queue;
+            let atlas = self.glyph_atlas.as_mut().unwrap();
+            for cmd in commands {
+                let size_px = cmd.size.max(1);
+                let mut cursor_x = cmd.x;
+                let color = cmd.color.to_linear();
+                for ch in cmd.text.chars() {
+                    let entry = atlas.get_or_rasterize(ch, size_px, queue);
+                    if entry.width == 0 {
+                        // Invisible glyph — advance cursor only
+                        cursor_x += entry.advance_width / width as f32;
+                        continue;
+                    }
+                    let clip_w = entry.advance_width / width as f32 * 2.0;
+                    let clip_h = -(entry.height as f32 / height as f32 * 2.0);
+                    // norm_to_clip: clip_x = nx*2-1, clip_y = 1-ny*2
+                    let clip_x = cursor_x * 2.0 - 1.0;
+                    let clip_y = 1.0 - cmd.y * 2.0;
+                    draws.push(TextUniform {
+                        rect: [clip_x, clip_y, clip_w, clip_h],
+                        uv_rect: entry.uv_rect,
+                        color,
+                    });
+                    cursor_x += entry.advance_width / width as f32;
+                }
+            }
+        }
+
+        if draws.is_empty() {
+            return;
+        }
+
+        // Phase 2: build render pass.
+        // Determine MSAA attachment vs resolve target (same logic as render_meshes).
+        let (text_color_view, resolve_target): (&wgpu::TextureView, Option<&wgpu::TextureView>) =
+            if self.gpu.sample_count > 1 {
+                match self.msaa_texture.as_ref() {
+                    Some((_, ref mv, ..)) => (mv, Some(color_view)),
+                    None => (color_view, None),
+                }
+            } else {
+                (color_view, None)
+            };
+
+        let atlas_view = &self.glyph_atlas.as_ref().unwrap().view;
+        let atlas_sampler = &self.glyph_atlas.as_ref().unwrap().sampler;
+
+        let mut encoder = self.gpu.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("text encoder") },
+        );
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("text pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: text_color_view,
+                    resolve_target,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            pass.set_pipeline(&self.gpu.pipelines.text);
+
+            for uniform in &draws {
+                let bytes: &[u8] = bytemuck::bytes_of(uniform);
+                let ubuf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("text_uniform"),
+                    size: bytes.len() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM,
+                    mapped_at_creation: true,
+                });
+                ubuf.slice(..).get_mapped_range_mut().copy_from_slice(bytes);
+                ubuf.unmap();
+
+                let bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("text_bg"),
+                    layout: &self.gpu.bind_group_layouts.text,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: ubuf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(atlas_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(atlas_sampler),
+                        },
+                    ],
+                });
+
+                pass.set_bind_group(0, &bg, &[]);
+                pass.draw(0..6, 0..1);
             }
         }
 
