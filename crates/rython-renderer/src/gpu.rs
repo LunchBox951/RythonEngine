@@ -42,6 +42,23 @@ pub struct Pipelines {
     pub mesh: wgpu::RenderPipeline,
 }
 
+/// Bind group layouts matching the bindings declared in each built-in shader.
+///
+/// Stored on [`GpuContext`] so callers can create compatible bind groups when
+/// uploading per-draw uniforms, textures, and samplers.
+pub struct BindGroupLayouts {
+    /// `primitive` shader: group(0) = uniform buffer
+    pub primitive: wgpu::BindGroupLayout,
+    /// `image` shader: group(0) = uniform buffer + texture_2d + sampler
+    pub image: wgpu::BindGroupLayout,
+    /// `text` shader: group(0) = uniform buffer + texture_2d + sampler
+    pub text: wgpu::BindGroupLayout,
+    /// `mesh` shader: group(0) = camera uniform buffer
+    pub mesh_camera: wgpu::BindGroupLayout,
+    /// `mesh` shader: group(1) = model uniform buffer
+    pub mesh_model: wgpu::BindGroupLayout,
+}
+
 /// GPU context: wgpu instance, adapter, device, queue, surface, and pipelines.
 ///
 /// All GPU API calls must happen on the thread that owns this context (the main
@@ -53,6 +70,7 @@ pub struct GpuContext {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub pipelines: Pipelines,
+    pub bind_group_layouts: BindGroupLayouts,
     pub surface_format: wgpu::TextureFormat,
 }
 
@@ -88,7 +106,7 @@ impl GpuContext {
         }
 
         let surface_format = wgpu::TextureFormat::Bgra8UnormSrgb;
-        let pipelines = Self::create_pipelines(&device, surface_format)?;
+        let (pipelines, bind_group_layouts) = Self::create_pipelines(&device, surface_format)?;
 
         Ok(Self {
             instance,
@@ -96,6 +114,7 @@ impl GpuContext {
             device,
             queue,
             pipelines,
+            bind_group_layouts,
             surface_format,
         })
     }
@@ -198,31 +217,40 @@ impl GpuContext {
     fn create_pipelines(
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
-    ) -> Result<Pipelines, RendererError> {
-        let primitive = Self::build_pipeline(
+    ) -> Result<(Pipelines, BindGroupLayouts), RendererError> {
+        let (primitive, primitive_bgl) = Self::build_pipeline(
             device,
             "primitive",
             PRIMITIVE_WGSL,
             surface_format,
             false,
         )?;
-        let image = Self::build_pipeline(
+        let (image, image_bgl) = Self::build_pipeline(
             device,
             "image",
             IMAGE_WGSL,
             surface_format,
             true,
         )?;
-        let text = Self::build_pipeline(
+        let (text, text_bgl) = Self::build_pipeline(
             device,
             "text",
             TEXT_WGSL,
             surface_format,
             true,
         )?;
-        let mesh = Self::build_mesh_pipeline(device, surface_format)?;
+        let (mesh, mesh_camera_bgl, mesh_model_bgl) =
+            Self::build_mesh_pipeline(device, surface_format)?;
 
-        Ok(Pipelines { primitive, image, text, mesh })
+        let pipelines = Pipelines { primitive, image, text, mesh };
+        let bind_group_layouts = BindGroupLayouts {
+            primitive: primitive_bgl,
+            image: image_bgl,
+            text: text_bgl,
+            mesh_camera: mesh_camera_bgl,
+            mesh_model: mesh_model_bgl,
+        };
+        Ok((pipelines, bind_group_layouts))
     }
 
     fn build_pipeline(
@@ -231,7 +259,7 @@ impl GpuContext {
         wgsl: &str,
         format: wgpu::TextureFormat,
         alpha_blend: bool,
-    ) -> Result<wgpu::RenderPipeline, RendererError> {
+    ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout), RendererError> {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(label),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(wgsl)),
@@ -243,9 +271,53 @@ impl GpuContext {
             Some(wgpu::BlendState::REPLACE)
         };
 
+        // Build a bind group layout that matches the shader's @group(0) bindings.
+        // Non-textured (primitive): binding 0 = uniform buffer.
+        // Textured (image/text):    binding 0 = uniform, 1 = texture_2d, 2 = sampler.
+        let uniform_entry = wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+
+        let bgl = if alpha_blend {
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some(label),
+                entries: &[
+                    uniform_entry,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            })
+        } else {
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some(label),
+                entries: &[uniform_entry],
+            })
+        };
+
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some(label),
-            bind_group_layouts: &[],
+            bind_group_layouts: &[&bgl],
             push_constant_ranges: &[],
         });
 
@@ -278,21 +350,51 @@ impl GpuContext {
             cache: None,
         });
 
-        Ok(pipeline)
+        Ok((pipeline, bgl))
     }
 
     fn build_mesh_pipeline(
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
-    ) -> Result<wgpu::RenderPipeline, RendererError> {
+    ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout, wgpu::BindGroupLayout), RendererError> {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh"),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(MESH_WGSL)),
         });
 
+        // group(0): camera uniform (view_proj matrix) — vertex-only
+        let camera_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("mesh_camera"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        // group(1): model uniform (model matrix + color) — vertex and fragment
+        let model_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("mesh_model"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh"),
-            bind_group_layouts: &[],
+            bind_group_layouts: &[&camera_bgl, &model_bgl],
             push_constant_ranges: &[],
         });
 
@@ -342,7 +444,7 @@ impl GpuContext {
             cache: None,
         });
 
-        Ok(pipeline)
+        Ok((pipeline, camera_bgl, model_bgl))
     }
 }
 
