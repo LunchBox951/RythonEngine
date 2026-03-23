@@ -30,6 +30,10 @@ _WAVE2_DELAY: float = 25.0
 _lava_damage_timer: float = 0.0
 _prev_time: float = 0.0
 
+_TEX_FLOOR = "game/assets/textures/Dark/dark_floor_grid.png"
+_TEX_WALL = "game/assets/textures/Red/red_wall.png"
+_TEX_LAVA = "game/assets/textures/Red/red_box.png"
+
 
 def build() -> None:
     global _pickup_entities, _collected
@@ -45,13 +49,13 @@ def build() -> None:
     _prev_time = rython.time.elapsed
 
     # Circular ground (approximated with a large square)
-    lb.spawn_static_block(0.0, -0.5, 0.0, 22.0, 1.0, 22.0)
+    lb.spawn_static_block(0.0, -0.5, 0.0, 22.0, 1.0, 22.0, texture=_TEX_FLOOR)
 
     # Circular perimeter walls (18 pillar segments at radius 11)
     _build_circular_wall(radius=11.0, y=0.0, segments=18, height=4.0)
 
     # Lava pit — static, visual only (damage handled by proximity in _tick)
-    lb.spawn_static_block(0.0, 0.05, 0.0, 6.0, 0.1, 6.0, tags=["lava"])
+    lb.spawn_static_block(0.0, 0.05, 0.0, 6.0, 0.1, 6.0, tags=["lava"], texture=_TEX_LAVA)
 
     # 3 score pickups around the arena
     p1 = lb.spawn_pickup(7.0,  0.5,  0.0,  pickup_type="score", value=100)
@@ -80,7 +84,7 @@ def _build_circular_wall(radius: float, y: float, segments: int,
         angle = (2.0 * math.pi * i) / segments
         wx = math.cos(angle) * radius
         wz = math.sin(angle) * radius
-        lb.spawn_static_block(wx, y + height / 2.0, wz, 2.0, height, 2.0)
+        lb.spawn_static_block(wx, y + height / 2.0, wz, 2.0, height, 2.0, texture=_TEX_WALL)
 
 
 def _spawn_wave1() -> None:

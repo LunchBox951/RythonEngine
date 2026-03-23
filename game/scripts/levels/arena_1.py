@@ -17,6 +17,10 @@ _pickups_total: int = 3
 _collected: int = 0
 _tick_registered: bool = False
 
+_TEX_FLOOR = "game/assets/textures/Light/light_floor_grid.png"
+_TEX_WALL = "game/assets/textures/Light/light_wall.png"
+_TEX_BOX = "game/assets/textures/Light/light_box.png"
+
 
 def build() -> None:
     global _pickup_entities, _collected, _tick_registered
@@ -24,19 +28,19 @@ def build() -> None:
     _collected = 0
 
     # Ground — 20x20
-    lb.spawn_static_block(0.0, -0.5, 0.0, 20.0, 1.0, 20.0)
+    lb.spawn_static_block(0.0, -0.5, 0.0, 20.0, 1.0, 20.0, texture=_TEX_FLOOR)
 
     # Border walls
-    lb.spawn_static_block(-10.0, 1.0, 0.0, 1.0, 2.0, 20.0)  # west
-    lb.spawn_static_block(10.0, 1.0, 0.0, 1.0, 2.0, 20.0)   # east
-    lb.spawn_static_block(0.0, 1.0, -10.0, 20.0, 2.0, 1.0)  # north
-    lb.spawn_static_block(0.0, 1.0, 10.0, 20.0, 2.0, 1.0)   # south
+    lb.spawn_static_block(-10.0, 1.0, 0.0, 1.0, 2.0, 20.0, texture=_TEX_WALL)  # west
+    lb.spawn_static_block(10.0, 1.0, 0.0, 1.0, 2.0, 20.0, texture=_TEX_WALL)   # east
+    lb.spawn_static_block(0.0, 1.0, -10.0, 20.0, 2.0, 1.0, texture=_TEX_WALL)  # north
+    lb.spawn_static_block(0.0, 1.0, 10.0, 20.0, 2.0, 1.0, texture=_TEX_WALL)   # south
 
     # 4 raised platforms
-    lb.spawn_static_block(-5.0, 2.0, -5.0, 4.0, 0.5, 4.0)
-    lb.spawn_static_block(5.0, 3.0, -5.0, 4.0, 0.5, 4.0)
-    lb.spawn_static_block(-5.0, 4.0, 5.0, 4.0, 0.5, 4.0)
-    lb.spawn_static_block(5.0, 2.5, 5.0, 4.0, 0.5, 4.0)
+    lb.spawn_static_block(-5.0, 2.0, -5.0, 4.0, 0.5, 4.0, texture=_TEX_BOX)
+    lb.spawn_static_block(5.0, 3.0, -5.0, 4.0, 0.5, 4.0, texture=_TEX_BOX)
+    lb.spawn_static_block(-5.0, 4.0, 5.0, 4.0, 0.5, 4.0, texture=_TEX_BOX)
+    lb.spawn_static_block(5.0, 2.5, 5.0, 4.0, 0.5, 4.0, texture=_TEX_BOX)
 
     # 3 score pickups
     p1 = lb.spawn_pickup(-5.0, 2.5, -5.0, pickup_type="score", value=100)

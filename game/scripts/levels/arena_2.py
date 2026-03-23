@@ -17,6 +17,9 @@ _pickups_total: int = 3
 _collected: int = 0
 _tick_registered: bool = False
 
+_TEX_PLATFORM = "game/assets/textures/Orange/orange_box.png"
+_TEX_PILLAR = "game/assets/textures/Dark/dark_box.png"
+
 
 def build() -> None:
     global _pickup_entities, _collected, _tick_registered
@@ -25,7 +28,7 @@ def build() -> None:
 
     # No ground — void below. Floating platforms form a path.
     # Start platform
-    lb.spawn_static_block(0.0, 0.0, 0.0, 6.0, 0.5, 6.0)
+    lb.spawn_static_block(0.0, 0.0, 0.0, 6.0, 0.5, 6.0, texture=_TEX_PLATFORM)
 
     # Platform chain across the void
     platform_data = [
@@ -37,11 +40,11 @@ def build() -> None:
         (-8.0, 4.0, -14.0, 6.0, 0.5, 6.0),  # end platform
     ]
     for x, y, z, w, h, d in platform_data:
-        lb.spawn_static_block(x, y, z, w, h, d)
+        lb.spawn_static_block(x, y, z, w, h, d, texture=_TEX_PLATFORM)
 
     # Decorative pillars
-    lb.spawn_static_block(16.0, 2.25, -6.5)
-    lb.spawn_static_block(16.0, 2.25, -9.5)
+    lb.spawn_static_block(16.0, 2.25, -6.5, texture=_TEX_PILLAR)
+    lb.spawn_static_block(16.0, 2.25, -9.5, texture=_TEX_PILLAR)
 
     # 3 score pickups (one per main platform)
     p1 = lb.spawn_pickup(8.0,  1.5,  0.0,  pickup_type="score", value=100)

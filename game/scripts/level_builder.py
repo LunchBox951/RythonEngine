@@ -15,9 +15,15 @@ def spawn_static_block(
     sz: float = 1.0,
     tags: Optional[List[str]] = None,
     mesh_opts: Optional[Dict[str, Any]] = None,
+    texture: Optional[str] = None,
 ) -> Entity:
     """Spawn an immovable cube block and register it for cleanup."""
-    mesh: Any = mesh_opts if isinstance(mesh_opts, dict) else "cube"
+    if texture is not None:
+        mesh: Any = {"mesh_id": "cube", "texture_id": texture}
+    elif isinstance(mesh_opts, dict):
+        mesh = mesh_opts
+    else:
+        mesh = "cube"
     entity = rython.scene.spawn(
         transform=Transform(x=x, y=y, z=z),
         mesh=mesh,
