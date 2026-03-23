@@ -13,3 +13,5 @@ image.workspace = true
 gltf.workspace = true
 fontdue.workspace = true
 hound.workspace = true
+bytemuck.workspace = true
+log.workspace = true

@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+
+use crate::camera::Camera;
+use crate::command::DrawMesh;
 use crate::config::RendererConfig;
 use crate::shaders::{IMAGE_WGSL, MESH_WGSL, PRIMITIVE_WGSL, TEXT_WGSL};
 use thiserror::Error;
@@ -448,13 +452,43 @@ impl GpuContext {
     }
 }
 
-/// Renderer configuration extended with a runtime surface reference.
+/// GPU vertex and index buffers for one cached mesh.
+pub struct MeshBuffers {
+    pub vertex_buf: wgpu::Buffer,
+    pub index_buf: wgpu::Buffer,
+    pub index_count: u32,
+}
+
+/// Uniform layouts used internally by the mesh render dispatch.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct CameraUniform {
+    view_proj: [[f32; 4]; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct ModelUniform {
+    model: [[f32; 4]; 4],
+    color: [f32; 4],
+}
+
+/// Renderer configuration extended with runtime GPU state.
 pub struct RendererState {
     pub gpu: GpuContext,
     pub config: RendererConfig,
+    /// Cached GPU mesh buffers keyed by mesh_id.
+    pub mesh_cache: HashMap<String, MeshBuffers>,
+    /// Cached depth texture (Depth32Float) and its current dimensions.
+    depth_texture: Option<(wgpu::Texture, wgpu::TextureView, u32, u32)>,
 }
 
 impl RendererState {
+    /// Construct a new RendererState with an empty mesh cache and no depth texture.
+    pub fn new(gpu: GpuContext, config: RendererConfig) -> Self {
+        Self { gpu, config, mesh_cache: HashMap::new(), depth_texture: None }
+    }
+
     pub fn clear_color_wgpu(&self) -> wgpu::Color {
         let [r, g, b, a] = self.config.clear_color;
         wgpu::Color {
@@ -463,5 +497,174 @@ impl RendererState {
             b: b as f64 / 255.0,
             a: a as f64 / 255.0,
         }
+    }
+
+    /// Upload a mesh to the GPU buffer cache.
+    ///
+    /// `vertices_bytes` must be the raw bytes of a `&[Vertex]` cast via bytemuck.
+    /// Replaces any previously cached mesh with the same `mesh_id`.
+    pub fn upload_mesh(&mut self, mesh_id: &str, vertices_bytes: &[u8], indices: &[u32]) {
+        let vertex_buf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(mesh_id),
+            size: vertices_bytes.len() as u64,
+            usage: wgpu::BufferUsages::VERTEX,
+            mapped_at_creation: true,
+        });
+        vertex_buf.slice(..).get_mapped_range_mut().copy_from_slice(vertices_bytes);
+        vertex_buf.unmap();
+
+        let index_bytes: &[u8] = bytemuck::cast_slice(indices);
+        let index_buf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(mesh_id),
+            size: index_bytes.len() as u64,
+            usage: wgpu::BufferUsages::INDEX,
+            mapped_at_creation: true,
+        });
+        index_buf.slice(..).get_mapped_range_mut().copy_from_slice(index_bytes);
+        index_buf.unmap();
+
+        self.mesh_cache.insert(
+            mesh_id.to_string(),
+            MeshBuffers { vertex_buf, index_buf, index_count: indices.len() as u32 },
+        );
+        log::debug!("mesh uploaded: '{}' ({} verts, {} indices)", mesh_id,
+            vertices_bytes.len() / 32, indices.len());
+    }
+
+    /// Ensure a Depth32Float texture of the given dimensions exists, recreating
+    /// it when the surface has been resized.
+    pub fn ensure_depth_texture(&mut self, width: u32, height: u32) {
+        let needs_new = self.depth_texture
+            .as_ref()
+            .map_or(true, |&(_, _, w, h)| w != width || h != height);
+
+        if needs_new {
+            let tex = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("depth"),
+                size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Depth32Float,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+            self.depth_texture = Some((tex, view, width, height));
+            log::debug!("depth texture created: {}×{}", width, height);
+        }
+    }
+
+    /// Returns a reference to the depth texture view, if one has been created.
+    pub fn depth_view(&self) -> Option<&wgpu::TextureView> {
+        self.depth_texture.as_ref().map(|(_, view, _, _)| view)
+    }
+
+    /// Render a batch of `DrawMesh` commands using the mesh pipeline.
+    ///
+    /// Each command is looked up in the mesh cache; commands whose `mesh_id` has
+    /// not been uploaded are silently skipped.  The caller is responsible for
+    /// calling [`ensure_depth_texture`] before this and passing the resulting view.
+    pub fn render_meshes(
+        &self,
+        commands: &[DrawMesh],
+        camera: &Camera,
+        color_view: &wgpu::TextureView,
+        depth_view: &wgpu::TextureView,
+    ) {
+        if commands.is_empty() {
+            return;
+        }
+
+        // Camera uniform — shared across all mesh draws in this batch.
+        let cam_uniform = CameraUniform {
+            view_proj: camera.view_projection().to_cols_array_2d(),
+        };
+        let cam_bytes: &[u8] = bytemuck::bytes_of(&cam_uniform);
+        let cam_buf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cam_uniform"),
+            size: cam_bytes.len() as u64,
+            usage: wgpu::BufferUsages::UNIFORM,
+            mapped_at_creation: true,
+        });
+        cam_buf.slice(..).get_mapped_range_mut().copy_from_slice(cam_bytes);
+        cam_buf.unmap();
+
+        let cam_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("cam_bg"),
+            layout: &self.gpu.bind_group_layouts.mesh_camera,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: cam_buf.as_entire_binding(),
+            }],
+        });
+
+        let mut encoder = self.gpu.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("mesh encoder") },
+        );
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("mesh pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            pass.set_pipeline(&self.gpu.pipelines.mesh);
+            pass.set_bind_group(0, &cam_bg, &[]);
+
+            for cmd in commands {
+                let Some(mesh) = self.mesh_cache.get(&cmd.mesh_id) else {
+                    log::warn!("render_meshes: mesh '{}' not in cache — skipped", cmd.mesh_id);
+                    continue;
+                };
+
+                let model_uniform = ModelUniform {
+                    model: cmd.transform.to_cols_array_2d(),
+                    color: [1.0, 1.0, 1.0, 1.0],
+                };
+                let model_bytes: &[u8] = bytemuck::bytes_of(&model_uniform);
+                let model_buf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("model_uniform"),
+                    size: model_bytes.len() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM,
+                    mapped_at_creation: true,
+                });
+                model_buf.slice(..).get_mapped_range_mut().copy_from_slice(model_bytes);
+                model_buf.unmap();
+
+                let model_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("model_bg"),
+                    layout: &self.gpu.bind_group_layouts.mesh_model,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: model_buf.as_entire_binding(),
+                    }],
+                });
+
+                pass.set_bind_group(1, &model_bg, &[]);
+                pass.set_vertex_buffer(0, mesh.vertex_buf.slice(..));
+                pass.set_index_buffer(mesh.index_buf.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+            }
+        }
+
+        self.gpu.queue.submit(std::iter::once(encoder.finish()));
     }
 }

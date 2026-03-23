@@ -2596,11 +2596,13 @@ dependencies = [
 name = "rython-resources"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "crossbeam-channel",
  "fontdue",
  "gltf",
  "hound",
  "image",
+ "log",
  "parking_lot",
  "rayon",
  "rython-core",

@@ -20,7 +20,12 @@ pub struct ImageData {
 }
 
 /// A single mesh vertex.
-#[derive(Clone, Debug)]
+///
+/// `#[repr(C)]` + bytemuck Pod/Zeroable allow safe casting to `&[u8]` for GPU
+/// buffer upload.  Layout: position (12 B) + normal (12 B) + uv (8 B) = 32 B,
+/// matching the `array_stride: 32` declared in the mesh vertex buffer layout.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
@@ -31,6 +36,60 @@ pub struct Vertex {
 pub struct MeshData {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
+}
+
+/// Generate a unit cube mesh centered at the origin (extents ±0.5 on all axes).
+///
+/// Produces 24 vertices (4 per face, split normals) and 36 indices (2 triangles
+/// per face × 6 faces).  Vertices are wound counter-clockwise when viewed from
+/// outside the cube, matching wgpu's default front-face convention (back-face
+/// culling enabled in the mesh pipeline).
+pub fn generate_cube() -> MeshData {
+    // Each entry: (face normal, 4 corner positions in CCW order from outside)
+    // Vertex order per face: bottom-right, bottom-left, top-left, top-right.
+    type FaceData = ([f32; 3], [[f32; 3]; 4]);
+    let faces: [FaceData; 6] = [
+        // +X
+        ([1.0, 0.0, 0.0], [
+            [ 0.5, -0.5, -0.5], [ 0.5, -0.5,  0.5], [ 0.5,  0.5,  0.5], [ 0.5,  0.5, -0.5],
+        ]),
+        // -X
+        ([-1.0, 0.0, 0.0], [
+            [-0.5, -0.5,  0.5], [-0.5, -0.5, -0.5], [-0.5,  0.5, -0.5], [-0.5,  0.5,  0.5],
+        ]),
+        // +Y
+        ([0.0, 1.0, 0.0], [
+            [-0.5,  0.5,  0.5], [ 0.5,  0.5,  0.5], [ 0.5,  0.5, -0.5], [-0.5,  0.5, -0.5],
+        ]),
+        // -Y
+        ([0.0, -1.0, 0.0], [
+            [-0.5, -0.5, -0.5], [ 0.5, -0.5, -0.5], [ 0.5, -0.5,  0.5], [-0.5, -0.5,  0.5],
+        ]),
+        // +Z
+        ([0.0, 0.0, 1.0], [
+            [ 0.5, -0.5,  0.5], [-0.5, -0.5,  0.5], [-0.5,  0.5,  0.5], [ 0.5,  0.5,  0.5],
+        ]),
+        // -Z
+        ([0.0, 0.0, -1.0], [
+            [-0.5, -0.5, -0.5], [ 0.5, -0.5, -0.5], [ 0.5,  0.5, -0.5], [-0.5,  0.5, -0.5],
+        ]),
+    ];
+    // Per-vertex UVs: BR=(0,0), BL=(1,0), TL=(1,1), TR=(0,1)
+    let uvs: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+
+    let mut vertices = Vec::with_capacity(24);
+    let mut indices  = Vec::with_capacity(36);
+
+    for (normal, positions) in &faces {
+        let base = vertices.len() as u32;
+        for (i, pos) in positions.iter().enumerate() {
+            vertices.push(Vertex { position: *pos, normal: *normal, uv: uvs[i] });
+        }
+        // Two CCW triangles: [0,1,2] and [0,2,3]
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    MeshData { vertices, indices }
 }
 
 /// Decoded PCM audio. Samples are f32 in [-1.0, 1.0], interleaved channels.
@@ -701,6 +760,82 @@ impl Module for ResourceManager {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    // ── generate_cube geometry tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_generate_cube_vertex_count() {
+        let mesh = generate_cube();
+        assert_eq!(mesh.vertices.len(), 24, "cube must have 24 vertices (4 per face × 6 faces)");
+    }
+
+    #[test]
+    fn test_generate_cube_index_count() {
+        let mesh = generate_cube();
+        assert_eq!(mesh.indices.len(), 36, "cube must have 36 indices (6 per face × 6 faces)");
+    }
+
+    #[test]
+    fn test_generate_cube_indices_in_range() {
+        let mesh = generate_cube();
+        let n = mesh.vertices.len() as u32;
+        for &idx in &mesh.indices {
+            assert!(idx < n, "index {idx} out of range (vertex count {n})");
+        }
+    }
+
+    #[test]
+    fn test_generate_cube_normals_are_unit() {
+        let mesh = generate_cube();
+        for v in &mesh.vertices {
+            let [nx, ny, nz] = v.normal;
+            let len = (nx * nx + ny * ny + nz * nz).sqrt();
+            assert!((len - 1.0).abs() < 1e-5, "normal must be unit length, got {len}");
+        }
+    }
+
+    #[test]
+    fn test_generate_cube_positions_in_unit_box() {
+        let mesh = generate_cube();
+        for v in &mesh.vertices {
+            for component in v.position {
+                assert!(
+                    component.abs() <= 0.5 + 1e-5,
+                    "position component {component} outside unit cube extents"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_cube_six_distinct_normals() {
+        let mesh = generate_cube();
+        let mut normals: std::collections::HashSet<[i32; 3]> = std::collections::HashSet::new();
+        for v in &mesh.vertices {
+            let key = [
+                v.normal[0] as i32,
+                v.normal[1] as i32,
+                v.normal[2] as i32,
+            ];
+            normals.insert(key);
+        }
+        assert_eq!(normals.len(), 6, "cube must have exactly 6 distinct face normals");
+    }
+
+    #[test]
+    fn test_vertex_bytemuck_pod() {
+        // Verify that Vertex can be safely cast to bytes.
+        let v = Vertex { position: [1.0, 2.0, 3.0], normal: [0.0, 1.0, 0.0], uv: [0.5, 0.5] };
+        let bytes: &[u8] = bytemuck::bytes_of(&v);
+        assert_eq!(bytes.len(), 32, "Vertex must be exactly 32 bytes");
+    }
+
+    #[test]
+    fn test_generate_cube_vertex_bytes() {
+        let mesh = generate_cube();
+        let bytes: &[u8] = bytemuck::cast_slice(&mesh.vertices);
+        assert_eq!(bytes.len(), 24 * 32, "24 vertices × 32 bytes each = 768 bytes");
+    }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 

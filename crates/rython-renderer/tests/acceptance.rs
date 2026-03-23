@@ -1,6 +1,6 @@
 use rython_renderer::{
     norm_to_clip, rect_to_clip_verts, validate_wgsl, Camera, Color, CommandQueue, DrawCommand,
-    DrawRect, RendererConfig,
+    DrawMesh, DrawRect, RendererConfig, RendererState,
 };
 
 // ─── T-REND-01: Renderer Initialization ──────────────────────────────────────
@@ -652,4 +652,128 @@ fn t_rend_13_shader_hot_reload_resilience() {
         let r = validate_wgsl(src);
         assert!(r.is_ok(), "built-in shader '{name}' should pass validation: {r:?}");
     }
+}
+
+// ─── T-REND-14: Mesh Render Pipeline with Depth Buffer ───────────────────────
+//
+// Headless test that exercises the full mesh render dispatch:
+//   1. Upload a procedural cube (24 verts, 36 indices) to the GPU buffer cache.
+//   2. Create a Depth32Float depth texture.
+//   3. Call render_meshes() with one DrawMesh command.
+//   4. Assert no panic (pipeline compilation + draw_indexed succeeded).
+
+#[test]
+#[ignore = "requires hardware GPU (Vulkan/Metal/DX12)"]
+fn t_rend_14_mesh_render_pipeline_with_depth_buffer() {
+    pollster::block_on(async {
+        use rython_renderer::GpuContext;
+        use rython_core::math::Mat4;
+
+        let gpu = GpuContext::new_headless()
+            .await
+            .expect("GPU required for mesh pipeline test");
+        let mut state = RendererState::new(gpu, RendererConfig::default());
+
+        // --- Build procedural cube mesh inline (matches generate_cube() output) ---
+        // 24 vertices × 32 bytes each (position[3] + normal[3] + uv[2])
+        // Each face: 4 verts with a shared face normal, two CCW triangles.
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct Vert { pos: [f32; 3], norm: [f32; 3], uv: [f32; 2] }
+        unsafe impl bytemuck::Pod for Vert {}
+        unsafe impl bytemuck::Zeroable for Vert {}
+
+        let face_data: [([f32; 3], [[f32; 3]; 4]); 6] = [
+            ([1.,0.,0.],  [[ 0.5,-0.5,-0.5],[ 0.5,-0.5, 0.5],[ 0.5, 0.5, 0.5],[ 0.5, 0.5,-0.5]]),
+            ([-1.,0.,0.], [[-0.5,-0.5, 0.5],[-0.5,-0.5,-0.5],[-0.5, 0.5,-0.5],[-0.5, 0.5, 0.5]]),
+            ([0.,1.,0.],  [[-0.5, 0.5, 0.5],[ 0.5, 0.5, 0.5],[ 0.5, 0.5,-0.5],[-0.5, 0.5,-0.5]]),
+            ([0.,-1.,0.], [[-0.5,-0.5,-0.5],[ 0.5,-0.5,-0.5],[ 0.5,-0.5, 0.5],[-0.5,-0.5, 0.5]]),
+            ([0.,0.,1.],  [[ 0.5,-0.5, 0.5],[-0.5,-0.5, 0.5],[-0.5, 0.5, 0.5],[ 0.5, 0.5, 0.5]]),
+            ([0.,0.,-1.], [[-0.5,-0.5,-0.5],[ 0.5,-0.5,-0.5],[ 0.5, 0.5,-0.5],[-0.5, 0.5,-0.5]]),
+        ];
+        let uvs: [[f32; 2]; 4] = [[0.,0.],[1.,0.],[1.,1.],[0.,1.]];
+
+        let mut verts: Vec<Vert> = Vec::with_capacity(24);
+        let mut indices: Vec<u32> = Vec::with_capacity(36);
+        for (norm, positions) in &face_data {
+            let base = verts.len() as u32;
+            for (i, pos) in positions.iter().enumerate() {
+                verts.push(Vert { pos: *pos, norm: *norm, uv: uvs[i] });
+            }
+            indices.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
+        }
+
+        assert_eq!(verts.len(), 24, "procedural cube: 24 vertices");
+        assert_eq!(indices.len(), 36, "procedural cube: 36 indices");
+
+        let verts_bytes: &[u8] = bytemuck::cast_slice(&verts);
+        state.upload_mesh("cube", verts_bytes, &indices);
+
+        // Confirm the mesh is in the cache.
+        assert!(state.mesh_cache.contains_key("cube"), "mesh must be in cache after upload");
+
+        // --- Create headless render targets ---
+        let width = 64u32;
+        let height = 64u32;
+
+        let color_tex = state.gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("color rt"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: state.gpu.surface_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let color_view = color_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // --- Clear the color target (required before mesh pass uses LoadOp::Load) ---
+        {
+            let mut enc = state.gpu.device.create_command_encoder(
+                &wgpu::CommandEncoderDescriptor { label: Some("clear enc") },
+            );
+            {
+                let _p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("clear pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &color_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+            }
+            state.gpu.queue.submit(std::iter::once(enc.finish()));
+        }
+
+        // --- Create depth texture ---
+        state.ensure_depth_texture(width, height);
+        let depth_view = state.depth_view().expect("depth view must be available after ensure");
+
+        // --- Camera: position (3, 3, 3) looking at origin ---
+        let mut camera = Camera::new();
+        camera.set_position(3.0, 3.0, 3.0);
+        camera.set_look_at(0.0, 0.0, 0.0);
+        camera.aspect = width as f32 / height as f32;
+
+        // --- Dispatch one DrawMesh ---
+        let cmd = DrawMesh {
+            mesh_id: "cube".to_string(),
+            material_id: "default".to_string(),
+            transform: Mat4::IDENTITY,
+            z: 0.0,
+        };
+        state.render_meshes(&[cmd], &camera, &color_view, depth_view);
+
+        // Reaching here without a wgpu validation error means:
+        //   - Depth32Float texture was created successfully.
+        //   - Vertex/index buffers were uploaded and bound correctly.
+        //   - Mesh pipeline executed draw_indexed without error.
+    });
 }
