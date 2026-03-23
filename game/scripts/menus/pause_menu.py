@@ -18,6 +18,7 @@ def create() -> None:
     rython.ui.add_child(panel, title)
     rython.ui.add_child(panel, resume_btn)
     rython.ui.add_child(panel, menu_btn)
+    rython.ui.set_layout(panel, "vertical", 0.02, 0.02)
 
     rython.ui.on_click(resume_btn, _on_resume)
     rython.ui.on_click(menu_btn, _on_main_menu)

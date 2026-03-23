@@ -30,6 +30,7 @@ def create() -> None:
     rython.ui.add_child(music_section, music_minus)
     rython.ui.add_child(music_section, music_vol_lbl)
     rython.ui.add_child(music_section, music_plus)
+    rython.ui.set_layout(music_section, "horizontal", 0.01, 0.0)
     rython.ui.add_child(panel, music_section)
     _music_vol_label_id = music_vol_lbl
 
@@ -43,12 +44,14 @@ def create() -> None:
     rython.ui.add_child(sfx_section, sfx_minus)
     rython.ui.add_child(sfx_section, sfx_vol_lbl)
     rython.ui.add_child(sfx_section, sfx_plus)
+    rython.ui.set_layout(sfx_section, "horizontal", 0.01, 0.0)
     rython.ui.add_child(panel, sfx_section)
     _sfx_vol_label_id = sfx_vol_lbl
 
     # Back button
     back_btn = rython.ui.create_button("Back", 0.0, 0.0, 1.0, 0.1)
     rython.ui.add_child(panel, back_btn)
+    rython.ui.set_layout(panel, "vertical", 0.02, 0.02)
 
     rython.ui.on_click(music_minus, _music_down)
     rython.ui.on_click(music_plus, _music_up)

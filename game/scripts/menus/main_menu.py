@@ -44,7 +44,6 @@ def _on_settings() -> None:
     from game.scripts.menus import settings_menu
     rython.audio.play("game/assets/sounds/ui/click_01.ogg", "sfx")
     hide()
-    settings_menu.create()
     settings_menu.show()
     game_state.set_state(game_state.SETTINGS)
 
