@@ -9,8 +9,8 @@ pub use bridge::{
     call_entry_point, clear_recurring_callbacks, drain_draw_commands, drain_ui_draw_commands,
     ensure_rython_module, flush_recurring_callbacks, get_script_class, load_bundle,
     register_script_class, reset_quit_requested, set_active_audio, set_active_input,
-    set_active_scene, set_active_ui, set_elapsed_secs, was_quit_requested, CameraPy, EntityPy,
-    TransformPy, Vec3Py,
+    set_active_physics, set_active_resources, set_active_scene, set_active_ui, set_elapsed_secs,
+    was_quit_requested, CameraPy, EntityPy, TransformPy, Vec3Py,
 };
 pub use component::ScriptComponent;
 pub use config::ScriptingConfig;

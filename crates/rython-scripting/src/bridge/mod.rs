@@ -20,6 +20,7 @@ pub use audio::set_active_audio;
 pub use camera::CameraPy;
 pub use entity::EntityPy;
 pub use input::set_active_input;
+pub use physics::set_active_physics;
 pub use resources::set_active_resources;
 pub use types::{TransformPy, Vec3Py};
 pub use ui::{drain_ui_draw_commands, set_active_ui};
@@ -242,10 +243,14 @@ pub fn ensure_rython_module(py: Python<'_>, scene: Arc<Scene>) -> PyResult<()> {
     let ui_bridge = Py::new(py, ui::UIBridge {})?;
     rython.add("ui", ui_bridge)?;
 
-    for name in &["physics", "resources", "modules"] {
-        let stub = Py::new(py, SubModulePy { name: name.to_string() })?;
-        rython.add(*name, stub)?;
-    }
+    let phys = Py::new(py, physics::PhysicsBridge {})?;
+    rython.add("physics", phys)?;
+
+    let res = Py::new(py, resources::ResourcesBridge {})?;
+    rython.add("resources", res)?;
+
+    let stub = Py::new(py, SubModulePy { name: "modules".to_string() })?;
+    rython.add("modules", stub)?;
 
     sys_modules.set_item("rython", &rython)?;
     Ok(())

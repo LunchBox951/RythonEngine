@@ -64,7 +64,7 @@ impl CameraPy {
         let dz = target_z - self.pos_z;
         let horiz = (dx * dx + dz * dz).sqrt();
         self.rot_yaw = dx.atan2(dz);
-        self.rot_pitch = (-dy).atan2(horiz);
+        self.rot_pitch = dy.atan2(horiz);
         self.rot_roll = 0.0;
     }
 

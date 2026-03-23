@@ -19,7 +19,7 @@ use rython_renderer::{Camera, RendererConfig, RendererState};
 use rython_resources::ResourceManager;
 use rython_scripting::{
     drain_draw_commands, drain_ui_draw_commands, flush_recurring_callbacks, reset_quit_requested,
-    set_elapsed_secs, ScriptingConfig, ScriptingModule, was_quit_requested,
+    set_active_physics, set_elapsed_secs, ScriptingConfig, ScriptingModule, was_quit_requested,
 };
 use rython_ui::{Theme, UIManager};
 use rython_window::WindowModule;
