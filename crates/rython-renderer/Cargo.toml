@@ -12,6 +12,7 @@ serde.workspace = true
 thiserror.workspace = true
 glam.workspace = true
 fontdue.workspace = true
+image.workspace = true
 
 [dev-dependencies]
 pollster = "0.3"

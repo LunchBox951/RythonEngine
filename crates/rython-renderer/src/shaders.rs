@@ -150,7 +150,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// Mesh shader — Phase 3 3D rendering with MVP matrices and directional lighting.
+/// Mesh shader — Phase 3 3D rendering with MVP matrices, directional lighting, and optional texture.
 pub const MESH_WGSL: &str = r#"
 struct CameraUniforms {
     view_proj: mat4x4<f32>,
@@ -159,10 +159,16 @@ struct CameraUniforms {
 struct ModelUniforms {
     model: mat4x4<f32>,
     color: vec4<f32>,
+    has_texture: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 };
 
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
 @group(1) @binding(0) var<uniform> model_data: ModelUniforms;
+@group(2) @binding(0) var t_diffuse: texture_2d<f32>;
+@group(2) @binding(1) var s_diffuse: sampler;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -190,8 +196,14 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let light_dir = normalize(vec3<f32>(0.5, 1.0, 0.5));
     let diffuse   = max(dot(normalize(in.world_normal), light_dir), 0.0);
-    let intensity = 0.2 + diffuse * 0.8;
-    return vec4<f32>(model_data.color.rgb * intensity, model_data.color.a);
+    let intensity  = 0.2 + diffuse * 0.8;
+    var base_color: vec4<f32>;
+    if (model_data.has_texture != 0u) {
+        base_color = textureSample(t_diffuse, s_diffuse, in.uv);
+    } else {
+        base_color = model_data.color;
+    }
+    return vec4<f32>(base_color.rgb * intensity, base_color.a);
 }
 "#;
 
