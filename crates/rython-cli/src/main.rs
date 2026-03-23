@@ -442,8 +442,8 @@ impl App {
         let mesh_cmds: Vec<rython_renderer::DrawMesh> = ecs_cmds
             .into_iter()
             .filter_map(|cmd| {
-                if let rython_ecs::DrawCommand::DrawMesh { mesh_id, transform, .. } = cmd {
-                    Some(rython_renderer::DrawMesh { mesh_id, transform, material_id: String::new(), z: 0.0 })
+                if let rython_ecs::DrawCommand::DrawMesh { mesh_id, texture_id, transform, .. } = cmd {
+                    Some(rython_renderer::DrawMesh { mesh_id, texture_id, transform, z: 0.0 })
                 } else {
                     None
                 }
@@ -452,9 +452,7 @@ impl App {
 
         if !mesh_cmds.is_empty() {
             renderer.ensure_depth_texture(width, height);
-            if let Some(depth_view) = renderer.depth_view() {
-                renderer.render_meshes(&mesh_cmds, &camera, &color_view, depth_view);
-            }
+            renderer.render_meshes(&mesh_cmds, &camera, &color_view);
         }
 
         // Collect all overlay draw commands from scripts and UI

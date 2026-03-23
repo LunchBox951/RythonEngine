@@ -754,7 +754,7 @@ fn t_rend_14_mesh_render_pipeline_with_depth_buffer() {
 
         // --- Create depth texture ---
         state.ensure_depth_texture(width, height);
-        let depth_view = state.depth_view().expect("depth view must be available after ensure");
+        assert!(state.depth_view().is_some(), "depth view must be available after ensure");
 
         // --- Camera: position (3, 3, 3) looking at origin ---
         let mut camera = Camera::new();
@@ -765,11 +765,11 @@ fn t_rend_14_mesh_render_pipeline_with_depth_buffer() {
         // --- Dispatch one DrawMesh ---
         let cmd = DrawMesh {
             mesh_id: "cube".to_string(),
-            material_id: "default".to_string(),
+            texture_id: String::new(),
             transform: Mat4::IDENTITY,
             z: 0.0,
         };
-        state.render_meshes(&[cmd], &camera, &color_view, depth_view);
+        state.render_meshes(&[cmd], &camera, &color_view);
 
         // Reaching here without a wgpu validation error means:
         //   - Depth32Float texture was created successfully.

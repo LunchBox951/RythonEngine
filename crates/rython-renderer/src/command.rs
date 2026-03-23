@@ -93,11 +93,12 @@ pub struct DrawText {
     pub z: f32,
 }
 
-/// 3D mesh with material and world transform (Phase 3).
+/// 3D mesh with optional texture and world transform (Phase 3).
 #[derive(Debug, Clone)]
 pub struct DrawMesh {
     pub mesh_id: String,
-    pub material_id: String,
+    /// Path to a PNG texture, or empty string for flat-color rendering.
+    pub texture_id: String,
     pub transform: Mat4,
     pub z: f32,
 }
