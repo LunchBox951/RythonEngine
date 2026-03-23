@@ -48,3 +48,4 @@ rayon = "1"
 parking_lot = "0.12"
 downcast-rs = "1"
 toml = "0.8"
+kira = { version = "0.8", default-features = false, features = ["cpal", "wav", "ogg", "flac", "mp3"] }
