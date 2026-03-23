@@ -36,15 +36,15 @@ class Entity:
         """Queue this entity for removal at the end of the current frame."""
         raise NotImplementedError
 
-    def apply_force(self, force: "Vec3") -> None:
-        """Apply a continuous force to this entity's rigid body."""
+    def apply_force(self, x: float, y: float, z: float) -> None:
+        """Apply a continuous force (world-space) to this entity's rigid body."""
         raise NotImplementedError
 
-    def apply_impulse(self, impulse: "Vec3") -> None:
-        """Apply an instant impulse to this entity's rigid body."""
+    def apply_impulse(self, x: float, y: float, z: float) -> None:
+        """Apply an instant impulse (world-space) to this entity's rigid body."""
         raise NotImplementedError
 
-    def set_velocity(self, vel: "Vec3") -> None:
+    def set_velocity(self, x: float, y: float, z: float) -> None:
         """Set the linear velocity of this entity's rigid body."""
         raise NotImplementedError
 
