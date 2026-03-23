@@ -45,6 +45,22 @@ make test
 
 ---
 
+## Python IDE Setup
+
+The `rython/` directory at the repo root is a pure-Python stub package. Installing it in editable mode gives Pylance (and any PEP 484-compliant type checker) full autocompletion, inline docs, and type errors for `import rython` in your scripts.
+
+```bash
+make stubs
+# or:
+pip install -e .
+```
+
+After the install, restart your language server (VS Code: **Pylance → Restart Language Server**; or reopen the project). The `py.typed` marker in `rython/` tells Pylance to use the stubs directly.
+
+> **Note:** The stub package is a development-time tool only. The real `rython` module is injected at runtime by the Rust engine via PyO3 and overrides these stubs; game builds do not bundle the `rython/` directory.
+
+---
+
 ## Quick Start
 
 Create a `scripts/main.py` with an `init()` function. The engine imports the entry-point module and calls `init()` on load:
