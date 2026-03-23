@@ -61,6 +61,8 @@ impl UIManager {
     fn insert_child(&mut self, parent_id: WidgetId, mut widget: Widget) -> WidgetId {
         let id = widget.id;
         widget.parent = Some(parent_id);
+        // Children always render/hit-test above their parent container
+        widget.z = self.widgets[&parent_id].z + 1.0;
         self.widgets.insert(id, widget);
         self.widgets.get_mut(&parent_id).unwrap().children.push(id);
         id
@@ -153,7 +155,9 @@ impl UIManager {
     pub fn add_child(&mut self, parent_id: WidgetId, child_id: WidgetId) {
         // Remove from root_order if it was there
         self.root_order.retain(|&id| id != child_id);
-        // Update parent link
+        let parent_z = self.widgets[&parent_id].z;
+        // Children always render/hit-test above their parent container
+        self.widgets.get_mut(&child_id).unwrap().z = parent_z + 1.0;
         self.widgets.get_mut(&child_id).unwrap().parent = Some(parent_id);
         self.widgets.get_mut(&parent_id).unwrap().children.push(child_id);
     }
@@ -560,7 +564,7 @@ impl UIManager {
                         .clone()
                         .unwrap_or_else(|| self.theme.font_id.clone()),
                     x: w.abs_x,
-                    y: w.abs_y,
+                    y: w.abs_y + w.h * 0.25,
                     color: text_color,
                     size: w.font_size.unwrap_or(self.theme.font_size),
                     z: w.z + 0.1,
@@ -604,7 +608,7 @@ impl UIManager {
                         .clone()
                         .unwrap_or_else(|| self.theme.font_id.clone()),
                     x: w.abs_x,
-                    y: w.abs_y,
+                    y: w.abs_y + w.h * 0.25,
                     color: text_color,
                     size: w.font_size.unwrap_or(self.theme.font_size),
                     z: w.z + 0.1,
