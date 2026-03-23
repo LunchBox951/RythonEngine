@@ -48,3 +48,7 @@ rayon = "1"
 parking_lot = "0.12"
 downcast-rs = "1"
 toml = "0.8"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "tga"] }
+gltf = "1"
+fontdue = "0.8"
+hound = "3"
