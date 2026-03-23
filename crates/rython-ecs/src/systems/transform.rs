@@ -82,9 +82,9 @@ impl TransformSystem {
             let local_pos = Vec3::new(local.x, local.y, local.z);
             let local_rot = Quat::from_euler(
                 glam::EulerRot::XYZ,
-                local.rot_x.to_radians(),
-                local.rot_y.to_radians(),
-                local.rot_z.to_radians(),
+                local.rot_x,
+                local.rot_y,
+                local.rot_z,
             );
             let local_scale = local.scale;
 

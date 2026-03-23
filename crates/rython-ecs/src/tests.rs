@@ -425,8 +425,9 @@ fn t_ecs_18_transform_world_position() {
 #[test]
 fn t_ecs_19_transform_rotation_propagation() {
     let scene = Scene::new();
+    // rot_y stores radians; π/2 rad = 90° = quarter-turn around Y
     let hp = scene.queue_spawn(vec![comp(TransformComponent {
-        rot_y: 90.0, ..Default::default()
+        rot_y: std::f32::consts::FRAC_PI_2, ..Default::default()
     })]);
     let hc = scene.queue_spawn(vec![comp(TransformComponent {
         x: 1.0, ..Default::default()
