@@ -3,8 +3,26 @@ name = "rython-scripting"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+dev-reload = ["dep:notify"]
+
 [dependencies]
 rython-core.workspace = true
 rython-scheduler.workspace = true
 rython-modules.workspace = true
 rython-ecs.workspace = true
+pyo3 = { version = "0.28", features = ["auto-initialize"] }
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+log = "0.4"
+
+[dependencies.notify]
+version = "6"
+optional = true
+
+[dev-dependencies]
+tempfile = "3"
+env_logger = "0.11"
