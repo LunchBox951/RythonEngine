@@ -7,3 +7,5 @@ edition.workspace = true
 rython-core.workspace = true
 rython-scheduler.workspace = true
 rython-modules.workspace = true
+winit.workspace = true
+serde.workspace = true
