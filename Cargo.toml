@@ -13,6 +13,7 @@ members = [
     "crates/rython-ui",
     "crates/rython-scripting",
     "crates/rython-engine",
+    "crates/rython-cli",
 ]
 resolver = "2"
 
@@ -37,6 +38,8 @@ rython-resources = { path = "crates/rython-resources" }
 # Layer 3
 rython-ui = { path = "crates/rython-ui" }
 rython-scripting = { path = "crates/rython-scripting" }
+# Binary
+rython-engine = { path = "crates/rython-engine" }
 
 # External
 thiserror = "1"

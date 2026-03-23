@@ -1,0 +1,30 @@
+[package]
+name = "rython-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "rython"
+path = "src/main.rs"
+
+[dependencies]
+rython-engine.workspace = true
+rython-core.workspace = true
+rython-scripting.workspace = true
+rython-window.workspace = true
+rython-renderer.workspace = true
+rython-audio.workspace = true
+rython-physics.workspace = true
+rython-input.workspace = true
+rython-resources.workspace = true
+rython-ui.workspace = true
+rython-ecs.workspace = true
+winit.workspace = true
+wgpu.workspace = true
+log.workspace = true
+env_logger.workspace = true
+bytemuck.workspace = true
+glam.workspace = true
+serde_json.workspace = true
+pyo3 = { version = "0.28", features = ["auto-initialize"] }
+pollster = "0.4"

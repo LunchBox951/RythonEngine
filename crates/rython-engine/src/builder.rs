@@ -12,6 +12,7 @@ use crate::Engine;
 pub struct EngineBuilder {
     config: EngineConfig,
     modules: Vec<Box<dyn Module>>,
+    scene: Option<Arc<Scene>>,
 }
 
 impl EngineBuilder {
@@ -19,6 +20,7 @@ impl EngineBuilder {
         Self {
             config: EngineConfig::default(),
             modules: Vec::new(),
+            scene: None,
         }
     }
 
@@ -46,10 +48,17 @@ impl EngineBuilder {
         self
     }
 
+    /// Share an externally created scene with the engine (e.g. for scripting modules that
+    /// need the same Arc<Scene> instance before build() creates it).
+    pub fn with_scene(mut self, scene: Arc<Scene>) -> Self {
+        self.scene = Some(scene);
+        self
+    }
+
     /// Consume the builder and produce a ready-to-[`boot`](Engine::boot) [`Engine`].
     pub fn build(self) -> Result<Engine, EngineError> {
         let scheduler = TaskScheduler::new(&self.config.scheduler);
-        let scene = Arc::new(Scene::new());
+        let scene = self.scene.unwrap_or_else(|| Arc::new(Scene::new()));
         let mut loader = ModuleLoader::new();
         for module in self.modules {
             loader.register(module, None);

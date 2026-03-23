@@ -123,6 +123,43 @@ impl GpuContext {
         })
     }
 
+    /// Initialise a GPU context tied to an existing surface.
+    /// The adapter is selected to be compatible with the given surface so that
+    /// the swapchain format can be queried from surface capabilities.
+    pub async fn new_for_surface(
+        instance: wgpu::Instance,
+        surface: &wgpu::Surface<'_>,
+    ) -> Result<Self, RendererError> {
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                compatible_surface: Some(surface),
+                force_fallback_adapter: false,
+            })
+            .await
+            .ok_or(RendererError::NoAdapter)?;
+
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor::default(), None)
+            .await
+            .map_err(|e| RendererError::DeviceCreation(e.to_string()))?;
+
+        let info = adapter.get_info();
+        log::info!("wgpu adapter: {} ({:?})", info.name, info.backend);
+
+        let surface_caps = surface.get_capabilities(&adapter);
+        let surface_format = surface_caps
+            .formats
+            .iter()
+            .find(|f| f.is_srgb())
+            .copied()
+            .unwrap_or(surface_caps.formats[0]);
+
+        let (pipelines, bind_group_layouts) = Self::create_pipelines(&device, surface_format)?;
+
+        Ok(Self { instance, adapter, device, queue, pipelines, bind_group_layouts, surface_format })
+    }
+
     /// Process pending GPU upload requests (called on main thread each render tick).
     ///
     /// Each request carries raw pixel bytes decoded on a background thread; this
