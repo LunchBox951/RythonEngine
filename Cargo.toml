@@ -48,7 +48,15 @@ rayon = "1"
 parking_lot = "0.12"
 downcast-rs = "1"
 toml = "0.8"
+kira = { version = "0.8", default-features = false, features = ["cpal", "wav", "ogg", "flac", "mp3"] }
+winit = "0.30"
+gilrs = "0.10"
+wgpu = "24"
+bytemuck = { version = "1", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "tga"] }
 gltf = "1"
 fontdue = "0.8"
 hound = "3"
+rapier3d = { version = "0.22", features = ["simd-stable"] }
