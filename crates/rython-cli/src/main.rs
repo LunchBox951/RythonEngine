@@ -5,24 +5,26 @@ use std::time::{Duration, Instant};
 
 use pyo3::prelude::*;
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, KeyEvent, MouseButton as WinitMouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::keyboard::{KeyCode as WinitKeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use rython_audio::AudioManager;
 use rython_core::{EngineConfig, WindowConfig};
 use rython_ecs::{RenderSystem, Scene, TransformSystem};
 use rython_engine::{Engine, EngineBuilder};
-use rython_input::PlayerController;
+use rython_input::{AxisBinding, ButtonBinding, InputMap, PlayerController};
 use rython_physics::PhysicsModule;
 use rython_renderer::{Camera, RendererConfig, RendererState};
 use rython_resources::ResourceManager;
 use rython_scripting::{
     drain_draw_commands, drain_ui_draw_commands, flush_recurring_callbacks, reset_quit_requested,
-    set_active_physics, set_elapsed_secs, ScriptingConfig, ScriptingModule, was_quit_requested,
+    set_active_input, set_active_physics, set_active_ui, set_elapsed_secs, ScriptingConfig,
+    ScriptingModule, was_quit_requested,
 };
 use rython_ui::{Theme, UIManager};
-use rython_window::WindowModule;
+use rython_window::{KeyCode, MouseButton, RawInputEvent, WindowModule};
 
 // ── CLI args ──────────────────────────────────────────────────────────────────
 
@@ -80,17 +82,112 @@ fn parse_args() -> CliArgs {
     args
 }
 
+// ── Winit → rython key mapping ────────────────────────────────────────────────
+
+fn winit_key_to_rython(key: &WinitKeyCode) -> Option<KeyCode> {
+    use WinitKeyCode::*;
+    match key {
+        KeyA => Some(KeyCode::A),
+        KeyB => Some(KeyCode::B),
+        KeyC => Some(KeyCode::C),
+        KeyD => Some(KeyCode::D),
+        KeyE => Some(KeyCode::E),
+        KeyF => Some(KeyCode::F),
+        KeyG => Some(KeyCode::G),
+        KeyH => Some(KeyCode::H),
+        KeyI => Some(KeyCode::I),
+        KeyJ => Some(KeyCode::J),
+        KeyK => Some(KeyCode::K),
+        KeyL => Some(KeyCode::L),
+        KeyM => Some(KeyCode::M),
+        KeyN => Some(KeyCode::N),
+        KeyO => Some(KeyCode::O),
+        KeyP => Some(KeyCode::P),
+        KeyQ => Some(KeyCode::Q),
+        KeyR => Some(KeyCode::R),
+        KeyS => Some(KeyCode::S),
+        KeyT => Some(KeyCode::T),
+        KeyU => Some(KeyCode::U),
+        KeyV => Some(KeyCode::V),
+        KeyW => Some(KeyCode::W),
+        KeyX => Some(KeyCode::X),
+        KeyY => Some(KeyCode::Y),
+        KeyZ => Some(KeyCode::Z),
+        Digit0 => Some(KeyCode::Key0),
+        Digit1 => Some(KeyCode::Key1),
+        Digit2 => Some(KeyCode::Key2),
+        Digit3 => Some(KeyCode::Key3),
+        Digit4 => Some(KeyCode::Key4),
+        Digit5 => Some(KeyCode::Key5),
+        Digit6 => Some(KeyCode::Key6),
+        Digit7 => Some(KeyCode::Key7),
+        Digit8 => Some(KeyCode::Key8),
+        Digit9 => Some(KeyCode::Key9),
+        Space => Some(KeyCode::Space),
+        Enter => Some(KeyCode::Enter),
+        Escape => Some(KeyCode::Escape),
+        Tab => Some(KeyCode::Tab),
+        Backspace => Some(KeyCode::Backspace),
+        ShiftLeft => Some(KeyCode::LeftShift),
+        ShiftRight => Some(KeyCode::RightShift),
+        ControlLeft => Some(KeyCode::LeftControl),
+        ControlRight => Some(KeyCode::RightControl),
+        AltLeft => Some(KeyCode::LeftAlt),
+        AltRight => Some(KeyCode::RightAlt),
+        ArrowUp => Some(KeyCode::Up),
+        ArrowDown => Some(KeyCode::Down),
+        ArrowLeft => Some(KeyCode::Left),
+        ArrowRight => Some(KeyCode::Right),
+        F1 => Some(KeyCode::F1),
+        F2 => Some(KeyCode::F2),
+        F3 => Some(KeyCode::F3),
+        F4 => Some(KeyCode::F4),
+        F5 => Some(KeyCode::F5),
+        F6 => Some(KeyCode::F6),
+        F7 => Some(KeyCode::F7),
+        F8 => Some(KeyCode::F8),
+        F9 => Some(KeyCode::F9),
+        F10 => Some(KeyCode::F10),
+        F11 => Some(KeyCode::F11),
+        F12 => Some(KeyCode::F12),
+        _ => None,
+    }
+}
+
 // ── Engine construction ───────────────────────────────────────────────────────
 
 fn build_engine(
     engine_config: &EngineConfig,
     scripting_config: ScriptingConfig,
-) -> (Engine, Arc<Scene>) {
+) -> (
+    Engine,
+    Arc<Scene>,
+    Arc<parking_lot::Mutex<rython_physics::PhysicsWorld>>,
+    Arc<parking_lot::Mutex<UIManager>>,
+    Arc<std::sync::Mutex<PlayerController>>,
+) {
     let scene = Arc::new(Scene::new());
     let physics_world = Arc::new(parking_lot::Mutex::new(
         rython_physics::PhysicsWorld::with_default_config(),
     ));
     set_active_physics(Arc::clone(&physics_world));
+
+    // UIManager — shared with scripting bridge for draw commands and mouse routing
+    let ui_manager = Arc::new(parking_lot::Mutex::new(UIManager::new(Theme::default())));
+    set_active_ui(Arc::clone(&ui_manager));
+
+    // PlayerController — managed directly in the main loop; register default input map
+    let mut pc = PlayerController::new(0);
+    let mut default_map = InputMap::new("default");
+    default_map.bind_axis("move_x", AxisBinding::KBAxis { negative: KeyCode::A, positive: KeyCode::D });
+    default_map.bind_axis("move_x", AxisBinding::KBAxis { negative: KeyCode::Left, positive: KeyCode::Right });
+    default_map.bind_axis("move_z", AxisBinding::KBAxis { negative: KeyCode::W, positive: KeyCode::S });
+    default_map.bind_axis("move_z", AxisBinding::KBAxis { negative: KeyCode::Up, positive: KeyCode::Down });
+    default_map.bind_button("jump", ButtonBinding::Keyboard(KeyCode::Space));
+    default_map.bind_button("pause", ButtonBinding::Keyboard(KeyCode::Escape));
+    pc.register_map(default_map);
+    let player_controller = Arc::new(std::sync::Mutex::new(pc));
+
     let engine = EngineBuilder::new()
         .with_config(engine_config.clone())
         .with_scene(Arc::clone(&scene))
@@ -101,24 +198,32 @@ fn build_engine(
         )))
         .add_module(Box::new(AudioManager::new(Default::default())))
         .add_module(Box::new(PhysicsModule::new(Default::default())))
-        .add_module(Box::new(PlayerController::new(0)))
         .add_module(Box::new(ResourceManager::new(Default::default())))
-        .add_module(Box::new(UIManager::new(Theme::default())))
         .build()
         .expect("failed to build engine");
-    (engine, scene)
+
+    (engine, scene, physics_world, ui_manager, player_controller)
 }
 
 // ── Headless mode ─────────────────────────────────────────────────────────────
 
 fn run_headless(engine_config: EngineConfig, scripting_config: ScriptingConfig) {
-    let (mut engine, scene) = build_engine(&engine_config, scripting_config);
+    let (mut engine, scene, physics_world, _ui_manager, player_controller) =
+        build_engine(&engine_config, scripting_config);
     engine.boot().expect("failed to boot engine");
     let start = Instant::now();
     loop {
         set_elapsed_secs(start.elapsed().as_secs_f64());
         Python::attach(|py| flush_recurring_callbacks(py));
         scene.drain_commands();
+        physics_world.lock().sync_step(&scene);
+        {
+            let mut pc = player_controller.lock().unwrap();
+            pc.tick(&[]);
+            let snapshot = pc.get_snapshot(0).unwrap().clone();
+            drop(pc);
+            set_active_input(snapshot);
+        }
         engine.tick().ok();
         if was_quit_requested() {
             reset_quit_requested();
@@ -140,10 +245,25 @@ struct App {
     renderer: Option<RendererState>,
     surface_config: Option<wgpu::SurfaceConfiguration>,
     start_time: Instant,
+    // Input wiring
+    player_controller: Arc<std::sync::Mutex<PlayerController>>,
+    raw_events: Vec<RawInputEvent>,
+    cursor_pos: (f64, f64),
+    // Physics wiring
+    physics_world: Arc<parking_lot::Mutex<rython_physics::PhysicsWorld>>,
+    // UI wiring
+    ui_manager: Arc<parking_lot::Mutex<UIManager>>,
 }
 
 impl App {
-    fn new(engine: Engine, scene: Arc<Scene>, window_config: WindowConfig) -> Self {
+    fn new(
+        engine: Engine,
+        scene: Arc<Scene>,
+        window_config: WindowConfig,
+        physics_world: Arc<parking_lot::Mutex<rython_physics::PhysicsWorld>>,
+        ui_manager: Arc<parking_lot::Mutex<UIManager>>,
+        player_controller: Arc<std::sync::Mutex<PlayerController>>,
+    ) -> Self {
         Self {
             engine: Some(engine),
             scene,
@@ -153,6 +273,11 @@ impl App {
             renderer: None,
             surface_config: None,
             start_time: Instant::now(),
+            player_controller,
+            raw_events: Vec::new(),
+            cursor_pos: (0.0, 0.0),
+            physics_world,
+            ui_manager,
         }
     }
 
@@ -169,6 +294,34 @@ impl App {
         set_elapsed_secs(self.start_time.elapsed().as_secs_f64());
         Python::attach(|py| flush_recurring_callbacks(py));
         self.scene.drain_commands();
+
+        // Physics step
+        self.physics_world.lock().sync_step(&self.scene);
+
+        // Input: tick player controller and publish snapshot
+        {
+            let mut pc = self.player_controller.lock().unwrap();
+            pc.tick(&self.raw_events);
+            let snapshot = pc.get_snapshot(0).unwrap().clone();
+            drop(pc);
+            set_active_input(snapshot);
+        }
+
+        // UI: route mouse move and clicks from accumulated events this frame
+        let norm_x = (self.cursor_pos.0 / width.max(1) as f64) as f32;
+        let norm_y = (self.cursor_pos.1 / height.max(1) as f64) as f32;
+        {
+            let mut ui = self.ui_manager.lock();
+            ui.on_mouse_move(norm_x, norm_y);
+            for event in &self.raw_events {
+                if matches!(event, RawInputEvent::MouseButtonPressed(MouseButton::Left)) {
+                    ui.on_mouse_click(norm_x, norm_y);
+                }
+            }
+        }
+
+        // Clear per-frame events
+        self.raw_events.clear();
 
         // ECS systems
         let world_transforms = TransformSystem::run(&self.scene.components, &self.scene.hierarchy);
@@ -403,6 +556,45 @@ impl ApplicationHandler for App {
                     surface.configure(&renderer.gpu.device, cfg);
                 }
             }
+            WindowEvent::KeyboardInput {
+                event: KeyEvent { physical_key: PhysicalKey::Code(winit_key), state, .. },
+                ..
+            } => {
+                if let Some(key) = winit_key_to_rython(&winit_key) {
+                    match state {
+                        ElementState::Pressed => {
+                            self.raw_events.push(RawInputEvent::KeyPressed(key));
+                        }
+                        ElementState::Released => {
+                            self.raw_events.push(RawInputEvent::KeyReleased(key));
+                        }
+                    }
+                }
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let mb = match button {
+                    WinitMouseButton::Left => Some(MouseButton::Left),
+                    WinitMouseButton::Right => Some(MouseButton::Right),
+                    WinitMouseButton::Middle => Some(MouseButton::Middle),
+                    _ => None,
+                };
+                if let Some(mb) = mb {
+                    match state {
+                        ElementState::Pressed => {
+                            self.raw_events.push(RawInputEvent::MouseButtonPressed(mb));
+                        }
+                        ElementState::Released => {
+                            self.raw_events.push(RawInputEvent::MouseButtonReleased(mb));
+                        }
+                    }
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                let dx = position.x - self.cursor_pos.0;
+                let dy = position.y - self.cursor_pos.1;
+                self.cursor_pos = (position.x, position.y);
+                self.raw_events.push(RawInputEvent::MouseMoved { dx, dy });
+            }
             WindowEvent::RedrawRequested => {
                 self.tick_and_render(event_loop);
                 if let Some(window) = self.window.as_ref() {
@@ -421,9 +613,17 @@ impl ApplicationHandler for App {
 }
 
 fn run_windowed(engine_config: EngineConfig, scripting_config: ScriptingConfig) {
-    let (engine, scene) = build_engine(&engine_config, scripting_config);
+    let (engine, scene, physics_world, ui_manager, player_controller) =
+        build_engine(&engine_config, scripting_config);
     let event_loop = EventLoop::new().expect("failed to create event loop");
-    let mut app = App::new(engine, scene, engine_config.window.clone());
+    let mut app = App::new(
+        engine,
+        scene,
+        engine_config.window.clone(),
+        physics_world,
+        ui_manager,
+        player_controller,
+    );
     event_loop.run_app(&mut app).expect("event loop error");
 }
 
