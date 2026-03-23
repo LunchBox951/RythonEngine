@@ -20,8 +20,8 @@ use rython_renderer::{Camera, RendererConfig, RendererState};
 use rython_resources::ResourceManager;
 use rython_scripting::{
     drain_draw_commands, drain_ui_draw_commands, flush_recurring_callbacks, reset_quit_requested,
-    set_active_input, set_active_physics, set_active_ui, set_elapsed_secs, ScriptingConfig,
-    ScriptingModule, was_quit_requested,
+    set_active_audio, set_active_input, set_active_physics, set_active_ui, set_elapsed_secs,
+    ScriptingConfig, ScriptingModule, was_quit_requested,
 };
 use rython_ui::{Theme, UIManager};
 use rython_window::{KeyCode, MouseButton, RawInputEvent, WindowModule};
@@ -176,6 +176,10 @@ fn build_engine(
     let ui_manager = Arc::new(parking_lot::Mutex::new(UIManager::new(Theme::default())));
     set_active_ui(Arc::clone(&ui_manager));
 
+    // AudioManager — shared with scripting bridge for Python audio API
+    let audio_manager = Arc::new(parking_lot::Mutex::new(AudioManager::new(Default::default())));
+    set_active_audio(Arc::clone(&audio_manager));
+
     // PlayerController — managed directly in the main loop; register default input map
     let mut pc = PlayerController::new(0);
     let mut default_map = InputMap::new("default");
@@ -196,7 +200,6 @@ fn build_engine(
             scripting_config,
             Arc::clone(&scene),
         )))
-        .add_module(Box::new(AudioManager::new(Default::default())))
         .add_module(Box::new(PhysicsModule::new(Default::default())))
         .add_module(Box::new(ResourceManager::new(Default::default())))
         .build()
@@ -326,6 +329,9 @@ impl App {
         // ECS systems
         let world_transforms = TransformSystem::run(&self.scene.components, &self.scene.hierarchy);
         let ecs_cmds = RenderSystem::run(&self.scene.components, &world_transforms);
+
+        // Compute UI layout so abs positions are current before drawing
+        self.ui_manager.lock().compute_layout();
 
         // Drain script draw commands (from renderer bridge) and UI draw commands
         let script_cmds = drain_draw_commands();
