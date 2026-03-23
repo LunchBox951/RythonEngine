@@ -48,3 +48,7 @@ rayon = "1"
 parking_lot = "0.12"
 downcast-rs = "1"
 toml = "0.8"
+wgpu = "24"
+bytemuck = { version = "1", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"

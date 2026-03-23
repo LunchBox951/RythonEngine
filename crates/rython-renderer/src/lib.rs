@@ -1,5 +1,20 @@
 #![deny(warnings)]
 
-/// Renderer stub — full implementation in a later layer.
+pub mod camera;
+pub mod command;
+pub mod config;
+pub mod gpu;
+pub mod queue;
+pub mod shaders;
 
-pub struct Renderer;
+pub use camera::Camera;
+pub use command::{
+    norm_to_clip, rect_to_clip_verts, Color, DrawBillboard, DrawCircle, DrawCommand, DrawImage,
+    DrawLine, DrawMesh, DrawRect, DrawText,
+};
+pub use config::RendererConfig;
+pub use gpu::{GpuContext, GpuUploadRequest, Pipelines, RendererError, RendererState};
+pub use queue::CommandQueue;
+pub use shaders::{
+    validate_wgsl, ShaderError, IMAGE_WGSL, MESH_WGSL, PRIMITIVE_WGSL, TEXT_WGSL,
+};
