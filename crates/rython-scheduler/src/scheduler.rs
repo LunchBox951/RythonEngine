@@ -360,24 +360,29 @@ impl TaskScheduler {
         let par_tasks = std::mem::take(&mut self.par_queue);
         if !par_tasks.is_empty() {
             use rayon::prelude::*;
-            par_tasks.par_iter().for_each(|t| {
-                let result = std::panic::catch_unwind(AssertUnwindSafe(|| (t.f)()));
-                if let Err(e) = result {
-                    // log panic — in real engine would use a logger
-                    let _ = e;
-                }
+            self.pool.install(|| {
+                par_tasks.par_iter().for_each(|t| {
+                    let result = std::panic::catch_unwind(AssertUnwindSafe(|| (t.f)()));
+                    if let Err(e) = result {
+                        // log panic — in real engine would use a logger
+                        let _ = e;
+                    }
+                });
             });
         }
 
         // Run recurring parallel tasks
-        let mut rpar_keep = Vec::new();
-        for mut t in std::mem::take(&mut self.recurring_par) {
-            let should_continue = std::panic::catch_unwind(AssertUnwindSafe(|| (t.f)()))
-                .unwrap_or(false);
-            if should_continue {
-                rpar_keep.push(t);
+        let rpar_keep = self.pool.install(|| {
+            let mut keep = Vec::new();
+            for mut t in std::mem::take(&mut self.recurring_par) {
+                let should_continue = std::panic::catch_unwind(AssertUnwindSafe(|| (t.f)()))
+                    .unwrap_or(false);
+                if should_continue {
+                    keep.push(t);
+                }
             }
-        }
+            keep
+        });
         self.recurring_par = rpar_keep;
 
         // 4. Background phase: check completions, fire callbacks
