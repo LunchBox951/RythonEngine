@@ -18,8 +18,8 @@ use rython_physics::PhysicsModule;
 use rython_renderer::{Camera, RendererConfig, RendererState};
 use rython_resources::ResourceManager;
 use rython_scripting::{
-    drain_draw_commands, flush_recurring_callbacks, reset_quit_requested, set_elapsed_secs,
-    ScriptingConfig, ScriptingModule, was_quit_requested,
+    drain_draw_commands, flush_recurring_callbacks, reset_quit_requested, set_active_physics,
+    set_elapsed_secs, ScriptingConfig, ScriptingModule, was_quit_requested,
 };
 use rython_ui::{Theme, UIManager};
 use rython_window::WindowModule;
@@ -87,6 +87,10 @@ fn build_engine(
     scripting_config: ScriptingConfig,
 ) -> (Engine, Arc<Scene>) {
     let scene = Arc::new(Scene::new());
+    let physics_world = Arc::new(parking_lot::Mutex::new(
+        rython_physics::PhysicsWorld::with_default_config(),
+    ));
+    set_active_physics(Arc::clone(&physics_world));
     let engine = EngineBuilder::new()
         .with_config(engine_config.clone())
         .with_scene(Arc::clone(&scene))

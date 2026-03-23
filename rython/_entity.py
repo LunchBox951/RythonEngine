@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from rython._types import Transform
+    from rython._types import Transform, Vec3
 
 
 class Entity:
@@ -34,6 +34,23 @@ class Entity:
 
     def despawn(self) -> None:
         """Queue this entity for removal at the end of the current frame."""
+        raise NotImplementedError
+
+    def apply_force(self, force: "Vec3") -> None:
+        """Apply a continuous force to this entity's rigid body."""
+        raise NotImplementedError
+
+    def apply_impulse(self, impulse: "Vec3") -> None:
+        """Apply an instant impulse to this entity's rigid body."""
+        raise NotImplementedError
+
+    def set_velocity(self, vel: "Vec3") -> None:
+        """Set the linear velocity of this entity's rigid body."""
+        raise NotImplementedError
+
+    @property
+    def velocity(self) -> "Vec3":
+        """Return the current linear velocity of this entity's rigid body."""
         raise NotImplementedError
 
     def __repr__(self) -> str:
