@@ -635,6 +635,13 @@ impl UIManager {
     pub fn get_widget_mut(&mut self, id: WidgetId) -> &mut Widget {
         self.widgets.get_mut(&id).unwrap()
     }
+
+    /// Set the display text of a widget. No-op if `id` does not exist.
+    pub fn set_text(&mut self, id: WidgetId, text: impl Into<String>) {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            w.text = text.into();
+        }
+    }
 }
 
 // ─── Module trait ─────────────────────────────────────────────────────────────
