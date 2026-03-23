@@ -26,5 +26,6 @@ env_logger.workspace = true
 bytemuck.workspace = true
 glam.workspace = true
 serde_json.workspace = true
+parking_lot.workspace = true
 pyo3 = { version = "0.28", features = ["auto-initialize"] }
 pollster = "0.4"
