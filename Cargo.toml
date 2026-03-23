@@ -42,13 +42,21 @@ rython-scripting = { path = "crates/rython-scripting" }
 thiserror = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-glam = { version = "0.29", features = ["serde"] }
+glam = { version = "0.29", features = ["serde", "bytemuck"] }
 crossbeam-channel = "0.5"
 rayon = "1"
 parking_lot = "0.12"
 downcast-rs = "1"
 toml = "0.8"
+winit = "0.30"
+gilrs = "0.10"
+wgpu = "24"
+bytemuck = { version = "1", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
+kira = { version = "0.8", default-features = false, features = ["cpal", "wav", "ogg", "flac", "mp3"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "tga"] }
 gltf = "1"
 fontdue = "0.8"
 hound = "3"
+rapier3d = { version = "0.22", features = ["simd-stable"] }
