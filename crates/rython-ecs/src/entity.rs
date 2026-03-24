@@ -12,6 +12,12 @@ impl EntityId {
         EntityId(NEXT_ID.fetch_add(1, Ordering::Relaxed))
     }
 
+    /// Advance the global counter to be at least `val + 1`.
+    /// Called after loading a scene to prevent ID collisions.
+    pub fn ensure_counter_past(val: u64) {
+        NEXT_ID.fetch_max(val + 1, Ordering::SeqCst);
+    }
+
     /// Reset counter — only for tests that need a clean slate.
     #[cfg(test)]
     pub fn reset_counter(val: u64) {

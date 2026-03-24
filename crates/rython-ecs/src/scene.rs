@@ -97,7 +97,18 @@ impl Scene {
 
     // ── Immediate (non-queued) operations for internal use ───────────────────
 
-    pub(crate) fn spawn_immediate(&self, components: Vec<(TypeId, Box<dyn Component>)>) -> EntityId {
+    /// Re-insert an entity with a known ID (for undo/redo restore). Does not
+    /// advance the global counter — call `EntityId::ensure_counter_past` after
+    /// loading a batch.
+    pub fn spawn_with_id(&self, id: EntityId, components: Vec<(TypeId, Box<dyn Component>)>) {
+        self.entities.write().insert(id);
+        for (tid, comp) in components {
+            self.components.insert_boxed(id, tid, comp);
+        }
+        self.events.emit_entity_spawned(id.0);
+    }
+
+    pub fn spawn_immediate(&self, components: Vec<(TypeId, Box<dyn Component>)>) -> EntityId {
         let id = EntityId::next();
         self.entities.write().insert(id);
         for (tid, comp) in components {
@@ -107,7 +118,7 @@ impl Scene {
         id
     }
 
-    pub(crate) fn despawn_immediate(&self, entity: EntityId) {
+    pub fn despawn_immediate(&self, entity: EntityId) {
         self.events.emit_entity_despawned(entity.0);
         self.components.remove_all_for(entity);
         self.hierarchy.remove_entity(entity);
@@ -215,7 +226,7 @@ impl Scene {
         }
     }
 
-    fn load_component(&self, entity: EntityId, type_name: &str, data: &Value) {
+    pub fn load_component(&self, entity: EntityId, type_name: &str, data: &Value) {
         match type_name {
             "TransformComponent" => {
                 if let Ok(c) = serde_json::from_value::<TransformComponent>(data.clone()) {
