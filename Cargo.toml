@@ -68,4 +68,5 @@ eframe = { version = "0.31", features = ["wgpu"] }
 egui = "0.31"
 egui-wgpu = "0.31"
 egui-winit = "0.31"
+egui_dock = "0.18"
 rfd = "0.15"

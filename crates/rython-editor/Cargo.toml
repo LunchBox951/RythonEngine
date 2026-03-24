@@ -17,6 +17,7 @@ rython-ui.workspace = true
 egui.workspace = true
 egui-wgpu.workspace = true
 egui-winit.workspace = true
+egui_dock.workspace = true
 eframe.workspace = true
 
 winit.workspace = true

@@ -236,6 +236,40 @@ impl EditorCommand for DespawnEntity {
     }
 }
 
+// ── BatchCommand ──────────────────────────────────────────────────────────────
+
+/// Wraps multiple `EditorCommand`s into a single undo step.
+///
+/// `execute()` runs all commands in order; `undo()` runs them in reverse.
+pub struct BatchCommand {
+    commands: Vec<Box<dyn EditorCommand>>,
+    description: String,
+}
+
+impl BatchCommand {
+    pub fn new(commands: Vec<Box<dyn EditorCommand>>, description: impl Into<String>) -> Self {
+        Self { commands, description: description.into() }
+    }
+}
+
+impl EditorCommand for BatchCommand {
+    fn execute(&self, scene: &Scene) {
+        for cmd in &self.commands {
+            cmd.execute(scene);
+        }
+    }
+
+    fn undo(&self, scene: &Scene) {
+        for cmd in self.commands.iter().rev() {
+            cmd.undo(scene);
+        }
+    }
+
+    fn description(&self) -> &str {
+        &self.description
+    }
+}
+
 fn despawn_recursive(entity: EntityId, scene: &Scene) {
     let children = scene.hierarchy.get_children(entity);
     for child in children {
