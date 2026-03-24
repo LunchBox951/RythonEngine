@@ -15,7 +15,7 @@ def spawn(x: float = 0.0, y: float = 2.0, z: float = 0.0) -> Entity:
     global _entity, _spawn_pos
     _spawn_pos = (x, y, z)
     _entity = rython.scene.spawn(
-        transform=Transform(x=x, y=y, z=z),
+        transform=Transform(x=x, y=y, z=z, scale_x=0.8, scale_y=1.8, scale_z=0.8),
         mesh={"mesh_id": "cube", "texture_id": "game/assets/textures/Light/light_box_alt1.png"},
         tags=["player"],
         rigid_body={"body_type": "dynamic", "mass": 1.0},
@@ -67,7 +67,7 @@ def respawn() -> None:
         _entity.despawn()
     x, y, z = _spawn_pos
     _entity = rython.scene.spawn(
-        transform=Transform(x=x, y=y, z=z),
+        transform=Transform(x=x, y=y, z=z, scale_x=0.8, scale_y=1.8, scale_z=0.8),
         mesh={"mesh_id": "cube", "texture_id": "game/assets/textures/Light/light_box_alt1.png"},
         tags=["player"],
         rigid_body={"body_type": "dynamic", "mass": 1.0},

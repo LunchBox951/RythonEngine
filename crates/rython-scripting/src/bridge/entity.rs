@@ -29,7 +29,7 @@ impl EntityPy {
                 return TransformPy::from_component(&t, entity);
             }
         }
-        TransformPy::new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+        TransformPy::new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, None, None, None)
     }
 
     fn has_tag(&self, tag: &str) -> bool {

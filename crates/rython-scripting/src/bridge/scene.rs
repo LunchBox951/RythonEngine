@@ -48,7 +48,9 @@ impl SceneBridge {
                                     rot_x: t.rot_x,
                                     rot_y: t.rot_y,
                                     rot_z: t.rot_z,
-                                    scale: t.scale,
+                                    scale_x: t.scale_x,
+                                    scale_y: t.scale_y,
+                                    scale_z: t.scale_z,
                                 }),
                             ));
                         }

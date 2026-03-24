@@ -114,7 +114,7 @@ fn t_ecs_05_component_data_integrity() {
     let h = scene.queue_spawn(vec![comp(TransformComponent {
         x: 1.5, y: 2.5, z: 3.5,
         rot_x: 0.0, rot_y: 90.0, rot_z: 0.0,
-        scale: 2.0,
+        scale_x: 2.0, scale_y: 2.0, scale_z: 2.0,
     })]);
     scene.drain_commands();
     let entity = h.get().unwrap();
@@ -124,7 +124,9 @@ fn t_ecs_05_component_data_integrity() {
     assert_eq!(t.y, 2.5);
     assert_eq!(t.z, 3.5);
     assert_eq!(t.rot_y, 90.0);
-    assert_eq!(t.scale, 2.0);
+    assert_eq!(t.scale_x, 2.0);
+    assert_eq!(t.scale_y, 2.0);
+    assert_eq!(t.scale_z, 2.0);
 }
 
 // ── T-ECS-06: Component Mutation ─────────────────────────────────────────────
@@ -142,7 +144,7 @@ fn t_ecs_06_component_mutation() {
     assert_eq!(t.x, 10.0);
     assert_eq!(t.y, 0.0);
     assert_eq!(t.rot_x, 0.0);
-    assert_eq!(t.scale, 1.0);
+    assert_eq!(t.scale_x, 1.0);
 }
 
 // ── T-ECS-07: Entity Hierarchy — Parent-Child ────────────────────────────────
@@ -453,10 +455,10 @@ fn t_ecs_19_transform_rotation_propagation() {
 fn t_ecs_20_transform_scale_propagation() {
     let scene = Scene::new();
     let hp = scene.queue_spawn(vec![comp(TransformComponent {
-        scale: 2.0, ..Default::default()
+        scale_x: 2.0, scale_y: 2.0, scale_z: 2.0, ..Default::default()
     })]);
     let hc = scene.queue_spawn(vec![comp(TransformComponent {
-        x: 1.0, scale: 1.0, ..Default::default()
+        x: 1.0, ..Default::default()
     })]);
     scene.drain_commands();
     let parent = hp.get().unwrap();
@@ -469,7 +471,7 @@ fn t_ecs_20_transform_scale_propagation() {
     let cw = &cache[&child];
 
     assert!((cw.position.x - 2.0).abs() < 1e-4, "child world x = 2, got {}", cw.position.x);
-    assert!((cw.scale - 2.0).abs() < 1e-4, "effective world scale = 2, got {}", cw.scale);
+    assert!((cw.scale.x - 2.0).abs() < 1e-4, "effective world scale x = 2, got {}", cw.scale.x);
 }
 
 // ── T-ECS-21: Scene Save/Load Round-Trip ─────────────────────────────────────

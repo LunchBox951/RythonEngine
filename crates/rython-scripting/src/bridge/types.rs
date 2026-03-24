@@ -77,7 +77,9 @@ pub struct TransformPy {
     pub rot_x: f32,
     pub rot_y: f32,
     pub rot_z: f32,
-    pub scale: f32,
+    pub scale_x: f32,
+    pub scale_y: f32,
+    pub scale_z: f32,
 }
 
 impl TransformPy {
@@ -90,7 +92,9 @@ impl TransformPy {
             rot_x: comp.rot_x,
             rot_y: comp.rot_y,
             rot_z: comp.rot_z,
-            scale: comp.scale,
+            scale_x: comp.scale_x,
+            scale_y: comp.scale_y,
+            scale_z: comp.scale_z,
         }
     }
 
@@ -99,8 +103,9 @@ impl TransformPy {
         let scene = { let guard = scene_store().lock(); guard.as_ref().cloned() };
         if let Some(scene) = scene {
             let entity = EntityId(eid);
-            let (x, y, z, rx, ry, rz, s) =
-                (self.x, self.y, self.z, self.rot_x, self.rot_y, self.rot_z, self.scale);
+            let (x, y, z, rx, ry, rz, sx, sy, sz) =
+                (self.x, self.y, self.z, self.rot_x, self.rot_y, self.rot_z,
+                 self.scale_x, self.scale_y, self.scale_z);
             scene.components.get_mut(entity, |t: &mut TransformComponent| {
                 t.x = x;
                 t.y = y;
@@ -108,7 +113,9 @@ impl TransformPy {
                 t.rot_x = rx;
                 t.rot_y = ry;
                 t.rot_z = rz;
-                t.scale = s;
+                t.scale_x = sx;
+                t.scale_y = sy;
+                t.scale_z = sz;
             });
         }
     }
@@ -117,7 +124,7 @@ impl TransformPy {
 #[pymethods]
 impl TransformPy {
     #[new]
-    #[pyo3(signature = (x=0.0, y=0.0, z=0.0, rot_x=0.0, rot_y=0.0, rot_z=0.0, scale=1.0))]
+    #[pyo3(signature = (x=0.0, y=0.0, z=0.0, rot_x=0.0, rot_y=0.0, rot_z=0.0, scale=1.0, scale_x=None, scale_y=None, scale_z=None))]
     pub fn new(
         x: f32,
         y: f32,
@@ -126,8 +133,18 @@ impl TransformPy {
         rot_y: f32,
         rot_z: f32,
         scale: f32,
+        scale_x: Option<f32>,
+        scale_y: Option<f32>,
+        scale_z: Option<f32>,
     ) -> Self {
-        Self { entity_id: None, x, y, z, rot_x, rot_y, rot_z, scale }
+        Self {
+            entity_id: None,
+            x, y, z,
+            rot_x, rot_y, rot_z,
+            scale_x: scale_x.unwrap_or(scale),
+            scale_y: scale_y.unwrap_or(scale),
+            scale_z: scale_z.unwrap_or(scale),
+        }
     }
 
     #[getter]
@@ -190,20 +207,55 @@ impl TransformPy {
         self.write_back();
     }
 
+    /// Uniform scale getter — returns scale_x (use scale_x/y/z for per-axis).
     #[getter]
     fn scale(&self) -> f32 {
-        self.scale
+        self.scale_x
     }
+    /// Uniform scale setter — sets all three axes to the same value.
     #[setter]
     fn set_scale(&mut self, val: f32) {
-        self.scale = val;
+        self.scale_x = val;
+        self.scale_y = val;
+        self.scale_z = val;
+        self.write_back();
+    }
+
+    #[getter]
+    fn scale_x(&self) -> f32 {
+        self.scale_x
+    }
+    #[setter]
+    fn set_scale_x(&mut self, val: f32) {
+        self.scale_x = val;
+        self.write_back();
+    }
+
+    #[getter]
+    fn scale_y(&self) -> f32 {
+        self.scale_y
+    }
+    #[setter]
+    fn set_scale_y(&mut self, val: f32) {
+        self.scale_y = val;
+        self.write_back();
+    }
+
+    #[getter]
+    fn scale_z(&self) -> f32 {
+        self.scale_z
+    }
+    #[setter]
+    fn set_scale_z(&mut self, val: f32) {
+        self.scale_z = val;
         self.write_back();
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "Transform(x={}, y={}, z={}, rot_x={}, rot_y={}, rot_z={}, scale={})",
-            self.x, self.y, self.z, self.rot_x, self.rot_y, self.rot_z, self.scale
+            "Transform(x={}, y={}, z={}, rot_x={}, rot_y={}, rot_z={}, scale_x={}, scale_y={}, scale_z={})",
+            self.x, self.y, self.z, self.rot_x, self.rot_y, self.rot_z,
+            self.scale_x, self.scale_y, self.scale_z
         )
     }
 }

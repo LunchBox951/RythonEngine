@@ -11,7 +11,7 @@ use crate::component::ComponentStorage;
 pub struct WorldTransform {
     pub position: Vec3,
     pub rotation: Quat,
-    pub scale: f32,
+    pub scale: Vec3,
     /// Composed 4x4 matrix for the renderer.
     pub matrix: Mat4,
 }
@@ -21,7 +21,7 @@ impl WorldTransform {
         Self {
             position: Vec3::ZERO,
             rotation: Quat::IDENTITY,
-            scale: 1.0,
+            scale: Vec3::ONE,
             matrix: Mat4::IDENTITY,
         }
     }
@@ -86,7 +86,7 @@ impl TransformSystem {
                 local.rot_y,
                 local.rot_z,
             );
-            let local_scale = local.scale;
+            let local_scale = Vec3::new(local.scale_x, local.scale_y, local.scale_z);
 
             // Compose with parent world transform
             let world_scale = parent_world.scale * local_scale;
@@ -95,7 +95,7 @@ impl TransformSystem {
                 + parent_world.rotation * (parent_world.scale * local_pos);
 
             let matrix = Mat4::from_scale_rotation_translation(
-                Vec3::splat(world_scale),
+                world_scale,
                 world_rot,
                 world_pos,
             );

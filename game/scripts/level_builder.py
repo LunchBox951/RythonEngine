@@ -25,7 +25,7 @@ def spawn_static_block(
     else:
         mesh = "cube"
     entity = rython.scene.spawn(
-        transform=Transform(x=x, y=y, z=z),
+        transform=Transform(x=x, y=y, z=z, scale_x=sx, scale_y=sy, scale_z=sz),
         mesh=mesh,
         tags=(tags or []) + ["static_block"],
         rigid_body={"body_type": "static"},
@@ -45,7 +45,7 @@ def spawn_pickup(
 ) -> Entity:
     """Spawn a pickup item (health, score, etc.) and register it."""
     entity = rython.scene.spawn(
-        transform=Transform(x=x, y=y, z=z, scale=0.5),
+        transform=Transform(x=x, y=y, z=z, scale_x=0.5, scale_y=0.5, scale_z=0.5),
         mesh={"mesh_id": "cube", "texture_id": "game/assets/textures/Green/green_box.png"},
         tags=["pickup", pickup_type] + (tags or []),
         rigid_body={"body_type": "kinematic"},
@@ -67,9 +67,8 @@ def spawn_enemy(
     entity_tags = ["enemy", enemy_type] + (["boss"] if is_boss else []) + (tags or [])
     mass = 5.0 if is_boss else 2.0
     collider_size = [1.5, 2.5, 1.5] if is_boss else [1.0, 2.0, 1.0]
-    entity_scale = 1.5 if is_boss else 1.0
     entity = rython.scene.spawn(
-        transform=Transform(x=x, y=y, z=z, scale=entity_scale),
+        transform=Transform(x=x, y=y, z=z, scale_x=collider_size[0], scale_y=collider_size[1], scale_z=collider_size[2]),
         mesh={"mesh_id": "cube", "texture_id": "game/assets/textures/Purple/purple_box.png"},
         tags=entity_tags,
         rigid_body={"body_type": "dynamic", "mass": mass},

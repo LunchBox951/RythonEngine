@@ -24,12 +24,14 @@ pub struct TransformComponent {
     pub rot_x: f32,
     pub rot_y: f32,
     pub rot_z: f32,
-    pub scale: f32,
+    pub scale_x: f32,
+    pub scale_y: f32,
+    pub scale_z: f32,
 }
 
 impl Default for TransformComponent {
     fn default() -> Self {
-        Self { x: 0.0, y: 0.0, z: 0.0, rot_x: 0.0, rot_y: 0.0, rot_z: 0.0, scale: 1.0 }
+        Self { x: 0.0, y: 0.0, z: 0.0, rot_x: 0.0, rot_y: 0.0, rot_z: 0.0, scale_x: 1.0, scale_y: 1.0, scale_z: 1.0 }
     }
 }
 
