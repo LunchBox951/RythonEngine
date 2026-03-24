@@ -5,9 +5,6 @@ are registered and lifecycle-managed, how the task scheduler drives each frame, 
 new engine module.
 
 For the Python scripting API, see [`docs/game/README.md`](../game/README.md).
-For the full feature specification, see [`SPEC.md`](../../SPEC.md) and the per-module specs in
-[`.spec/`](../../.spec/).
-
 ---
 
 ## Contents
@@ -51,7 +48,10 @@ rython-core (Layer 0)
   ├── rython-audio     (Layer 2)
   ├── rython-resources (Layer 2)
   ├── rython-ui        (Layer 3) ──→ rython-renderer, rython-input
-  ├── rython-scripting (Layer 3) ──→ rython-ecs, rython-scheduler, rython-modules
+  ├── rython-scripting (Layer 3) ──→ rython-core, rython-scheduler, rython-modules,
+  │                                   rython-ecs, rython-renderer, rython-input,
+  │                                   rython-window, rython-audio, rython-ui,
+  │                                   rython-physics, rython-resources
   └── rython-engine    (Layer 4) ──→ ALL crates
 ```
 
@@ -80,7 +80,8 @@ input crates.
 
 **Layer 3 — `rython-scripting`:** PyO3 0.28 bridge that exposes the `rython` Python module.
 Manages the `ACTIVE_SCENE` global singleton, flush of recurring Python callbacks, hot-reload in dev
-builds, and draw-command draining.
+builds, and draw-command draining. The bridge is split across a `bridge/` directory (14 files)
+rather than a monolithic `bridge.rs`.
 
 **Layer 4 — `rython-engine`:** `Engine` and `EngineBuilder` — assembles `TaskScheduler`,
 `ModuleLoader`, and `Arc<Scene>` into a single runnable unit.
@@ -153,17 +154,17 @@ an `Engine`:
 ```rust
 let scene = Arc::new(Scene::new());
 
-let mut engine = EngineBuilder::new()
+// AudioManager, UIManager, and PlayerController are created as Arc<Mutex<...>>
+// and wired to the scripting bridge via set_active_audio / set_active_ui /
+// set_active_input — they are NOT registered as EngineBuilder modules.
+let engine = EngineBuilder::new()
     .with_config(config)                        // programmatic EngineConfig
-    // .with_config_file("engine/data/engine.json")  // OR load from JSON file
+    // .with_config_file("engine.json")         // OR load from JSON file
     .with_scene(Arc::clone(&scene))             // share scene with scripting module
     .add_module(Box::new(WindowModule::new(window_config)))
     .add_module(Box::new(ScriptingModule::new(scripting_config, Arc::clone(&scene))))
-    .add_module(Box::new(AudioManager::new(Default::default())))
     .add_module(Box::new(PhysicsModule::new(Default::default())))
-    .add_module(Box::new(PlayerController::new(0)))
     .add_module(Box::new(ResourceManager::new(Default::default())))
-    .add_module(Box::new(UIManager::new(Theme::default())))
     .build()?;
 ```
 
@@ -424,7 +425,9 @@ the ECS event bus.
 sets the `ACTIVE_SCENE` global (`OnceLock<Arc<Mutex<Option<Arc<Scene>>>>>`), and exposes the
 `rython` Python package. Each frame, `flush_recurring_callbacks(py)` runs Python per-frame
 callbacks; `drain_draw_commands()` collects text-overlay requests. The `dev-reload` feature adds
-file-watcher hot-reload.
+file-watcher hot-reload. The bridge is implemented as a `bridge/` directory module (14 files:
+`mod.rs`, plus per-class files for `scene`, `entity`, `camera`, `renderer`, `scheduler`, `time`,
+`types`, `input`, `physics`, `resources`, `audio`, `ui`, `engine`).
 
 **`rython-engine`** — `Engine` and `EngineBuilder`. `build()` creates a `TaskScheduler` and
 `ModuleLoader` but does not boot. `boot()` triggers `load_all()`; `shutdown()` triggers

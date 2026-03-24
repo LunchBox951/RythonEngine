@@ -63,7 +63,7 @@ After the install, restart your language server (VS Code: **Pylance → Restart 
 
 ## Quick Start
 
-Create a `scripts/main.py` with an `init()` function. The engine imports the entry-point module and calls `init()` on load:
+Create a `game/scripts/main.py` with an `init()` function. The engine imports the entry-point module and calls `init()` on load:
 
 ```python
 import math
@@ -96,9 +96,9 @@ def init():
 Run it:
 
 ```bash
-make run SCRIPT_DIR=scripts
+make run SCRIPT_DIR=game/scripts
 # or:
-cargo run -p rython-cli -- --script-dir scripts --entry-point main
+cargo run -p rython-cli -- --script-dir game/scripts --entry-point main
 ```
 
 ---
@@ -118,16 +118,16 @@ Options:
 
 ```bash
 # Windowed with an entry point
-cargo run -p rython-cli -- --script-dir scripts --entry-point main
+cargo run -p rython-cli -- --script-dir game/scripts --entry-point main
 
 # Headless (CI, tests, servers)
-cargo run -p rython-cli -- --script-dir scripts --headless
+cargo run -p rython-cli -- --script-dir game/scripts --headless
 
 # Custom engine config
-cargo run -p rython-cli -- --config engine.json --script-dir scripts
+cargo run -p rython-cli -- --config engine.json --script-dir game/scripts
 
 # Bundle scripts for release distribution
-make bundle SCRIPT_DIR=scripts OUT=bundle.zip
+make bundle SCRIPT_DIR=game/scripts OUT=bundle.zip
 ```
 
 ---
@@ -140,8 +140,7 @@ The engine is a Cargo workspace with layered crates. Lower layers never depend o
 RythonEngine/
 +-- Cargo.toml                    # Workspace root
 +-- Makefile
-+-- SPEC.md                       # Top-level architecture spec
-+-- .spec/                        # Per-module specifications
++-- pyproject.toml                # Python stub package config
 +-- docs/
 |   +-- engine/                   # Rust implementation docs
 |   +-- game/                     # Python scripting docs
@@ -160,9 +159,10 @@ RythonEngine/
 |   +-- rython-scripting/         # Layer 3 — PyO3 bridge, hot-reload
 |   +-- rython-engine/            # Layer 4 — EngineBuilder, integration entry point
 |   +-- rython-cli/               # Binary — windowed + headless CLI
-+-- tests/                        # Workspace-level integration tests
-+-- scripts/                      # Game scripts (Python)
-+-- assets/                       # Game assets
++-- rython/                       # Pure-Python stub package (PEP 561, IDE autocompletion)
++-- game/                         # Example game project
+|   +-- scripts/                  # Python game scripts
+|   +-- assets/                   # Game assets (textures, audio)
 ```
 
 ---
@@ -173,7 +173,7 @@ RythonEngine/
 
 1. **Task-driven execution** - All work flows through the `TaskScheduler`. Engine systems submit tasks at declared priorities; the scheduler runs them in a fixed per-frame pipeline.
 2. **Module lifecycle management** - Engine systems are `Module`s with dependency-injected lifecycles. The `ModuleLoader` builds a dependency graph, loads in post-order, and unloads in reverse.
-3. **Event-driven scripting** - Game logic reacts to named events (collisions, input actions, entity spawns), not per-frame ticks. Scripts declare handler methods the engine calls when events fire.
+3. **Flexible scripting model** - Game logic can register per-frame callbacks via `rython.scheduler.register_recurring()` for continuous updates, and react to named events (collisions, input actions, entity spawns) via the event bus. Both patterns are supported.
 4. **Three-layer error model** - Python exceptions wrap into `TaskError`, which wraps into `EngineError`. Rust uses `Result` throughout; nothing panics.
 5. **Command-based mutation** - Systems expose their API as command enums submitted to queues, drained at deterministic frame boundaries.
 
