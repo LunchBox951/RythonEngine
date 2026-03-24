@@ -14,6 +14,7 @@ members = [
     "crates/rython-scripting",
     "crates/rython-engine",
     "crates/rython-cli",
+    "crates/rython-editor",
 ]
 resolver = "2"
 
@@ -63,3 +64,8 @@ gltf = "1"
 fontdue = "0.8"
 hound = "3"
 rapier3d = { version = "0.22", features = ["simd-stable"] }
+eframe = { version = "0.31", features = ["wgpu"] }
+egui = "0.31"
+egui-wgpu = "0.31"
+egui-winit = "0.31"
+rfd = "0.15"

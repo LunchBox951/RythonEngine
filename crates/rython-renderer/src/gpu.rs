@@ -178,6 +178,36 @@ impl GpuContext {
         })
     }
 
+    /// Initialise a GPU context from externally-owned wgpu handles.
+    ///
+    /// Used by the editor to share the device/queue already created by eframe/egui-wgpu.
+    /// Pipelines are compiled against the given `surface_format`.
+    pub fn from_existing(
+        instance: wgpu::Instance,
+        adapter: wgpu::Adapter,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        sample_count: u32,
+    ) -> Result<Self, RendererError> {
+        let info = adapter.get_info();
+        log::info!("wgpu adapter (shared): {} ({:?})", info.name, info.backend);
+
+        let (pipelines, bind_group_layouts) =
+            Self::create_pipelines(&device, surface_format, sample_count)?;
+
+        Ok(Self {
+            instance,
+            adapter,
+            device,
+            queue,
+            pipelines,
+            bind_group_layouts,
+            surface_format,
+            sample_count,
+        })
+    }
+
     /// Process pending GPU upload requests (called on main thread each render tick).
     ///
     /// Each request carries raw pixel bytes decoded on a background thread; this
