@@ -4,6 +4,7 @@ use std::sync::Arc;
 use rython_core::{EngineError, SchedulerHandle};
 use rython_modules::Module;
 use rython_renderer::{Color, CommandQueue, DrawCommand, DrawRect, DrawText};
+use serde_json::{json, Value};
 
 use crate::animator::{EasingFn, TweenDef, UIAnimator};
 use crate::commands::UICmd;
@@ -643,6 +644,124 @@ impl UIManager {
             w.text = text.into();
         }
     }
+
+    // ─── Editor accessors ─────────────────────────────────────────────────────
+
+    /// Iterate over all widgets (unordered). Useful for editor panels.
+    pub fn widgets(&self) -> impl Iterator<Item = &Widget> {
+        self.widgets.values()
+    }
+
+    /// Root widget IDs in insertion order.
+    pub fn root_order(&self) -> &[WidgetId] {
+        &self.root_order
+    }
+
+    /// Number of widgets currently in the tree.
+    pub fn widget_count(&self) -> usize {
+        self.widgets.len()
+    }
+
+    /// Remove a widget and all its descendants. Updates parent's children list.
+    pub fn remove_widget(&mut self, id: WidgetId) {
+        // Collect descendants first (DFS)
+        let mut to_remove = Vec::new();
+        self.collect_descendants(id, &mut to_remove);
+        to_remove.push(id);
+
+        for rid in &to_remove {
+            // Remove from parent's children list
+            if let Some(w) = self.widgets.get(rid) {
+                if let Some(parent_id) = w.parent {
+                    if let Some(parent) = self.widgets.get_mut(&parent_id) {
+                        parent.children.retain(|&c| c != *rid);
+                    }
+                }
+            }
+            self.widgets.remove(rid);
+            self.root_order.retain(|&r| r != *rid);
+        }
+    }
+
+    fn collect_descendants(&self, id: WidgetId, out: &mut Vec<WidgetId>) {
+        if let Some(w) = self.widgets.get(&id) {
+            for &child_id in &w.children {
+                out.push(child_id);
+                self.collect_descendants(child_id, out);
+            }
+        }
+    }
+
+    // ─── JSON serialization ───────────────────────────────────────────────────
+
+    /// Serialize the widget tree and theme to a JSON value.
+    pub fn save_json(&self) -> Value {
+        let theme_val = json!({
+            "font_id": self.theme.font_id,
+            "font_size": self.theme.font_size,
+            "text_color": color_to_json(self.theme.text_color),
+            "button_color": color_to_json(self.theme.button_color),
+            "button_hover_color": color_to_json(self.theme.button_hover_color),
+            "button_active_color": color_to_json(self.theme.button_active_color),
+            "panel_color": color_to_json(self.theme.panel_color),
+            "border_color": color_to_json(self.theme.border_color),
+            "border_width": self.theme.border_width,
+            "padding": self.theme.padding,
+            "spacing": self.theme.spacing,
+        });
+
+        // DFS from roots to preserve tree order in the array
+        let mut widget_vals: Vec<Value> = Vec::with_capacity(self.widgets.len());
+        let roots = self.root_order.clone();
+        for root_id in roots {
+            self.collect_widget_json(root_id, &mut widget_vals);
+        }
+
+        json!({
+            "theme": theme_val,
+            "widgets": widget_vals,
+        })
+    }
+
+    fn collect_widget_json(&self, id: WidgetId, out: &mut Vec<Value>) {
+        if let Some(w) = self.widgets.get(&id) {
+            out.push(widget_to_json(w));
+            let children = w.children.clone();
+            for child_id in children {
+                self.collect_widget_json(child_id, out);
+            }
+        }
+    }
+
+    /// Clear the widget tree and reconstruct from a JSON value produced by `save_json`.
+    pub fn load_json(&mut self, data: &Value) {
+        self.widgets.clear();
+        self.root_order.clear();
+        self.tab_order.clear();
+        self.cmd_queue.clear();
+        self.focused = None;
+
+        if let Some(t) = data.get("theme") {
+            self.theme = theme_from_json(t);
+        }
+
+        let mut max_id: WidgetId = 0;
+        if let Some(arr) = data.get("widgets").and_then(|v| v.as_array()) {
+            for val in arr {
+                let w = widget_from_json(val);
+                if w.id > max_id {
+                    max_id = w.id;
+                }
+                if w.parent.is_none() {
+                    self.root_order.push(w.id);
+                }
+                self.widgets.insert(w.id, w);
+            }
+        }
+
+        // Advance ID counter past all loaded IDs so new widgets never collide
+        self.next_id = max_id + 1;
+    }
 }
 
 // ─── Module trait ─────────────────────────────────────────────────────────────
@@ -666,5 +785,140 @@ impl Module for UIManager {
         self.cmd_queue.clear();
         self.focused = None;
         Ok(())
+    }
+}
+
+// ─── JSON helpers (free functions) ────────────────────────────────────────────
+
+fn color_to_json(c: Color) -> Value {
+    json!([c.r, c.g, c.b, c.a])
+}
+
+fn color_from_json(v: &Value) -> Color {
+    let arr = match v.as_array() {
+        Some(a) => a,
+        None => return Color::rgb(0, 0, 0),
+    };
+    let get = |i: usize, default: u8| arr.get(i).and_then(|x| x.as_u64()).unwrap_or(default as u64) as u8;
+    Color::new(get(0, 0), get(1, 0), get(2, 0), get(3, 255))
+}
+
+fn opt_color_to_json(c: Option<Color>) -> Value {
+    c.map(color_to_json).unwrap_or(Value::Null)
+}
+
+fn opt_color_from_json(v: &Value) -> Option<Color> {
+    if v.is_null() { None } else { Some(color_from_json(v)) }
+}
+
+fn kind_str(k: WidgetKind) -> &'static str {
+    match k {
+        WidgetKind::Label => "Label",
+        WidgetKind::Button => "Button",
+        WidgetKind::TextInput => "TextInput",
+        WidgetKind::Panel => "Panel",
+        WidgetKind::ScrollView => "ScrollView",
+    }
+}
+
+fn kind_from_str(s: &str) -> WidgetKind {
+    match s {
+        "Button" => WidgetKind::Button,
+        "TextInput" => WidgetKind::TextInput,
+        "Panel" => WidgetKind::Panel,
+        "ScrollView" => WidgetKind::ScrollView,
+        _ => WidgetKind::Label,
+    }
+}
+
+fn layout_str(l: LayoutDir) -> &'static str {
+    match l {
+        LayoutDir::None => "None",
+        LayoutDir::Vertical => "Vertical",
+        LayoutDir::Horizontal => "Horizontal",
+    }
+}
+
+fn layout_from_str(s: &str) -> LayoutDir {
+    match s {
+        "Vertical" => LayoutDir::Vertical,
+        "Horizontal" => LayoutDir::Horizontal,
+        _ => LayoutDir::None,
+    }
+}
+
+fn widget_to_json(w: &Widget) -> Value {
+    json!({
+        "id": w.id,
+        "kind": kind_str(w.kind),
+        "x": w.x,
+        "y": w.y,
+        "w": w.w,
+        "h": w.h,
+        "color": opt_color_to_json(w.color),
+        "text_color": opt_color_to_json(w.text_color),
+        "border_color": opt_color_to_json(w.border_color),
+        "border_width": w.border_width,
+        "visible": w.visible,
+        "z": w.z,
+        "layout": layout_str(w.layout),
+        "spacing": w.spacing,
+        "padding": w.padding,
+        "parent": w.parent,
+        "children": w.children,
+        "text": w.text,
+        "font_id": w.font_id,
+        "font_size": w.font_size,
+        "placeholder": w.placeholder,
+        "scroll_y": w.scroll_y,
+        "alpha": w.alpha,
+    })
+}
+
+fn widget_from_json(v: &Value) -> Widget {
+    let id = v["id"].as_u64().unwrap_or(0);
+    let kind = kind_from_str(v["kind"].as_str().unwrap_or("Label"));
+    let x = v["x"].as_f64().unwrap_or(0.0) as f32;
+    let y = v["y"].as_f64().unwrap_or(0.0) as f32;
+    let w = v["w"].as_f64().unwrap_or(0.0) as f32;
+    let h = v["h"].as_f64().unwrap_or(0.0) as f32;
+
+    let mut widget = Widget::new(id, kind, x, y, w, h);
+    widget.color = opt_color_from_json(&v["color"]);
+    widget.text_color = opt_color_from_json(&v["text_color"]);
+    widget.border_color = opt_color_from_json(&v["border_color"]);
+    widget.border_width = v["border_width"].as_f64().unwrap_or(0.0) as f32;
+    widget.visible = v["visible"].as_bool().unwrap_or(true);
+    widget.z = v["z"].as_f64().unwrap_or(100.0) as f32;
+    widget.layout = layout_from_str(v["layout"].as_str().unwrap_or("None"));
+    widget.spacing = v["spacing"].as_f64().unwrap_or(0.0) as f32;
+    widget.padding = v["padding"].as_f64().unwrap_or(0.0) as f32;
+    widget.parent = v["parent"].as_u64();
+    widget.children = v["children"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|x| x.as_u64()).collect())
+        .unwrap_or_default();
+    widget.text = v["text"].as_str().unwrap_or("").to_string();
+    widget.font_id = v["font_id"].as_str().map(|s| s.to_string());
+    widget.font_size = v["font_size"].as_u64().map(|n| n as u32);
+    widget.placeholder = v["placeholder"].as_str().unwrap_or("").to_string();
+    widget.scroll_y = v["scroll_y"].as_f64().unwrap_or(0.0) as f32;
+    widget.alpha = v["alpha"].as_f64().unwrap_or(1.0) as f32;
+    widget
+}
+
+fn theme_from_json(v: &Value) -> Theme {
+    Theme {
+        font_id: v["font_id"].as_str().unwrap_or("default").to_string(),
+        font_size: v["font_size"].as_u64().unwrap_or(18) as u32,
+        text_color: color_from_json(&v["text_color"]),
+        button_color: color_from_json(&v["button_color"]),
+        button_hover_color: color_from_json(&v["button_hover_color"]),
+        button_active_color: color_from_json(&v["button_active_color"]),
+        panel_color: color_from_json(&v["panel_color"]),
+        border_color: color_from_json(&v["border_color"]),
+        border_width: v["border_width"].as_f64().unwrap_or(1.0) as f32,
+        padding: v["padding"].as_f64().unwrap_or(0.01) as f32,
+        spacing: v["spacing"].as_f64().unwrap_or(0.01) as f32,
     }
 }

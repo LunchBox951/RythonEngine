@@ -496,4 +496,128 @@ mod tests {
         ui.drain_commands();
         assert!(ui.is_visible(label), "widget should be visible after ShowUICmd");
     }
+
+    // ── T-UI-20: save_json — structure ───────────────────────────────────────
+
+    #[test]
+    fn t_ui_20_save_json_structure() {
+        let mut ui = ui();
+        let panel = ui.create_panel(0.0, 0.0, 0.5, 1.0);
+        let label = ui.create_label("Score: 0", 0.01, 0.01, 0.2, 0.05);
+        ui.add_child(panel, label);
+
+        let val = ui.save_json();
+
+        // Top-level keys
+        assert!(val.get("theme").is_some(), "must have theme key");
+        let widgets = val["widgets"].as_array().expect("must have widgets array");
+
+        // Panel is a root, label is a child — both appear
+        assert_eq!(widgets.len(), 2);
+
+        // Panel appears first (root before child in DFS order)
+        assert_eq!(widgets[0]["kind"].as_str().unwrap(), "Panel");
+        assert_eq!(widgets[1]["kind"].as_str().unwrap(), "Label");
+        assert_eq!(widgets[1]["text"].as_str().unwrap(), "Score: 0");
+
+        // Parent/child linkage
+        assert!(widgets[0]["parent"].is_null(), "panel has no parent");
+        assert_eq!(
+            widgets[0]["children"][0].as_u64().unwrap(),
+            widgets[1]["id"].as_u64().unwrap(),
+            "panel's children list must reference label id"
+        );
+        assert_eq!(
+            widgets[1]["parent"].as_u64().unwrap(),
+            widgets[0]["id"].as_u64().unwrap(),
+            "label parent must reference panel id"
+        );
+    }
+
+    // ── T-UI-21: load_json — restore tree ────────────────────────────────────
+
+    #[test]
+    fn t_ui_21_load_json_restore_tree() {
+        // Build + save
+        let mut src = ui();
+        let panel = src.create_panel(0.1, 0.2, 0.4, 0.6);
+        let btn = src.create_button_child("OK", panel, 0.05, 0.05, 0.2, 0.05);
+        let json = src.save_json();
+
+        // Load into fresh manager
+        let mut dst = UIManager::with_default_theme();
+        dst.load_json(&json);
+
+        assert_eq!(dst.widget_count(), 2, "both widgets must be restored");
+
+        let w_panel = dst.get_widget(panel);
+        assert_eq!(w_panel.kind, WidgetKind::Panel);
+        assert!((w_panel.x - 0.1).abs() < f32::EPSILON);
+        assert!((w_panel.y - 0.2).abs() < f32::EPSILON);
+        assert!(w_panel.children.contains(&btn), "panel must reference btn as child");
+
+        let w_btn = dst.get_widget(btn);
+        assert_eq!(w_btn.kind, WidgetKind::Button);
+        assert_eq!(w_btn.text, "OK");
+        assert_eq!(w_btn.parent, Some(panel));
+    }
+
+    // ── T-UI-22: save/load round-trip ────────────────────────────────────────
+
+    #[test]
+    fn t_ui_22_save_load_round_trip() {
+        let mut src = UIManager::new(crate::Theme {
+            font_size: 24,
+            text_color: Color::rgb(10, 20, 30),
+            ..crate::Theme::default()
+        });
+
+        let panel = src.create_panel(0.0, 0.0, 1.0, 1.0);
+        src.set_layout(panel, LayoutDir::Vertical, 0.02, 0.01);
+        let label = src.create_button_child("Hello", panel, 0.0, 0.0, 0.3, 0.05);
+        src.hide(label);
+
+        let json = src.save_json();
+
+        let mut dst = UIManager::with_default_theme();
+        dst.load_json(&json);
+
+        // Theme restored
+        assert_eq!(dst.theme.font_size, 24);
+        assert_eq!(dst.theme.text_color, Color::rgb(10, 20, 30));
+
+        // Layout settings restored
+        let w_panel = dst.get_widget(panel);
+        assert_eq!(w_panel.layout, LayoutDir::Vertical);
+        assert!((w_panel.spacing - 0.02).abs() < 1e-5);
+        assert!((w_panel.padding - 0.01).abs() < 1e-5);
+
+        // Visibility restored
+        assert!(!dst.get_widget(label).visible, "hidden widget stays hidden after round-trip");
+
+        // Root order preserved (only panel is a root widget)
+        assert_eq!(dst.root_order(), &[panel]);
+
+        // New widget IDs don't collide with loaded IDs
+        let new_id = dst.create_label("New", 0.5, 0.5, 0.1, 0.05);
+        assert_ne!(new_id, panel, "new ID must not collide with loaded panel ID");
+        assert_ne!(new_id, label, "new ID must not collide with loaded button ID");
+    }
+
+    // ── T-UI-23: remove_widget removes subtree ───────────────────────────────
+
+    #[test]
+    fn t_ui_23_remove_widget_removes_subtree() {
+        let mut ui = ui();
+        let panel = ui.create_panel(0.0, 0.0, 1.0, 1.0);
+        let btn = ui.create_button_child("A", panel, 0.0, 0.0, 0.1, 0.05);
+        let _lbl = ui.create_button_child("B", panel, 0.0, 0.1, 0.1, 0.05);
+
+        assert_eq!(ui.widget_count(), 3);
+
+        ui.remove_widget(btn);
+
+        assert_eq!(ui.widget_count(), 2, "btn removed");
+        assert!(!ui.get_widget(panel).children.contains(&btn), "panel must not reference removed btn");
+    }
 }

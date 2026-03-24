@@ -9,3 +9,4 @@ rython-scheduler.workspace = true
 rython-modules.workspace = true
 rython-renderer.workspace = true
 rython-input.workspace = true
+serde_json.workspace = true
