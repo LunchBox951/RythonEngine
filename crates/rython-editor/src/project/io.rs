@@ -21,6 +21,7 @@ pub fn create_project(root: &Path, name: &str) -> std::io::Result<ProjectConfig>
         default_scene: None,
         entry_point: None,
         engine_config: Default::default(),
+        ..Default::default()
     };
     save_project(root, &config)?;
     Ok(config)
