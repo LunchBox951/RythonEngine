@@ -57,10 +57,15 @@ The `rython` module is injected into `sys.modules` by the engine. It has the fol
 | `rython.renderer` | Queue draw commands (text overlays) |
 | `rython.time` | Read elapsed engine time |
 | `rython.engine` | Engine lifecycle control |
+| `rython.physics` | Physics world control (gravity, impulses) |
+| `rython.audio` | Audio playback |
+| `rython.input` | Input state queries |
+| `rython.ui` | UI widget management |
+| `rython.resources` | Asset/resource loading |
 | `rython.Vec3` | 3D vector type |
 | `rython.Transform` | Entity transform type |
 
-Sub-modules `physics`, `audio`, `input`, `ui`, `resources`, and `modules` are present as stubs and will raise `ValueError` if accessed.
+`rython.modules` is a stub and will raise `ValueError` if accessed. All other sub-modules listed above are fully implemented bridges.
 
 ---
 
@@ -89,15 +94,25 @@ scalar * a          # same (right-multiplication)
 
 ### `rython.Transform`
 
-Position, rotation (Euler angles in radians), and uniform scale for an entity.
+Position, rotation (Euler angles in radians), and scale for an entity.
 
 ```python
 t = rython.Transform(x=0.0, y=0.0, z=0.0,
                      rot_x=0.0, rot_y=0.0, rot_z=0.0,
-                     scale=1.0)
+                     scale=1.0,
+                     scale_x=None, scale_y=None, scale_z=None)
 ```
 
-All parameters are keyword-optional and default to `0.0` except `scale` which defaults to `1.0`.
+All parameters are keyword-optional. Position and rotation default to `0.0`. `scale` defaults to `1.0` and sets all three axes uniformly. `scale_x`, `scale_y`, `scale_z` override the uniform scale on a per-axis basis; when omitted they inherit `scale`.
+
+Per-axis scale properties are also readable/writable on a live transform:
+
+```python
+t.scale         # float — uniform getter (returns scale_x); setter sets all three axes
+t.scale_x       # float — X scale
+t.scale_y       # float — Y scale
+t.scale_z       # float — Z scale
+```
 
 When a `Transform` is retrieved from an `Entity`, writing to its fields immediately propagates the change back to the ECS component:
 
@@ -124,6 +139,8 @@ entity = rython.scene.spawn(
 | `transform` | `rython.Transform` | Initial position/rotation/scale |
 | `mesh` | `str` or `dict` | Mesh to render. String = mesh ID shorthand. Dict keys: `mesh_id`, `texture_id`, `visible` |
 | `tags` | `list[str]` | Tag strings attached to the entity |
+| `rigid_body` | `dict` | Attach a physics body. Keys: `body_type` (`"dynamic"`, `"static"`, `"kinematic"`), `mass` (`float`, default `1.0`), `gravity_factor` (`float`, default `1.0`) |
+| `collider` | `dict` | Attach a collision shape. Keys: `shape` (`"box"`, `"sphere"`, `"capsule"`), `size` (`[f32, f32, f32]`), `is_trigger` (`bool`, default `false`) |
 
 `spawn()` returns an `Entity` object. The entity is immediately live in the scene.
 
@@ -133,6 +150,17 @@ entity = rython.scene.spawn(
 entity = rython.scene.spawn(
     transform=rython.Transform(x=0.0, y=0.0, z=0.0),
     mesh={"mesh_id": "cube", "texture_id": "stone", "visible": True},
+)
+```
+
+**Physics body + collider:**
+
+```python
+ball = rython.scene.spawn(
+    transform=rython.Transform(x=0.0, y=5.0, z=0.0),
+    mesh="sphere",
+    rigid_body={"body_type": "dynamic", "mass": 2.0, "gravity_factor": 1.0},
+    collider={"shape": "sphere", "size": [0.5, 0.5, 0.5], "is_trigger": False},
 )
 ```
 
@@ -152,6 +180,12 @@ entity.has_tag("player")    # bool
 entity.add_tag("flying")    # add a tag at runtime
 
 entity.despawn()            # queue the entity for removal
+
+# Physics (requires a RigidBodyComponent on the entity)
+entity.apply_force(x, y, z)    # apply a continuous force (world space)
+entity.apply_impulse(x, y, z)  # apply an instantaneous impulse (world space)
+entity.set_velocity(x, y, z)   # set linear velocity directly
+entity.velocity                # Vec3 — current linear velocity
 ```
 
 ---
@@ -272,30 +306,40 @@ class Player:
         self.entity = entity
 
     def on_spawn(self):
-        """Called when the entity enters the scene."""
+        """Called once immediately after attach_script() registers the instance."""
         pass
 
     def on_despawn(self):
-        """Called just before the entity is removed."""
+        """Called just before the entity is removed from the scene."""
         pass
 
-    def on_collision(self, other_entity):
-        """Called when this entity collides with another (physics)."""
+    def on_collision(self, other_entity, normal_vec):
+        """Called when this entity collides with another (requires RigidBodyComponent).
+        other_entity: Entity — the colliding entity
+        normal_vec:   Vec3  — contact normal pointing away from other_entity
+        """
         pass
 
     def on_trigger_enter(self, other_entity):
-        """Called when this entity enters a trigger volume."""
+        """Called when another entity enters this entity's trigger collider."""
         pass
 
-    def on_input_action(self, action_name):
-        """Called when a mapped input action fires."""
+    def on_trigger_exit(self, other_entity):
+        """Called when another entity exits this entity's trigger collider."""
+        pass
+
+    def on_input_action(self, action_name, value):
+        """Called when a mapped input action fires.
+        action_name: str   — the action identifier
+        value:       float — axis value (1.0 for digital press, analogue for axes)
+        """
         pass
 
 entity = rython.scene.spawn(transform=rython.Transform(), mesh="cube")
 rython.scene.attach_script(entity, Player)
 ```
 
-The engine instantiates the class with the entity as the first argument and dispatches the appropriate handler when the corresponding event fires.
+The engine instantiates the class with the entity as the first argument. All lifecycle handlers listed above are fully implemented — define only the ones you need. Handlers that are absent on the class are silently skipped.
 
 ---
 
@@ -309,7 +353,7 @@ Hot-reload is not available in release builds. Scripts are bundled into the bina
 
 ## Complete Example: Spinning Cubes
 
-This is the visual test script from `tests/visual_spinning_cubes.py`. It demonstrates the full scripting API.
+This example demonstrates the core scripting API: spawning entities, per-frame updates, camera setup, and HUD text.
 
 ```python
 """Spinning Cubes — full API example.
@@ -382,6 +426,6 @@ Run it with:
 
 ```bash
 cargo run --bin rython -- \
-    --script-dir tests \
-    --entry-point visual_spinning_cubes
+    --script-dir scripts \
+    --entry-point main
 ```
