@@ -74,6 +74,21 @@ impl UndoStack {
         self.history.clear();
         self.position = 0;
     }
+
+    /// Append `cmd` to history WITHOUT executing it.
+    ///
+    /// Used when the effect has already been applied live (e.g. gizmo drag) and
+    /// we only need the undo record.
+    pub fn push_no_execute(&mut self, cmd: Box<dyn EditorCommand>) {
+        self.history.truncate(self.position);
+        self.history.push(cmd);
+        self.position += 1;
+        if self.history.len() > self.max_history {
+            let drop_count = self.history.len() - self.max_history;
+            self.history.drain(..drop_count);
+            self.position = self.position.saturating_sub(drop_count);
+        }
+    }
 }
 
 // ── Helper: deserialize and re-insert a component by type name ────────────────

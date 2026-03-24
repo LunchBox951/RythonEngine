@@ -6,6 +6,7 @@ use rython_ecs::component::{
 };
 use rython_ecs::{EntityId, Scene};
 
+use crate::panels::asset_browser::{AssetBrowserPanel, AssetCategory};
 use crate::state::undo::{AttachComponent, DetachComponent, ModifyComponent, UndoStack};
 
 const ALL_COMPONENT_TYPES: &[&str] = &[
@@ -31,6 +32,7 @@ impl ComponentInspectorPanel {
         scene: &Arc<Scene>,
         undo: &mut UndoStack,
         project_dirty: &mut bool,
+        asset_browser: &AssetBrowserPanel,
     ) {
         ui.heading("Inspector");
         ui.separator();
@@ -64,7 +66,7 @@ impl ComponentInspectorPanel {
                             "TransformComponent" => {
                                 show_transform(ui, entity, scene, undo, project_dirty);
                             }
-                            "MeshComponent" => { show_mesh(ui, entity, scene, undo, project_dirty); }
+                            "MeshComponent" => { show_mesh(ui, entity, scene, undo, project_dirty, asset_browser); }
                             "TagComponent" => { show_tag(ui, entity, scene, undo, project_dirty); }
                             "RigidBodyComponent" => {
                                 show_rigid_body(ui, entity, scene, undo, project_dirty);
@@ -209,6 +211,7 @@ fn show_mesh(
     scene: &Arc<Scene>,
     undo: &mut UndoStack,
     project_dirty: &mut bool,
+    asset_browser: &AssetBrowserPanel,
 ) -> bool {
     let Some(mut m) = scene.components.get::<MeshComponent>(entity) else {
         return false;
@@ -216,12 +219,45 @@ fn show_mesh(
     let old_json = serde_json::to_value(&m).unwrap();
     let mut changed = false;
 
+    // Helper: check if a dragged asset should be dropped onto a field.
+    // Returns the stem (asset ID without extension) if it's the right category.
+    let check_drop = |ui: &egui::Ui, resp: &egui::Response, accept_cat: AssetCategory| -> Option<String> {
+        let drag = asset_browser.drag_payload.as_ref()?;
+        let ext = drag.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+        if AssetCategory::from_extension(&ext) != accept_cat {
+            return None;
+        }
+        if resp.hovered() {
+            // Highlight the drop target
+            ui.painter().rect_stroke(resp.rect, 2.0, egui::Stroke::new(2.0, egui::Color32::YELLOW), egui::StrokeKind::Middle);
+            if ui.ctx().input(|i| i.pointer.any_released()) {
+                let stem = drag
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                return Some(stem);
+            }
+        }
+        None
+    };
+
     egui::Grid::new("mesh").num_columns(2).show(ui, |ui| {
         ui.label("Mesh ID");
-        changed |= ui.text_edit_singleline(&mut m.mesh_id).changed();
+        let mesh_resp = ui.text_edit_singleline(&mut m.mesh_id);
+        if let Some(stem) = check_drop(ui, &mesh_resp, AssetCategory::Mesh) {
+            m.mesh_id = stem;
+            changed = true;
+        }
+        changed |= mesh_resp.changed();
         ui.end_row();
         ui.label("Texture ID");
-        changed |= ui.text_edit_singleline(&mut m.texture_id).changed();
+        let tex_resp = ui.text_edit_singleline(&mut m.texture_id);
+        if let Some(stem) = check_drop(ui, &tex_resp, AssetCategory::Texture) {
+            m.texture_id = stem;
+            changed = true;
+        }
+        changed |= tex_resp.changed();
         ui.end_row();
         ui.label("Visible");
         changed |= ui.checkbox(&mut m.visible, "").changed();
