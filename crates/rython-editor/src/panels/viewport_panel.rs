@@ -183,7 +183,7 @@ pub fn show(
     let tex_id = vt.egui_texture_id;
     let display_size = egui::vec2(available.width(), available.height());
     let image = egui::Image::new(egui::load::SizedTexture::new(tex_id, display_size))
-        .sense(egui::Sense::drag());
+        .sense(egui::Sense::click_and_drag());
 
     ui.add_sized(display_size, image)
 }
