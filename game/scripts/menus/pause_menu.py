@@ -1,7 +1,6 @@
 """Pause menu — shown when Escape is pressed during gameplay."""
 import rython
 from game.scripts import game_state
-from game.scripts.ui_loader import load_layout
 from typing import Optional
 
 _panel_id: Optional[int] = None
@@ -11,7 +10,7 @@ def create() -> None:
     """Build the pause menu widgets from UI layout (hidden initially)."""
     global _panel_id
 
-    widgets = load_layout("game/ui/pause_menu.json")
+    widgets = rython.ui.load_layout("game/ui/pause_menu.json")
 
     _panel_id = widgets["PausePanel"]
     resume_btn = widgets["ResumeButton"]

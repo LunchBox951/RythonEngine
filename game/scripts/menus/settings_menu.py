@@ -1,7 +1,6 @@
 """Settings menu — volume controls, accessible from main menu."""
 import rython
 from game.scripts import game_state
-from game.scripts.ui_loader import load_layout
 from typing import Optional
 
 _panel_id: Optional[int] = None
@@ -16,7 +15,7 @@ def create() -> None:
     """Build settings menu widgets from UI layout (hidden initially)."""
     global _panel_id, _music_vol_label_id, _sfx_vol_label_id
 
-    widgets = load_layout("game/ui/settings_menu.json")
+    widgets = rython.ui.load_layout("game/ui/settings_menu.json")
 
     _panel_id = widgets["SettingsPanel"]
     _music_vol_label_id = widgets["MusicVolLabel"]

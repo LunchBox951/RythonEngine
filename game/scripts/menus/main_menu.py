@@ -1,7 +1,6 @@
 """Main menu for Gauntlet of Cubes — includes CC-BY attribution for Eric Taylor music."""
 import rython
 from game.scripts import game_state
-from game.scripts.ui_loader import load_layout
 from typing import Optional
 
 _panel_id: Optional[int] = None
@@ -12,7 +11,7 @@ def create() -> None:
     """Build main menu widgets from UI layout and start menu music."""
     global _panel_id
 
-    widgets = load_layout("game/ui/main_menu.json")
+    widgets = rython.ui.load_layout("game/ui/main_menu.json")
 
     _panel_id = widgets["MainPanel"]
     play_btn = widgets["PlayButton"]
