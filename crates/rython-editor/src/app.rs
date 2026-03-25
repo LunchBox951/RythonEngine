@@ -15,7 +15,7 @@ use crate::panels::scene_hierarchy::SceneHierarchyPanel;
 use crate::panels::script_panel::ScriptPanel;
 use crate::panels::ui_editor::UiEditorPanel;
 use crate::panels::viewport_panel;
-use crate::project::io::{create_project, open_project, save_scene};
+use crate::project::io::{create_project, list_scenes, load_scene, open_project, save_scene};
 use crate::state::undo::{DespawnEntity, EntitySnapshot, ModifyComponent, SpawnEntity};
 use crate::state::{ProjectState, SelectionState, UndoStack, ViewportState};
 use crate::viewport::gizmo::{
@@ -442,6 +442,11 @@ impl EditorApp {
             self.project.mark_clean();
             push_recent(&mut self.recent_projects, dir.to_path_buf());
             save_recent_projects(&self.recent_projects);
+            if let Some(name) = self.project.config.default_scene.clone() {
+                if load_scene(dir, &name, &self.scene).is_ok() {
+                    self.project.open_scene_name = Some(name);
+                }
+            }
             self.console_lines.push(ConsoleEntry::new(
                 LogLevel::Info,
                 format!("Opened project: {}", dir.display()),
@@ -1066,6 +1071,36 @@ impl eframe::App for EditorApp {
                                 self.open_project_at(&dir);
                             }
                         });
+                    }
+
+                    // Scenes submenu
+                    if let Some(root) = self.project.root_dir.clone() {
+                        let scenes = list_scenes(&root);
+                        if !scenes.is_empty() {
+                            ui.menu_button("Open Scene", |ui| {
+                                let mut to_load: Option<String> = None;
+                                for name in &scenes {
+                                    if ui.button(name).clicked() {
+                                        to_load = Some(name.clone());
+                                        ui.close_menu();
+                                    }
+                                }
+                                if let Some(name) = to_load {
+                                    let new_scene = Arc::new(Scene::new());
+                                    if load_scene(&root, &name, &new_scene).is_ok() {
+                                        self.scene = new_scene;
+                                        self.project.open_scene_name = Some(name.clone());
+                                        self.undo_stack.clear();
+                                        self.selection.clear();
+                                        self.multi_select.clear();
+                                        self.console_lines.push(ConsoleEntry::new(
+                                            LogLevel::Info,
+                                            format!("Opened scene: {name}"),
+                                        ));
+                                    }
+                                }
+                            });
+                        }
                     }
 
                     ui.separator();
