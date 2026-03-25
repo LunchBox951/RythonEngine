@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use parking_lot::Mutex;
@@ -141,6 +142,20 @@ impl UIBridge {
             theme.font_size = sz;
         }
         manager.set_theme(theme);
+    }
+
+    /// Load a UI layout from an editor JSON file (additive — does not clear existing widgets).
+    /// Applies the file's theme, creates all widgets with fresh runtime IDs, sets all visual
+    /// properties (colors, fonts, borders, layout, visibility), and wires parent-child.
+    /// Returns a dict mapping widget name → runtime widget ID.
+    fn load_layout(&self, path: &str) -> PyResult<HashMap<String, u64>> {
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            PyErr::new::<PyRuntimeError, _>(format!("load_layout: cannot read '{path}': {e}"))
+        })?;
+        let data: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
+            PyErr::new::<PyRuntimeError, _>(format!("load_layout: invalid JSON in '{path}': {e}"))
+        })?;
+        Ok(ui_store().lock().load_layout(&data))
     }
 
     fn __repr__(&self) -> String {

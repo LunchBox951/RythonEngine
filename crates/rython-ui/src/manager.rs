@@ -762,6 +762,84 @@ impl UIManager {
         // Advance ID counter past all loaded IDs so new widgets never collide
         self.next_id = max_id + 1;
     }
+
+    /// Additive layout loader: parses editor JSON (same format as `save_json`),
+    /// creates new widgets with fresh runtime IDs remapped from JSON IDs, sets ALL
+    /// visual properties (colors, fonts, borders, layout, visibility, etc.), wires
+    /// parent-child relationships, and returns a `name → runtime_id` map.
+    ///
+    /// Unlike `load_json` this does NOT clear the widget tree, so multiple menus
+    /// can coexist. Calling this also updates the active theme to match the file.
+    pub fn load_layout(&mut self, data: &Value) -> HashMap<String, WidgetId> {
+        if let Some(t) = data.get("theme") {
+            self.theme = theme_from_json(t);
+        }
+
+        let mut id_map: HashMap<WidgetId, WidgetId> = HashMap::new();
+        let mut name_to_id: HashMap<String, WidgetId> = HashMap::new();
+
+        let widgets_arr = match data.get("widgets").and_then(|v| v.as_array()) {
+            Some(a) => a.clone(),
+            None => return name_to_id,
+        };
+
+        // First pass: allocate runtime IDs and set all widget properties.
+        for val in &widgets_arr {
+            let json_id = val["id"].as_u64().unwrap_or(0);
+            let kind = kind_from_str(val["kind"].as_str().unwrap_or("Label"));
+            let x = val["x"].as_f64().unwrap_or(0.0) as f32;
+            let y = val["y"].as_f64().unwrap_or(0.0) as f32;
+            let w = val["w"].as_f64().unwrap_or(0.0) as f32;
+            let h = val["h"].as_f64().unwrap_or(0.0) as f32;
+
+            let runtime_id = self.alloc_id();
+            let mut widget = Widget::new(runtime_id, kind, x, y, w, h);
+
+            widget.text = val["text"].as_str().unwrap_or("").to_string();
+            widget.placeholder = val["placeholder"].as_str().unwrap_or("").to_string();
+            widget.color = opt_color_from_json(&val["color"]);
+            widget.text_color = opt_color_from_json(&val["text_color"]);
+            widget.border_color = opt_color_from_json(&val["border_color"]);
+            widget.border_width = val["border_width"].as_f64().unwrap_or(0.0) as f32;
+            widget.font_id = val["font_id"].as_str().map(|s| s.to_string());
+            widget.font_size = val["font_size"].as_u64().map(|n| n as u32);
+            widget.alpha = val["alpha"].as_f64().unwrap_or(1.0) as f32;
+            widget.visible = val["visible"].as_bool().unwrap_or(true);
+            widget.layout = layout_from_str(val["layout"].as_str().unwrap_or("None"));
+            widget.spacing = val["spacing"].as_f64().unwrap_or(0.0) as f32;
+            widget.padding = val["padding"].as_f64().unwrap_or(0.0) as f32;
+            widget.scroll_y = val["scroll_y"].as_f64().unwrap_or(0.0) as f32;
+
+            // Add as root initially; add_child will remove non-roots in the second pass.
+            self.root_order.push(runtime_id);
+            self.widgets.insert(runtime_id, widget);
+
+            id_map.insert(json_id, runtime_id);
+            if let Some(name) = val["name"].as_str() {
+                if !name.is_empty() {
+                    name_to_id.insert(name.to_string(), runtime_id);
+                }
+            }
+        }
+
+        // Second pass: wire parent-child relationships using remapped IDs.
+        for val in &widgets_arr {
+            let json_id = val["id"].as_u64().unwrap_or(0);
+            let runtime_id = match id_map.get(&json_id) {
+                Some(&id) => id,
+                None => continue,
+            };
+            if let Some(children) = val["children"].as_array() {
+                for child_json_id in children.iter().filter_map(|x| x.as_u64()) {
+                    if let Some(&child_runtime_id) = id_map.get(&child_json_id) {
+                        self.add_child(runtime_id, child_runtime_id);
+                    }
+                }
+            }
+        }
+
+        name_to_id
+    }
 }
 
 // ─── Module trait ─────────────────────────────────────────────────────────────
