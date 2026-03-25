@@ -366,7 +366,16 @@ impl EditorApp {
         )
         .expect("GpuContext::from_existing failed");
 
-        let renderer = RendererState::new(gpu, RendererConfig::default());
+        let mut renderer = RendererState::new(gpu, RendererConfig::default());
+
+        // Upload built-in cube mesh so scene entities with mesh_id "cube" render correctly
+        let cube = rython_resources::generate_cube();
+        renderer.upload_mesh(
+            "cube",
+            bytemuck::cast_slice(&cube.vertices),
+            &cube.indices,
+        );
+
         let preferences = Preferences::load();
         let recent_projects = load_recent_projects();
 
