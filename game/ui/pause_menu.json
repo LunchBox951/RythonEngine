@@ -1,0 +1,142 @@
+{
+  "root_order": [
+    1
+  ],
+  "theme": {
+    "border_color": [
+      100,
+      100,
+      100,
+      255
+    ],
+    "border_width": 0.0,
+    "button_active_color": [
+      60,
+      60,
+      60,
+      255
+    ],
+    "button_color": [
+      80,
+      80,
+      80,
+      255
+    ],
+    "button_hover_color": [
+      100,
+      100,
+      100,
+      255
+    ],
+    "font_id": "default",
+    "font_size": 18,
+    "padding": 0.019999999552965164,
+    "panel_color": [
+      40,
+      40,
+      40,
+      200
+    ],
+    "spacing": 0.019999999552965164,
+    "text_color": [
+      255,
+      255,
+      255,
+      255
+    ]
+  },
+  "widgets": [
+    {
+      "border_color": null,
+      "border_width": 0.0,
+      "children": [
+        2,
+        3,
+        4
+      ],
+      "color": null,
+      "font_id": "default",
+      "font_size": 18,
+      "h": 0.5,
+      "id": 1,
+      "kind": "Panel",
+      "layout": "Vertical",
+      "name": "PausePanel",
+      "parent": null,
+      "placeholder": "",
+      "scroll_y": 0.0,
+      "text": "",
+      "text_color": null,
+      "visible": true,
+      "w": 0.4000000059604645,
+      "x": 0.30000001192092896,
+      "y": 0.25
+    },
+    {
+      "border_color": null,
+      "border_width": 0.0,
+      "children": [],
+      "color": null,
+      "font_id": "default",
+      "font_size": 18,
+      "h": 0.11999999731779099,
+      "id": 2,
+      "kind": "Label",
+      "layout": "None",
+      "name": "TitleLabel",
+      "parent": 1,
+      "placeholder": "",
+      "scroll_y": 0.0,
+      "text": "PAUSED",
+      "text_color": null,
+      "visible": true,
+      "w": 0.3799999952316284,
+      "x": 0.0,
+      "y": 0.0
+    },
+    {
+      "border_color": null,
+      "border_width": 0.0,
+      "children": [],
+      "color": null,
+      "font_id": "default",
+      "font_size": 18,
+      "h": 0.11999999731779099,
+      "id": 3,
+      "kind": "Button",
+      "layout": "None",
+      "name": "ResumeButton",
+      "parent": 1,
+      "placeholder": "",
+      "scroll_y": 0.0,
+      "text": "Resume",
+      "text_color": null,
+      "visible": true,
+      "w": 0.3799999952316284,
+      "x": 0.0,
+      "y": 0.0
+    },
+    {
+      "border_color": null,
+      "border_width": 0.0,
+      "children": [],
+      "color": null,
+      "font_id": "default",
+      "font_size": 18,
+      "h": 0.11999999731779099,
+      "id": 4,
+      "kind": "Button",
+      "layout": "None",
+      "name": "MainMenuButton",
+      "parent": 1,
+      "placeholder": "",
+      "scroll_y": 0.0,
+      "text": "Main Menu",
+      "text_color": null,
+      "visible": true,
+      "w": 0.3799999952316284,
+      "x": 0.0,
+      "y": 0.0
+    }
+  ]
+}

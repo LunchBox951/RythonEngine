@@ -1,6 +1,7 @@
 """Settings menu — volume controls, accessible from main menu."""
 import rython
 from game.scripts import game_state
+from game.scripts.ui_loader import load_layout
 from typing import Optional
 
 _panel_id: Optional[int] = None
@@ -12,55 +13,22 @@ _sfx_vol: int = 100
 
 
 def create() -> None:
-    """Build settings menu widgets (hidden initially)."""
+    """Build settings menu widgets from UI layout (hidden initially)."""
     global _panel_id, _music_vol_label_id, _sfx_vol_label_id
 
-    panel = rython.ui.create_panel(0.25, 0.15, 0.5, 0.7)
+    widgets = load_layout("game/ui/settings_menu.json")
 
-    title = rython.ui.create_label("SETTINGS", 0.0, 0.0, 1.0, 0.1)
-    rython.ui.add_child(panel, title)
+    _panel_id = widgets["SettingsPanel"]
+    _music_vol_label_id = widgets["MusicVolLabel"]
+    _sfx_vol_label_id = widgets["SfxVolLabel"]
 
-    # Music volume row
-    music_section = rython.ui.create_panel(0.0, 0.0, 1.0, 0.12)
-    music_label = rython.ui.create_label("Music Vol:", 0.0, 0.0, 0.35, 1.0)
-    music_minus = rython.ui.create_button("-", 0.0, 0.0, 0.12, 1.0)
-    music_vol_lbl = rython.ui.create_label(f"{_music_vol}%", 0.0, 0.0, 0.22, 1.0)
-    music_plus = rython.ui.create_button("+", 0.0, 0.0, 0.12, 1.0)
-    rython.ui.add_child(music_section, music_label)
-    rython.ui.add_child(music_section, music_minus)
-    rython.ui.add_child(music_section, music_vol_lbl)
-    rython.ui.add_child(music_section, music_plus)
-    rython.ui.set_layout(music_section, "horizontal", 0.01, 0.0)
-    rython.ui.add_child(panel, music_section)
-    _music_vol_label_id = music_vol_lbl
+    rython.ui.on_click(widgets["MusicMinusButton"], _music_down)
+    rython.ui.on_click(widgets["MusicPlusButton"], _music_up)
+    rython.ui.on_click(widgets["SfxMinusButton"], _sfx_down)
+    rython.ui.on_click(widgets["SfxPlusButton"], _sfx_up)
+    rython.ui.on_click(widgets["BackButton"], _on_back)
 
-    # SFX volume row
-    sfx_section = rython.ui.create_panel(0.0, 0.0, 1.0, 0.12)
-    sfx_label = rython.ui.create_label("SFX Vol:", 0.0, 0.0, 0.35, 1.0)
-    sfx_minus = rython.ui.create_button("-", 0.0, 0.0, 0.12, 1.0)
-    sfx_vol_lbl = rython.ui.create_label(f"{_sfx_vol}%", 0.0, 0.0, 0.22, 1.0)
-    sfx_plus = rython.ui.create_button("+", 0.0, 0.0, 0.12, 1.0)
-    rython.ui.add_child(sfx_section, sfx_label)
-    rython.ui.add_child(sfx_section, sfx_minus)
-    rython.ui.add_child(sfx_section, sfx_vol_lbl)
-    rython.ui.add_child(sfx_section, sfx_plus)
-    rython.ui.set_layout(sfx_section, "horizontal", 0.01, 0.0)
-    rython.ui.add_child(panel, sfx_section)
-    _sfx_vol_label_id = sfx_vol_lbl
-
-    # Back button
-    back_btn = rython.ui.create_button("Back", 0.0, 0.0, 1.0, 0.1)
-    rython.ui.add_child(panel, back_btn)
-    rython.ui.set_layout(panel, "vertical", 0.02, 0.02)
-
-    rython.ui.on_click(music_minus, _music_down)
-    rython.ui.on_click(music_plus, _music_up)
-    rython.ui.on_click(sfx_minus, _sfx_down)
-    rython.ui.on_click(sfx_plus, _sfx_up)
-    rython.ui.on_click(back_btn, _on_back)
-
-    rython.ui.hide(panel)
-    _panel_id = panel
+    rython.ui.hide(_panel_id)
 
     # Apply initial volumes
     rython.audio.set_volume("music", _music_vol / 100.0)
