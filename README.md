@@ -159,6 +159,7 @@ RythonEngine/
 |   +-- rython-scripting/         # Layer 3 — PyO3 bridge, hot-reload
 |   +-- rython-engine/            # Layer 4 — EngineBuilder, integration entry point
 |   +-- rython-cli/               # Binary — windowed + headless CLI
+|   +-- rython-editor/            # Binary — visual scene/UI editor (egui + wgpu)
 +-- rython/                       # Pure-Python stub package (PEP 561, IDE autocompletion)
 +-- game/                         # Example game project
 |   +-- scripts/                  # Python game scripts
@@ -211,6 +212,16 @@ Priority 40  Idle             -- Deferred maintenance, streaming loads, LRU evic
 |------|----------|
 | `docs/engine/` | Rust implementation docs: EngineBuilder, Module trait, crate reference, scheduler, how to write engine modules |
 | `docs/game/` | Python scripting docs: `rython` API, script classes, entity spawning, camera, events, complete examples |
+
+### Editor
+
+`rython-editor` is a standalone visual editor binary built with egui and wgpu. Launch it with:
+
+```bash
+cargo run -p rython-editor
+```
+
+The editor provides scene hierarchy inspection, asset browsing, a viewport with gizmos, and a UI layout editor. It reads and writes the same `game/scenes/*.json` ECS scene format used by the runtime.
 
 ---
 

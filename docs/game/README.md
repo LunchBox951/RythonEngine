@@ -2,7 +2,7 @@
 
 Game logic in RythonEngine is written in Python. The engine exposes a `rython` module through PyO3 bindings that gives scripts full access to the scene, camera, renderer, scheduler, and engine lifecycle.
 
-**See also:** [`docs/engine/`](../engine/README.md) for Rust implementation details, [`.spec/scripting.md`](../../.spec/scripting.md) for the full scripting spec.
+**See also:** [`docs/engine/`](../engine/README.md) for Rust implementation details.
 
 ---
 

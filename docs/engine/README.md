@@ -31,7 +31,7 @@ Layer 2  rython-ecs   rython-window   rython-input   rython-renderer
          rython-physics   rython-audio   rython-resources
 Layer 3  rython-ui   rython-scripting
 Layer 4  rython-engine
-Binary   rython-cli
+Binary   rython-cli   rython-editor
 ```
 
 ### Dependency DAG
@@ -57,6 +57,10 @@ rython-core (Layer 0)
 
 `rython-cli` is a binary crate that depends on `rython-engine` and all Layer 2–3 modules it
 registers.
+
+`rython-editor` is a standalone binary crate that depends directly on `rython-core`, `rython-ecs`,
+`rython-renderer`, `rython-resources`, and `rython-ui` without going through `rython-engine`. It
+has no PyO3 dependency and does not embed a Python interpreter.
 
 ### Layer Descriptions
 
@@ -88,6 +92,12 @@ rather than a monolithic `bridge.rs`.
 
 **Binary — `rython-cli`:** Parses CLI flags, builds and boots the engine, then drives either a
 winit 0.30 `ApplicationHandler` windowed loop or a simple headless tick loop.
+
+**Binary — `rython-editor`:** Visual editor built with egui 0.31 / eframe 0.31 and an embedded
+wgpu viewport. Provides a docked panel layout (scene hierarchy, inspector, asset browser, viewport
+with gizmos, UI layout editor), undo/redo, project open/save, and a play-in-editor session via a
+child process. Reads and writes the same `game/scenes/*.json` ECS scene format used by the
+runtime.
 
 ---
 
@@ -440,3 +450,12 @@ windowed mode, implements winit 0.30 `ApplicationHandler`: the wgpu surface and 
 are created in `resumed()`; `RedrawRequested` runs the full tick-and-render cycle; `CloseRequested`
 shuts the engine down cleanly. In headless mode, runs a simple `loop { engine.tick() }` until
 `rython.engine.request_quit()` is called from Python.
+
+**`rython-editor`** — Visual editor binary. Uses eframe 0.31 with a wgpu backend
+(`egui_wgpu::RenderState`). Embeds a custom wgpu viewport panel that renders the scene alongside
+egui panels. State is organized into `ViewportState` (camera, gizmos), `SelectionState` (single
+and multi-entity selection), `UndoStack` (command pattern with `BatchCommand`), `ProjectState`
+(loaded project config and scene), and `Preferences` / `RecentProjects` (persisted to
+`~/.config/rython-editor/`). An `EditorTab` enum (Viewport / UiEditor) controls the central panel.
+`AssetBrowserPanel` supports drag-and-drop of assets into the scene. A `PlaySession` struct manages
+the play-in-editor child process and communicates via stdout/stderr channels.
