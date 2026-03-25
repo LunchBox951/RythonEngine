@@ -1,0 +1,32 @@
+{
+  "name": "Gauntlet of Cubes",
+  "version": "0.1.0",
+  "default_scene": "arena_1",
+  "entry_point": "game.scripts.main",
+  "engine_config": {
+    "scheduler": {
+      "target_fps": 60,
+      "parallel_threads": null,
+      "spin_threshold_us": 1000
+    },
+    "window": {
+      "width": 1280,
+      "height": 720,
+      "fullscreen": false,
+      "vsync": false,
+      "title": "Gauntlet of Cubes"
+    }
+  },
+  "script_associations": [
+    {
+      "entity_tag": "player",
+      "script": "player.py",
+      "class": "Player"
+    },
+    {
+      "entity_tag": "skeleton",
+      "script": "npc/skeleton.py",
+      "class": "Skeleton"
+    }
+  ]
+}

@@ -1,0 +1,368 @@
+{
+  "entities": [
+    {
+      "id": 1,
+      "parent": null,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": { "x": 0.0, "y": -0.5, "z": 0.0, "rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0, "scale_x": 20.0, "scale_y": 1.0, "scale_z": 20.0 }
+        },
+        {
+          "type": "MeshComponent",
+          "data": { "mesh_id": "cube", "texture_id": "game/assets/textures/Light/light_floor_grid.png", "yaw_offset": 0.0, "shininess": 0.0, "visible": true }
+        },
+        {
+          "type": "TagComponent",
+          "data": { "tags": ["static_block"] }
+        },
+        {
+          "type": "RigidBodyComponent",
+          "data": { "body_type": "static", "mass": 1.0, "gravity_factor": 1.0, "collision_layer": 1, "collision_mask": 1 }
+        },
+        {
+          "type": "ColliderComponent",
+          "data": { "shape": "box", "size": [20.0, 1.0, 20.0], "is_trigger": false }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "parent": null,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": { "x": -10.0, "y": 1.0, "z": 0.0, "rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0, "scale_x": 1.0, "scale_y": 2.0, "scale_z": 20.0 }
+        },
+        {
+          "type": "MeshComponent",
+          "data": { "mesh_id": "cube", "texture_id": "game/assets/textures/Light/light_wall.png", "yaw_offset": 0.0, "shininess": 0.0, "visible": true }
+        },
+        {
+          "type": "TagComponent",
+          "data": { "tags": ["static_block"] }
+        },
+        {
+          "type": "RigidBodyComponent",
+          "data": { "body_type": "static", "mass": 1.0, "gravity_factor": 1.0, "collision_layer": 1, "collision_mask": 1 }
+        },
+        {
+          "type": "ColliderComponent",
+          "data": { "shape": "box", "size": [1.0, 2.0, 20.0], "is_trigger": false }
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "parent": null,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": { "x": 10.0, "y": 1.0, "z": 0.0, "rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0, "scale_x": 1.0, "scale_y": 2.0, "scale_z": 20.0 }
+        },
+        {
+          "type": "MeshComponent",
+          "data": { "mesh_id": "cube", "texture_id": "game/assets/textures/Light/light_wall.png", "yaw_offset": 0.0, "shininess": 0.0, "visible": true }
+        },
+        {
+          "type": "TagComponent",
+          "data": { "tags": ["static_block"] }
+        },
+        {
+          "type": "RigidBodyComponent",
+          "data": { "body_type": "static", "mass": 1.0, "gravity_factor": 1.0, "collision_layer": 1, "collision_mask": 1 }
+        },
+        {
+          "type": "ColliderComponent",
+          "data": { "shape": "box", "size": [1.0, 2.0, 20.0], "is_trigger": false }
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "parent": null,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": { "x": 0.0, "y": 1.0, "z": -10.0, "rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0, "scale_x": 20.0, "scale_y": 2.0, "scale_z": 1.0 }
+        },
+        {
+          "type": "MeshComponent",
+          "data": { "mesh_id": "cube", "texture_id": "game/assets/textures/Light/light_wall.png", "yaw_offset": 0.0, "shininess": 0.0, "visible": true }
+        },
+        {
+          "type": "TagComponent",
+          "data": { "tags": ["static_block"] }
+        },
+        {
+          "type": "RigidBodyComponent",
+          "data": { "body_type": "static", "mass": 1.0, "gravity_factor": 1.0, "collision_layer": 1, "collision_mask": 1 }
+        },
+        {
+          "type": "ColliderComponent",
+          "data": { "shape": "box", "size": [20.0, 2.0, 1.0], "is_trigger": false }
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "parent": null,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": { "x": 0.0, "y": 1.0, "z": 10.0, "rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0, "scale_x": 20.0, "scale_y": 2.0, "scale_z": 1.0 }
+        },
+        {
+          "type": "MeshComponent",
+          "data": { "mesh_id": "cube", "texture_id": "game/assets/textures/Light/light_wall.png", "yaw_offset": 0.0, "shininess": 0.0, "visible": true }
+        },
+        {
+          "type": "TagComponent",
+          "data": { "tags": ["static_block"] }
+        },
+        {
+          "type": "RigidBodyComponent",
+          "data": { "body_type": "static", "mass": 1.0, "gravity_factor": 1.0, "collision_layer": 1, "collision_mask": 1 }
+        },
+        {
+          "type": "ColliderComponent",
+          "data": { "shape": "box", "size": [20.0, 2.0, 1.0], "is_trigger": false }
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "parent": null,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": { "x": -5.0, "y": 2.0, "z": -5.0, "rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0, "scale_x": 4.0, "scale_y": 0.5, "scale_z": 4.0 }
+        },
+        {
+          "type": "MeshComponent",
+          "data": { "mesh_id": "cube", "texture_id": "game/assets/textures/Light/light_box.png", "yaw_offset": 0.0, "shininess": 0.0, "visible": true }
+        },
+        {
+          "type": "TagComponent",
+          "data": { "tags": ["static_block"] }
+        },
+        {
+          "type": "RigidBodyComponent",
+          "data": { "body_type": "static", "mass": 1.0, "gravity_factor": 1.0, "collision_layer": 1, "collision_mask": 1 }
+        },
+        {
+          "type": "ColliderComponent",
+          "data": { "shape": "box", "size": [4.0, 0.5, 4.0], "is_trigger": false }
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "parent": null,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": { "x": 5.0, "y": 3.0, "z": -5.0, "rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0, "scale_x": 4.0, "scale_y": 0.5, "scale_z": 4.0 }
+        },
+        {
+          "type": "MeshComponent",
+          "data": { "mesh_id": "cube", "texture_id": "game/assets/textures/Light/light_box.png", "yaw_offset": 0.0, "shininess": 0.0, "visible": true }
+        },
+        {
+          "type": "TagComponent",
+          "data": { "tags": ["static_block"] }
+        },
+        {
+          "type": "RigidBodyComponent",
+          "data": { "body_type": "static", "mass": 1.0, "gravity_factor": 1.0, "collision_layer": 1, "collision_mask": 1 }
+        },
+        {
+          "type": "ColliderComponent",
+          "data": { "shape": "box", "size": [4.0, 0.5, 4.0], "is_trigger": false }
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "parent": null,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": { "x": -5.0, "y": 4.0, "z": 5.0, "rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0, "scale_x": 4.0, "scale_y": 0.5, "scale_z": 4.0 }
+        },
+        {
+          "type": "MeshComponent",
+          "data": { "mesh_id": "cube", "texture_id": "game/assets/textures/Light/light_box.png", "yaw_offset": 0.0, "shininess": 0.0, "visible": true }
+        },
+        {
+          "type": "TagComponent",
+          "data": { "tags": ["static_block"] }
+        },
+        {
+          "type": "RigidBodyComponent",
+          "data": { "body_type": "static", "mass": 1.0, "gravity_factor": 1.0, "collision_layer": 1, "collision_mask": 1 }
+        },
+        {
+          "type": "ColliderComponent",
+          "data": { "shape": "box", "size": [4.0, 0.5, 4.0], "is_trigger": false }
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "parent": null,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": { "x": 5.0, "y": 2.5, "z": 5.0, "rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0, "scale_x": 4.0, "scale_y": 0.5, "scale_z": 4.0 }
+        },
+        {
+          "type": "MeshComponent",
+          "data": { "mesh_id": "cube", "texture_id": "game/assets/textures/Light/light_box.png", "yaw_offset": 0.0, "shininess": 0.0, "visible": true }
+        },
+        {
+          "type": "TagComponent",
+          "data": { "tags": ["static_block"] }
+        },
+        {
+          "type": "RigidBodyComponent",
+          "data": { "body_type": "static", "mass": 1.0, "gravity_factor": 1.0, "collision_layer": 1, "collision_mask": 1 }
+        },
+        {
+          "type": "ColliderComponent",
+          "data": { "shape": "box", "size": [4.0, 0.5, 4.0], "is_trigger": false }
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "parent": null,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": { "x": -5.0, "y": 2.5, "z": -5.0, "rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0, "scale_x": 0.5, "scale_y": 0.5, "scale_z": 0.5 }
+        },
+        {
+          "type": "MeshComponent",
+          "data": { "mesh_id": "cube", "texture_id": "game/assets/textures/Green/green_box.png", "yaw_offset": 0.0, "shininess": 0.0, "visible": true }
+        },
+        {
+          "type": "TagComponent",
+          "data": { "tags": ["pickup", "score"] }
+        },
+        {
+          "type": "RigidBodyComponent",
+          "data": { "body_type": "kinematic", "mass": 1.0, "gravity_factor": 1.0, "collision_layer": 1, "collision_mask": 1 }
+        },
+        {
+          "type": "ColliderComponent",
+          "data": { "shape": "box", "size": [0.5, 0.5, 0.5], "is_trigger": true }
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "parent": null,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": { "x": 5.0, "y": 3.5, "z": -5.0, "rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0, "scale_x": 0.5, "scale_y": 0.5, "scale_z": 0.5 }
+        },
+        {
+          "type": "MeshComponent",
+          "data": { "mesh_id": "cube", "texture_id": "game/assets/textures/Green/green_box.png", "yaw_offset": 0.0, "shininess": 0.0, "visible": true }
+        },
+        {
+          "type": "TagComponent",
+          "data": { "tags": ["pickup", "score"] }
+        },
+        {
+          "type": "RigidBodyComponent",
+          "data": { "body_type": "kinematic", "mass": 1.0, "gravity_factor": 1.0, "collision_layer": 1, "collision_mask": 1 }
+        },
+        {
+          "type": "ColliderComponent",
+          "data": { "shape": "box", "size": [0.5, 0.5, 0.5], "is_trigger": true }
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "parent": null,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": { "x": 0.0, "y": 0.5, "z": 0.0, "rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0, "scale_x": 0.5, "scale_y": 0.5, "scale_z": 0.5 }
+        },
+        {
+          "type": "MeshComponent",
+          "data": { "mesh_id": "cube", "texture_id": "game/assets/textures/Green/green_box.png", "yaw_offset": 0.0, "shininess": 0.0, "visible": true }
+        },
+        {
+          "type": "TagComponent",
+          "data": { "tags": ["pickup", "score"] }
+        },
+        {
+          "type": "RigidBodyComponent",
+          "data": { "body_type": "kinematic", "mass": 1.0, "gravity_factor": 1.0, "collision_layer": 1, "collision_mask": 1 }
+        },
+        {
+          "type": "ColliderComponent",
+          "data": { "shape": "box", "size": [0.5, 0.5, 0.5], "is_trigger": true }
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "parent": null,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": { "x": 3.0, "y": 1.0, "z": 3.0, "rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0, "scale_x": 1.0, "scale_y": 2.0, "scale_z": 1.0 }
+        },
+        {
+          "type": "MeshComponent",
+          "data": { "mesh_id": "cube", "texture_id": "game/assets/textures/Purple/purple_box.png", "yaw_offset": 0.0, "shininess": 0.0, "visible": true }
+        },
+        {
+          "type": "TagComponent",
+          "data": { "tags": ["enemy", "skeleton"] }
+        },
+        {
+          "type": "RigidBodyComponent",
+          "data": { "body_type": "dynamic", "mass": 2.0, "gravity_factor": 1.0, "collision_layer": 1, "collision_mask": 1 }
+        },
+        {
+          "type": "ColliderComponent",
+          "data": { "shape": "box", "size": [1.0, 2.0, 1.0], "is_trigger": false }
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "parent": null,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": { "x": 0.0, "y": 2.0, "z": 0.0, "rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0, "scale_x": 0.8, "scale_y": 1.8, "scale_z": 0.8 }
+        },
+        {
+          "type": "MeshComponent",
+          "data": { "mesh_id": "cube", "texture_id": "game/assets/textures/Light/light_box_alt1.png", "yaw_offset": 0.0, "shininess": 0.0, "visible": true }
+        },
+        {
+          "type": "TagComponent",
+          "data": { "tags": ["player"] }
+        },
+        {
+          "type": "RigidBodyComponent",
+          "data": { "body_type": "dynamic", "mass": 1.0, "gravity_factor": 1.0, "collision_layer": 1, "collision_mask": 1 }
+        },
+        {
+          "type": "ColliderComponent",
+          "data": { "shape": "box", "size": [0.8, 1.8, 0.8], "is_trigger": false }
+        }
+      ]
+    }
+  ]
+}
