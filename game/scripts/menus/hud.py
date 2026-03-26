@@ -3,6 +3,10 @@ import rython
 from game.scripts import game_state
 
 _visible: bool = False
+_health: int = 0
+_max_hp: int = 0
+_score: int = 0
+_level: int = 0
 
 
 def create() -> None:
@@ -12,22 +16,27 @@ def create() -> None:
 
 
 @rython.throttle(hz=10)
+def _poll_state() -> None:
+    global _health, _max_hp, _score, _level
+    _health = game_state.get_health()
+    _max_hp = game_state.get_max_health()
+    _score = game_state.get_score()
+    _level = game_state.get_level()
+
+
 def update() -> None:
     """Draw HUD elements; called every frame while PLAYING."""
     if not _visible:
         return
-    health = game_state.get_health()
-    max_hp = game_state.get_max_health()
-    score = game_state.get_score()
-    level = game_state.get_level()
+    _poll_state()
     rython.renderer.draw_text(
-        f"HP: {health}/{max_hp}", x=0.02, y=0.02, size=20, r=255, g=50, b=50
+        f"HP: {_health}/{_max_hp}", x=0.02, y=0.02, size=20, r=255, g=50, b=50
     )
     rython.renderer.draw_text(
-        f"Score: {score}", x=0.02, y=0.07, size=18, r=255, g=255, b=100
+        f"Score: {_score}", x=0.02, y=0.07, size=18, r=255, g=255, b=100
     )
     rython.renderer.draw_text(
-        f"Level {level}", x=0.85, y=0.02, size=18, r=200, g=200, b=200
+        f"Level {_level}", x=0.85, y=0.02, size=18, r=200, g=200, b=200
     )
 
 

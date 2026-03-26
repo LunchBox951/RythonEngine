@@ -13,6 +13,8 @@ _jump_sub_id: Optional[int] = None
 
 def _on_jump(**kwargs) -> None:
     """Handle input:jump event — apply jump impulse when grounded."""
+    if kwargs.get("value") != 1.0:
+        return
     if _entity is None:
         return
     if is_grounded():
@@ -53,7 +55,7 @@ def is_grounded() -> bool:
     """Return True when the player is resting on the ground."""
     if _entity is None:
         return False
-    return abs(_entity.velocity.y) < 0.5
+    return _entity.velocity.y <= 0.0 and abs(_entity.velocity.y) < 0.5
 
 
 def get_entity() -> Optional[Entity]:
