@@ -20,6 +20,7 @@ def get_state() -> str:
 def set_state(s: str) -> None:
     global _state
     _state = s
+    rython.scene.emit("state:changed", state=s)
 
 
 def get_level() -> int:

@@ -21,6 +21,7 @@ def init() -> None:
     rython.scene.subscribe("player_died", _on_player_died)
     rython.scene.subscribe("level_complete", _on_level_complete)
     rython.scene.subscribe("enemy_attack", _on_enemy_attack)
+    rython.scene.subscribe("input:pressed", _on_input_pressed)
 
     main_menu.create()
     pause_menu.create()
@@ -47,14 +48,19 @@ def _game_tick() -> None:
         camera_follow.update(dt)
         enemies.update(dt)
         hud.update()
-        if rython.input.pressed("pause"):
-            game_state.set_state(game_state.PAUSED)
-            pause_menu.show()
 
+
+def _on_input_pressed(**kwargs) -> None:
+    action = kwargs.get("action", "")
+    if action != "pause":
+        return
+    state = game_state.get_state()
+    if state == game_state.PLAYING:
+        game_state.set_state(game_state.PAUSED)
+        pause_menu.show()
     elif state == game_state.PAUSED:
-        if rython.input.pressed("pause"):
-            game_state.set_state(game_state.PLAYING)
-            pause_menu.hide()
+        game_state.set_state(game_state.PLAYING)
+        pause_menu.hide()
 
 
 def _on_start_game(**kwargs) -> None:
