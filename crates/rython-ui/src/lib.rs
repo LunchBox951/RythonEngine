@@ -620,4 +620,307 @@ mod tests {
         assert_eq!(ui.widget_count(), 2, "btn removed");
         assert!(!ui.get_widget(panel).children.contains(&btn), "panel must not reference removed btn");
     }
+
+    // ── T-UI-24: remove_widget cascades to grandchildren ─────────────────────
+
+    #[test]
+    fn t_ui_24_remove_widget_cascade_grandchildren() {
+        let mut ui = ui();
+        let root = ui.create_panel(0.0, 0.0, 1.0, 1.0);
+        let child = ui.create_button_child("Child", root, 0.0, 0.0, 0.3, 0.05);
+        let grandchild = ui.create_button_child("Grand", child, 0.0, 0.0, 0.1, 0.03);
+
+        assert_eq!(ui.widget_count(), 3);
+
+        // Remove the intermediate child — grandchild must also be purged
+        ui.remove_widget(child);
+
+        assert_eq!(ui.widget_count(), 1, "child and grandchild both removed");
+        assert!(!ui.get_widget(root).children.contains(&child), "root must not reference child");
+        // grandchild no longer accessible (would panic if we tried get_widget)
+        assert_eq!(ui.widget_count(), 1);
+        _ = grandchild; // suppress unused warning
+    }
+
+    // ── T-UI-25: EaseInOut is symmetric at t=0.5 ─────────────────────────────
+
+    #[test]
+    fn t_ui_25_easing_ease_in_out_symmetric() {
+        use crate::animator::apply_easing;
+        let v = apply_easing(EasingFn::EaseInOut, 0.5);
+        assert!(
+            (v - 0.5).abs() < 0.01,
+            "EaseInOut at t=0.5 must be 0.5 (symmetric), got {v}"
+        );
+        // Starts slow
+        let v_early = apply_easing(EasingFn::EaseInOut, 0.1);
+        assert!(v_early < 0.1, "EaseInOut starts slow: at t=0.1 got {v_early}");
+        // Ends slow
+        let v_late = apply_easing(EasingFn::EaseInOut, 0.9);
+        assert!(v_late > 0.9, "EaseInOut ends slow: at t=0.9 got {v_late}");
+    }
+
+    // ── T-UI-26: Bounce easing boundary values ────────────────────────────────
+
+    #[test]
+    fn t_ui_26_easing_bounce_boundaries() {
+        use crate::animator::apply_easing;
+        let v0 = apply_easing(EasingFn::Bounce, 0.0);
+        let v1 = apply_easing(EasingFn::Bounce, 1.0);
+        assert!((v0 - 0.0).abs() < 0.01, "Bounce at t=0 must be 0, got {v0}");
+        assert!((v1 - 1.0).abs() < 0.01, "Bounce at t=1 must be 1, got {v1}");
+    }
+
+    // ── T-UI-27: Elastic easing boundary values ───────────────────────────────
+
+    #[test]
+    fn t_ui_27_easing_elastic_boundaries() {
+        use crate::animator::apply_easing;
+        let v0 = apply_easing(EasingFn::Elastic, 0.0);
+        let v1 = apply_easing(EasingFn::Elastic, 1.0);
+        assert!((v0 - 0.0).abs() < 0.001, "Elastic at t=0 must be 0, got {v0}");
+        assert!((v1 - 1.0).abs() < 0.001, "Elastic at t=1 must be 1, got {v1}");
+    }
+
+    // ── T-UI-28: TextInput backspace ──────────────────────────────────────────
+
+    #[test]
+    fn t_ui_28_text_input_backspace() {
+        let mut ui = ui();
+        let inp = ui.create_text_input("...", 0.5, 0.5, 0.3, 0.05);
+        ui.focus(inp);
+
+        ui.on_key_press('h');
+        ui.on_key_press('i');
+        assert_eq!(ui.get_widget(inp).text, "hi");
+
+        // Backspace removes last char
+        ui.on_key_press('\x08');
+        assert_eq!(ui.get_widget(inp).text, "h", "backspace should remove last char");
+
+        // Backspace on single char empties string
+        ui.on_key_press('\x08');
+        assert_eq!(ui.get_widget(inp).text, "", "backspace on single char empties");
+
+        // Backspace on empty string is a no-op (no panic)
+        ui.on_key_press('\x08');
+        assert_eq!(ui.get_widget(inp).text, "");
+    }
+
+    // ── T-UI-29: on_key_press with no focused widget returns false ────────────
+
+    #[test]
+    fn t_ui_29_key_press_no_focus_returns_false() {
+        let mut ui = ui();
+        let _btn = ui.create_button("X", 0.5, 0.5, 0.1, 0.05);
+        // No widget focused
+        assert!(!ui.on_key_press('a'), "key press with no focus must return false");
+    }
+
+    // ── T-UI-30: Tab navigation wraps around ─────────────────────────────────
+
+    #[test]
+    fn t_ui_30_tab_navigation_wrap_around() {
+        let mut ui = ui();
+        let btn1 = ui.create_button("One", 0.1, 0.1, 0.1, 0.05);
+        let btn2 = ui.create_button("Two", 0.1, 0.2, 0.1, 0.05);
+        let btn3 = ui.create_button("Three", 0.1, 0.3, 0.1, 0.05);
+
+        ui.set_tab_order(vec![btn1, btn2, btn3]);
+        ui.focus(btn3);
+
+        // Tab from last element wraps to first
+        let next = ui.on_tab();
+        assert_eq!(next, Some(btn1), "tab from last must wrap to first");
+        assert!(ui.get_widget(btn1).focused, "btn1 should be focused after wrap");
+        assert!(!ui.get_widget(btn3).focused, "btn3 should lose focus");
+    }
+
+    // ── T-UI-31: UICmd::Focus command ────────────────────────────────────────
+
+    #[test]
+    fn t_ui_31_cmd_focus() {
+        let mut ui = ui();
+        let inp = ui.create_text_input("hint", 0.5, 0.5, 0.3, 0.05);
+        assert!(!ui.get_widget(inp).focused);
+
+        ui.queue_cmd(UICmd::Focus(inp));
+        ui.drain_commands();
+
+        assert!(ui.get_widget(inp).focused, "widget must be focused after UICmd::Focus");
+    }
+
+    // ── T-UI-32: Hidden widget excluded from draw commands ────────────────────
+
+    #[test]
+    fn t_ui_32_hidden_widget_not_drawn() {
+        use rython_renderer::DrawCommand;
+
+        let mut ui = ui();
+        let label = ui.create_label("Secret", 0.5, 0.5, 0.2, 0.05);
+        ui.hide(label);
+        ui.compute_layout();
+
+        let cmds = ui.build_draw_commands();
+        let has_secret = cmds.iter().any(|c| {
+            if let DrawCommand::Text(t) = c { t.text == "Secret" } else { false }
+        });
+        assert!(!has_secret, "hidden label must not appear in draw commands");
+    }
+
+    // ── T-UI-33: z-depth — children render above parents ─────────────────────
+
+    #[test]
+    fn t_ui_33_child_z_above_parent() {
+        let mut ui = ui();
+        let panel = ui.create_panel(0.0, 0.0, 1.0, 1.0);
+        let btn = ui.create_button_child("A", panel, 0.05, 0.05, 0.2, 0.05);
+
+        assert!(
+            ui.get_widget(btn).z > ui.get_widget(panel).z,
+            "child z ({}) must exceed parent z ({})",
+            ui.get_widget(btn).z,
+            ui.get_widget(panel).z
+        );
+    }
+
+    // ── T-UI-34: Horizontal layout with non-zero padding ─────────────────────
+
+    #[test]
+    fn t_ui_34_horizontal_layout_with_padding() {
+        let mut ui = ui();
+        let panel = ui.create_panel(0.1, 0.2, 0.8, 0.1);
+        ui.set_layout(panel, LayoutDir::Horizontal, 0.0, 0.05);
+
+        let btn1 = ui.create_button_child("A", panel, 0.0, 0.0, 0.1, 0.05);
+        let btn2 = ui.create_button_child("B", panel, 0.0, 0.0, 0.1, 0.05);
+        ui.compute_layout();
+
+        let panel_x = ui.get_widget(panel).abs_x;
+        let padding = 0.05_f32;
+        let btn_w = 0.1_f32;
+        let spacing = 0.0_f32;
+
+        let x1 = ui.get_widget(btn1).abs_x;
+        let x2 = ui.get_widget(btn2).abs_x;
+
+        assert!((x1 - (panel_x + padding)).abs() < 1e-4, "btn1 x={x1}");
+        assert!((x2 - (panel_x + padding + btn_w + spacing)).abs() < 1e-4, "btn2 x={x2}");
+
+        // y offset by padding too
+        let panel_y = ui.get_widget(panel).abs_y;
+        let y1 = ui.get_widget(btn1).abs_y;
+        assert!((y1 - (panel_y + padding)).abs() < 1e-4, "btn1 y={y1}");
+    }
+
+    // ── T-UI-35: Multiple root widgets — save/load preserves roots ───────────
+
+    #[test]
+    fn t_ui_35_multiple_roots_round_trip() {
+        let mut src = ui();
+        let r1 = src.create_panel(0.0, 0.0, 0.5, 1.0);
+        let r2 = src.create_panel(0.5, 0.0, 0.5, 1.0);
+        let json = src.save_json();
+
+        let widgets = json["widgets"].as_array().unwrap();
+        assert_eq!(widgets.len(), 2, "both root panels serialized");
+        assert!(widgets[0]["parent"].is_null(), "r1 has no parent");
+        assert!(widgets[1]["parent"].is_null(), "r2 has no parent");
+
+        let mut dst = UIManager::with_default_theme();
+        dst.load_json(&json);
+
+        assert_eq!(dst.widget_count(), 2);
+        assert_eq!(dst.root_order(), &[r1, r2], "root order preserved");
+    }
+
+    // ── T-UI-36: save/load preserves explicit widget colors ──────────────────
+
+    #[test]
+    fn t_ui_36_round_trip_preserves_explicit_colors() {
+        let mut src = ui();
+        let btn = src.create_button_colored("Quit", 0.5, 0.5, 0.2, 0.06, Color::rgb(200, 10, 10));
+        let json = src.save_json();
+
+        let mut dst = UIManager::with_default_theme();
+        dst.load_json(&json);
+
+        assert_eq!(dst.effective_color(btn), Color::rgb(200, 10, 10),
+            "explicit button color must survive round-trip");
+    }
+
+    // ── T-UI-37: load_layout is additive — does not clear existing tree ───────
+
+    #[test]
+    fn t_ui_37_load_layout_additive() {
+        let mut ui = ui();
+        let existing = ui.create_label("Existing", 0.0, 0.0, 0.2, 0.05);
+
+        // Build a layout JSON with one panel
+        let mut src = UIManager::with_default_theme();
+        let _panel = src.create_panel(0.1, 0.1, 0.5, 0.5);
+        let layout_json = src.save_json();
+
+        // load_layout should ADD, not replace
+        let _ = ui.load_layout(&layout_json);
+
+        assert_eq!(ui.widget_count(), 2, "existing widget kept + new panel added");
+        // Original widget still accessible
+        assert_eq!(ui.get_widget(existing).text, "Existing");
+    }
+
+    // ── T-UI-38: set_text updates widget text ────────────────────────────────
+
+    #[test]
+    fn t_ui_38_set_text() {
+        let mut ui = ui();
+        let label = ui.create_label("Initial", 0.5, 0.5, 0.2, 0.05);
+        ui.set_text(label, "Updated");
+        assert_eq!(ui.get_widget(label).text, "Updated");
+    }
+
+    // ── T-UI-39: position_x tween ─────────────────────────────────────────────
+
+    #[test]
+    fn t_ui_39_position_x_tween() {
+        let mut ui = ui();
+        let label = ui.create_label("", 0.0, 0.5, 0.1, 0.05);
+
+        ui.start_tween(label, "position_x", 0.0, 1.0, 1.0, EasingFn::Linear);
+        ui.tick(0.5);
+
+        let x = ui.get_widget(label).abs_x;
+        assert!((x - 0.5).abs() < 0.05, "position_x at t=0.5 should be ~0.5, got {x}");
+
+        ui.tick(0.5);
+        let x_final = ui.get_widget(label).abs_x;
+        assert!((x_final - 1.0).abs() < 0.01, "position_x final should be 1.0, got {x_final}");
+        assert!(!ui.has_active_animation(label), "tween must be complete");
+    }
+
+    // ── T-UI-40: draw commands not emitted for hidden child ───────────────────
+
+    #[test]
+    fn t_ui_40_hidden_child_not_drawn() {
+        use rython_renderer::DrawCommand;
+
+        let mut ui = ui();
+        let panel = ui.create_panel(0.1, 0.1, 0.8, 0.8);
+        let btn = ui.create_button_child("Visible", panel, 0.05, 0.05, 0.2, 0.05);
+        let hidden_btn = ui.create_button_child("Hidden", panel, 0.05, 0.15, 0.2, 0.05);
+        ui.hide(hidden_btn);
+        ui.compute_layout();
+
+        let cmds = ui.build_draw_commands();
+        let visible_text = cmds.iter().any(|c| {
+            if let DrawCommand::Text(t) = c { t.text == "Visible" } else { false }
+        });
+        let hidden_text = cmds.iter().any(|c| {
+            if let DrawCommand::Text(t) = c { t.text == "Hidden" } else { false }
+        });
+
+        assert!(visible_text, "visible button must emit draw commands");
+        assert!(!hidden_text, "hidden button must NOT emit draw commands");
+        _ = btn;
+    }
 }
