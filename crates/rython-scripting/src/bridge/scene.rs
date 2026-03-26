@@ -189,6 +189,16 @@ impl SceneBridge {
         Ok(())
     }
 
+    /// Unsubscribe a previously registered handler by its ID.
+    fn unsubscribe(&self, event_name: &str, handler_id: u64) -> PyResult<()> {
+        let scene = {
+            let guard = scene_store().lock();
+            guard.as_ref().cloned().ok_or_else(|| PyErr::new::<PyRuntimeError, _>("No active scene"))?
+        };
+        scene.unsubscribe(event_name, handler_id);
+        Ok(())
+    }
+
     /// Subscribe a Python callable to a named event.
     fn subscribe(&self, event_name: &str, handler: Py<PyAny>) -> PyResult<u64> {
         let scene = {

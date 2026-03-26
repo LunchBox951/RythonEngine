@@ -310,14 +310,14 @@ impl PhysicsWorld {
                     let e2 = collider_to_entity.get(&h2).copied();
                     if let (Some(e1), Some(e2)) = (e1, e2) {
                         if flags.contains(CollisionEventFlags::SENSOR) {
-                            scene.emit(
-                                "trigger",
-                                serde_json::json!({
-                                    "entity_a": e1.0,
-                                    "entity_b": e2.0,
-                                    "event_type": "enter",
-                                }),
-                            );
+                            let payload = serde_json::json!({
+                                "entity_a": e1.0,
+                                "entity_b": e2.0,
+                                "event_type": "enter",
+                            });
+                            scene.emit("trigger", payload.clone());
+                            scene.emit(&format!("trigger_enter:{}", e1.0), payload.clone());
+                            scene.emit(&format!("trigger_enter:{}", e2.0), payload);
                         } else {
                             // Look up contact normal from the narrow phase.
                             let normal = narrow_phase
@@ -334,14 +334,14 @@ impl PhysicsWorld {
                                 })
                                 .unwrap_or([0.0, 1.0, 0.0]);
 
-                            scene.emit(
-                                "collision",
-                                serde_json::json!({
-                                    "entity_a": e1.0,
-                                    "entity_b": e2.0,
-                                    "normal": normal,
-                                }),
-                            );
+                            let payload = serde_json::json!({
+                                "entity_a": e1.0,
+                                "entity_b": e2.0,
+                                "normal": normal,
+                            });
+                            scene.emit("collision", payload.clone());
+                            scene.emit(&format!("collision:{}", e1.0), payload.clone());
+                            scene.emit(&format!("collision:{}", e2.0), payload);
                         }
                     }
                 }
@@ -350,14 +350,14 @@ impl PhysicsWorld {
                         let e1 = collider_to_entity.get(&h1).copied();
                         let e2 = collider_to_entity.get(&h2).copied();
                         if let (Some(e1), Some(e2)) = (e1, e2) {
-                            scene.emit(
-                                "trigger",
-                                serde_json::json!({
-                                    "entity_a": e1.0,
-                                    "entity_b": e2.0,
-                                    "event_type": "exit",
-                                }),
-                            );
+                            let payload = serde_json::json!({
+                                "entity_a": e1.0,
+                                "entity_b": e2.0,
+                                "event_type": "exit",
+                            });
+                            scene.emit("trigger", payload.clone());
+                            scene.emit(&format!("trigger_exit:{}", e1.0), payload.clone());
+                            scene.emit(&format!("trigger_exit:{}", e2.0), payload);
                         }
                     }
                 }

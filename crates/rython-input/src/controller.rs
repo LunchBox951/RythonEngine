@@ -40,6 +40,8 @@ fn is_btn_active(
     }
 }
 
+const AXIS_DEADZONE: f32 = 0.1;
+
 // ─── PlayerController ────────────────────────────────────────────────────────
 
 /// Module that processes raw input events each frame and produces an InputSnapshot.
@@ -66,6 +68,8 @@ pub struct PlayerController {
     snapshot: InputSnapshot,
     /// Pending input action events; callers may drain this after tick().
     pending_events: Arc<Mutex<Vec<InputActionEvent>>>,
+    /// Tracks the previous quantized axis value per action for change detection.
+    previous_axis_values: HashMap<String, f32>,
 }
 
 impl PlayerController {
@@ -87,6 +91,7 @@ impl PlayerController {
             gamepad_name: None,
             snapshot: InputSnapshot::new(),
             pending_events: Arc::new(Mutex::new(Vec::new())),
+            previous_axis_values: HashMap::new(),
         }
     }
 
@@ -234,6 +239,22 @@ impl PlayerController {
                             }
                         }
                         new_snapshot.set_axis(action.clone(), value);
+
+                        // Emit an axis-change event when the value meaningfully
+                        // crosses the deadzone boundary or changes while active.
+                        let prev = self.previous_axis_values.get(action.as_str()).copied().unwrap_or(0.0);
+                        let prev_active = prev.abs() > AXIS_DEADZONE;
+                        let curr_active = value.abs() > AXIS_DEADZONE;
+                        let deadzone_crossed = prev_active != curr_active;
+                        let significant_change =
+                            prev_active && curr_active && (value - prev).abs() > AXIS_DEADZONE;
+                        if deadzone_crossed || significant_change {
+                            new_events.push(InputActionEvent {
+                                action: format!("axis:{action}"),
+                                value,
+                            });
+                        }
+                        self.previous_axis_values.insert(action.clone(), value);
                     }
 
                     for action in &button_actions {

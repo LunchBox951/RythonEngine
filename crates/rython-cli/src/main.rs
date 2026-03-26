@@ -14,14 +14,14 @@ use rython_audio::AudioManager;
 use rython_core::{EngineConfig, WindowConfig};
 use rython_ecs::{RenderSystem, Scene, TransformSystem};
 use rython_engine::{Engine, EngineBuilder};
-use rython_input::{AxisBinding, ButtonBinding, InputMap, PlayerController};
+use rython_input::{AxisBinding, ButtonBinding, InputActionEvent, InputMap, PlayerController};
 use rython_physics::PhysicsModule;
 use rython_renderer::{Camera, RendererConfig, RendererState};
 use rython_resources::ResourceManager;
 use rython_scripting::{
-    drain_draw_commands, drain_ui_draw_commands, flush_recurring_callbacks, reset_quit_requested,
-    set_active_audio, set_active_input, set_active_physics, set_active_ui, set_elapsed_secs,
-    ScriptingConfig, ScriptingModule, was_quit_requested,
+    drain_draw_commands, drain_ui_draw_commands, flush_recurring_callbacks, flush_timers,
+    reset_quit_requested, set_active_audio, set_active_input, set_active_physics, set_active_ui,
+    set_elapsed_secs, ScriptingConfig, ScriptingModule, was_quit_requested,
 };
 use rython_ui::{Theme, UIManager};
 use rython_window::{KeyCode, MouseButton, RawInputEvent, WindowModule};
@@ -218,15 +218,26 @@ fn run_headless(engine_config: EngineConfig, scripting_config: ScriptingConfig) 
     let start = Instant::now();
     loop {
         set_elapsed_secs(start.elapsed().as_secs_f64());
-        Python::attach(|py| flush_recurring_callbacks(py));
+        Python::attach(|py| {
+            flush_recurring_callbacks(py);
+            flush_timers(py);
+        });
         scene.drain_commands();
         physics_world.lock().sync_step(&scene);
         {
             let mut pc = player_controller.lock().unwrap();
             pc.tick(&[]);
             let snapshot = pc.get_snapshot(0).unwrap().clone();
+            let input_events: Vec<InputActionEvent> =
+                std::mem::take(&mut pc.pending_events().lock().unwrap());
             drop(pc);
             set_active_input(snapshot);
+            for ev in input_events {
+                scene.emit(
+                    &format!("input:{}", ev.action),
+                    serde_json::json!({ "value": ev.value }),
+                );
+            }
         }
         engine.tick().ok();
         if was_quit_requested() {
@@ -296,19 +307,30 @@ impl App {
 
         // Update time and run Python callbacks
         set_elapsed_secs(self.start_time.elapsed().as_secs_f64());
-        Python::attach(|py| flush_recurring_callbacks(py));
+        Python::attach(|py| {
+            flush_recurring_callbacks(py);
+            flush_timers(py);
+        });
         self.scene.drain_commands();
 
         // Physics step
         self.physics_world.lock().sync_step(&self.scene);
 
-        // Input: tick player controller and publish snapshot
+        // Input: tick player controller, publish snapshot, and emit input events
         {
             let mut pc = self.player_controller.lock().unwrap();
             pc.tick(&self.raw_events);
             let snapshot = pc.get_snapshot(0).unwrap().clone();
+            let input_events: Vec<InputActionEvent> =
+                std::mem::take(&mut pc.pending_events().lock().unwrap());
             drop(pc);
             set_active_input(snapshot);
+            for ev in input_events {
+                self.scene.emit(
+                    &format!("input:{}", ev.action),
+                    serde_json::json!({ "value": ev.value }),
+                );
+            }
         }
 
         // UI: route mouse move and clicks from accumulated events this frame
