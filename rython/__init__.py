@@ -26,6 +26,9 @@ Typical usage in a game script::
 
 from __future__ import annotations
 
+# ── Decorators ─────────────────────────────────────────────────────────────
+from rython._decorators import throttle
+
 # ── Core types ─────────────────────────────────────────────────────────────
 from rython._types import Transform, Vec3
 
@@ -41,6 +44,7 @@ from rython._time import TimeBridge as _TimeBridge
 from rython._engine import EngineBridge as _EngineBridge
 from rython._input import InputBridge as _InputBridge
 from rython._audio import AudioBridge as _AudioBridge
+from rython._physics import PhysicsBridge as _PhysicsBridge
 from rython._ui import UIBridge as _UIBridge
 from rython._stubs import SubModule as _SubModule
 
@@ -63,6 +67,7 @@ resources: _SubModule = _SubModule("resources")
 modules: _SubModule = _SubModule("modules")
 
 __all__ = [
+    "throttle",
     "Vec3",
     "Transform",
     "Entity",
