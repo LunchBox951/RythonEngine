@@ -76,8 +76,9 @@ def update(dt: float) -> None:
 
     move_x = rython.input.axis("move_x")
     move_z = rython.input.axis("move_z")
-    vel_y = _entity.velocity.y
-    _entity.set_velocity(move_x * MOVE_SPEED, vel_y, move_z * MOVE_SPEED)
+    if move_x != 0.0 or move_z != 0.0:
+        vel_y = _entity.velocity.y
+        _entity.set_velocity(move_x * MOVE_SPEED, vel_y, move_z * MOVE_SPEED)
 
     if _entity.transform.y < -20.0:
         respawn()

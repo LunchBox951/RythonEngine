@@ -334,14 +334,25 @@ impl PhysicsWorld {
                                 })
                                 .unwrap_or([0.0, 1.0, 0.0]);
 
-                            let payload = serde_json::json!({
+                            // The manifold normal points from collider1→collider2 (e1→e2).
+                            // Flip it for e1's per-entity event so each entity receives
+                            // the normal pointing toward itself (upward for the floor contact).
+                            let flipped = [-normal[0], -normal[1], -normal[2]];
+                            scene.emit("collision", serde_json::json!({
                                 "entity_a": e1.0,
                                 "entity_b": e2.0,
                                 "normal": normal,
-                            });
-                            scene.emit("collision", payload.clone());
-                            scene.emit(&format!("collision:{}", e1.0), payload.clone());
-                            scene.emit(&format!("collision:{}", e2.0), payload);
+                            }));
+                            scene.emit(&format!("collision:{}", e1.0), serde_json::json!({
+                                "entity_a": e1.0,
+                                "entity_b": e2.0,
+                                "normal": flipped,
+                            }));
+                            scene.emit(&format!("collision:{}", e2.0), serde_json::json!({
+                                "entity_a": e1.0,
+                                "entity_b": e2.0,
+                                "normal": normal,
+                            }));
                         }
                     }
                 }
@@ -1146,6 +1157,72 @@ mod tests {
         // Position should be reset to last valid (0,0,0)
         let pos = w.get_body_position(e).unwrap();
         assert!(!pos[0].is_nan());
+    }
+
+    // ── T-PHYS-19: Per-entity collision normal orientation ────────────────────
+    //
+    // Verifies that collision:{entity_id} events deliver a normal oriented
+    // toward that entity regardless of Rapier's internal collider handle ordering.
+    // Player (above) must receive normal[1] > 0 (upward); floor must receive < 0.
+
+    #[test]
+    fn t_phys_19_per_entity_normal_orientation() {
+        let scene = Scene::new();
+        // Static floor
+        let floor = spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("static", 1.0, 1, 1),
+            box_col([10.0, 0.5, 10.0]),
+        );
+        // Dynamic player above the floor — will fall and land
+        let player = spawn(
+            &scene,
+            transform(0.0, 5.0, 0.0),
+            dyn_rb(),
+            box_col([0.5, 1.0, 0.5]),
+        );
+
+        let player_normal_y: Arc<Mutex<Option<f64>>> = Arc::new(Mutex::new(None));
+        let floor_normal_y: Arc<Mutex<Option<f64>>> = Arc::new(Mutex::new(None));
+
+        let pny = player_normal_y.clone();
+        scene.subscribe(&format!("collision:{}", player.0), move |_, payload| {
+            if let Some(arr) = payload["normal"].as_array() {
+                if let Some(y) = arr.get(1).and_then(|v| v.as_f64()) {
+                    *pny.lock().unwrap() = Some(y);
+                }
+            }
+        });
+
+        let fny = floor_normal_y.clone();
+        scene.subscribe(&format!("collision:{}", floor.0), move |_, payload| {
+            if let Some(arr) = payload["normal"].as_array() {
+                if let Some(y) = arr.get(1).and_then(|v| v.as_f64()) {
+                    *fny.lock().unwrap() = Some(y);
+                }
+            }
+        });
+
+        let mut w = world();
+        for _ in 0..120 {
+            w.sync_step(&scene);
+            if player_normal_y.lock().unwrap().is_some() {
+                break;
+            }
+        }
+
+        let pny = player_normal_y.lock().unwrap().expect("player collision:{id} event not fired");
+        let fny = floor_normal_y.lock().unwrap().expect("floor collision:{id} event not fired");
+
+        assert!(
+            pny > 0.7,
+            "player per-entity normal[1]={pny} must be > 0.7 (upward) — floor contact detection requires this"
+        );
+        assert!(
+            fny < -0.7,
+            "floor per-entity normal[1]={fny} must be < -0.7 (oriented toward floor, inverse of player)"
+        );
     }
 
     // ── Module lifecycle ──────────────────────────────────────────────────────
