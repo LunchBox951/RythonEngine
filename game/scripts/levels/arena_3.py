@@ -17,14 +17,10 @@ import rython
 from game.scripts import game_state, player, enemies
 from game.scripts import level_builder as lb
 
-_pickup_entities: list = []
 _pickups_total: int = 3
 _collected: int = 0
 _tick_registered: bool = False
 
-_wave: int = 1
-_wave_timer: float = 0.0
-_wave2_spawned: bool = False
 _WAVE2_DELAY: float = 25.0
 
 _lava_damage_timer: float = 0.0
@@ -35,16 +31,23 @@ _TEX_WALL = "game/assets/textures/Red/red_wall.png"
 _TEX_LAVA = "game/assets/textures/Red/red_box.png"
 
 
-def build() -> None:
-    global _pickup_entities, _collected
-    global _wave, _wave_timer, _wave2_spawned, _lava_damage_timer, _prev_time
-    global _tick_registered
+def _on_collect(entity) -> None:
+    global _collected
+    if game_state.get_state() != game_state.PLAYING:
+        return
+    entity.despawn()
+    game_state.add_score(100)
+    rython.audio.play("game/assets/sounds/sfx/coin_pickup_01.ogg", "sfx", False)
+    _collected += 1
+    if _collected >= _pickups_total:
+        rython.audio.play("game/assets/music/jingle_win.ogg", "sfx", False)
+        rython.scene.emit("level_complete")
 
-    _pickup_entities = []
+
+def build() -> None:
+    global _collected, _lava_damage_timer, _prev_time, _tick_registered
+
     _collected = 0
-    _wave = 1
-    _wave_timer = 0.0
-    _wave2_spawned = False
     _lava_damage_timer = 0.0
     _prev_time = rython.time.elapsed
 
@@ -57,14 +60,18 @@ def build() -> None:
     # Lava pit — static, visual only (damage handled by proximity in _tick)
     lb.spawn_static_block(0.0, 0.05, 0.0, 6.0, 0.1, 6.0, tags=["lava"], texture=_TEX_LAVA)
 
-    # 3 score pickups around the arena
+    # 3 score pickups around the arena — subscribe trigger_enter for each
     p1 = lb.spawn_pickup(7.0,  0.5,  0.0,  pickup_type="score", value=100)
     p2 = lb.spawn_pickup(-7.0, 0.5,  0.0,  pickup_type="score", value=100)
     p3 = lb.spawn_pickup(0.0,  0.5, -7.0,  pickup_type="score", value=100)
-    _pickup_entities.extend([p1, p2, p3])
+    for p in (p1, p2, p3):
+        rython.scene.subscribe(f"trigger_enter:{p.id}", lambda entity=p, **kw: _on_collect(entity))
 
     # Wave 1: 5 skeletons around the arena perimeter
     _spawn_wave1()
+
+    # Wave 2: scheduled one-shot timer
+    rython.scheduler.on_timer(_WAVE2_DELAY, _trigger_wave2)
 
     # Spawn player away from lava
     player.spawn(0.0, 2.0, 8.0)
@@ -114,9 +121,16 @@ def _spawn_wave2() -> None:
     rython.audio.play("game/assets/music/jingle_levelup.ogg", "sfx", False)
 
 
+def _trigger_wave2() -> None:
+    """One-shot timer callback — spawn wave 2 if still on level 3 and playing."""
+    if game_state.get_level() != 3:
+        return
+    if game_state.get_state() != game_state.PLAYING:
+        return
+    _spawn_wave2()
+
+
 def _tick() -> None:
-    global _collected, _pickup_entities
-    global _wave, _wave_timer, _wave2_spawned
     global _lava_damage_timer, _prev_time
 
     if game_state.get_level() != 3:
@@ -130,14 +144,6 @@ def _tick() -> None:
     if dt <= 0.0 or dt > 0.1:
         return
 
-    # Wave 2: spawn after delay
-    if _wave == 1 and not _wave2_spawned:
-        _wave_timer += dt
-        if _wave_timer >= _WAVE2_DELAY:
-            _wave = 2
-            _wave2_spawned = True
-            _spawn_wave2()
-
     # Lava proximity damage (radius 3 from centre, y near ground)
     px, py, pz = player.get_position()
     if px * px + pz * pz < 9.0 and abs(py) < 1.5:
@@ -150,29 +156,3 @@ def _tick() -> None:
             )
     else:
         _lava_damage_timer = 0.0
-
-    # Pickup collection
-    remaining = []
-    for entity in _pickup_entities:
-        try:
-            etf = entity.transform
-            dx = px - etf.x
-            dy = py - etf.y
-            dz = pz - etf.z
-            if dx * dx + dy * dy + dz * dz < 2.25:
-                entity.despawn()
-                game_state.add_score(100)
-                rython.audio.play(
-                    "game/assets/sounds/sfx/coin_pickup_01.ogg", "sfx", False
-                )
-                _collected += 1
-                if _collected >= _pickups_total:
-                    rython.audio.play(
-                        "game/assets/music/jingle_win.ogg", "sfx", False
-                    )
-                    rython.scene.emit("level_complete")
-            else:
-                remaining.append(entity)
-        except Exception:
-            pass
-    _pickup_entities[:] = remaining
