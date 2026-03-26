@@ -9,6 +9,7 @@ start-coordinator
 # AI session context
 .claude/
 AGENTS.md
+CLAUDE.md
 
 # Rust
 /target/
