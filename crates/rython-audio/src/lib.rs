@@ -549,6 +549,18 @@ mod tests {
         AudioManager::new(config)
     }
 
+    struct NoopScheduler;
+    impl SchedulerHandle for NoopScheduler {
+        fn submit_sequential(
+            &self,
+            _f: Box<dyn FnOnce() -> Result<(), EngineError> + Send + 'static>,
+            _priority: rython_core::Priority,
+            _owner: rython_core::OwnerId,
+        ) {
+        }
+        fn cancel_owned(&self, _owner: rython_core::OwnerId) {}
+    }
+
     // ── T-AUD-05: Master volume scaling ──────────────────────────────────────
 
     #[test]
@@ -790,22 +802,372 @@ mod tests {
         assert!(m.is_within_range(Vec3::new(50.0, 0.0, 0.0)));
     }
 
+    // ── T-AUD-16: set_master_volume clamping ─────────────────────────────────
+
+    #[test]
+    fn t_aud_16_set_master_volume_clamps_above_one() {
+        let mut m = manager();
+        m.set_master_volume(2.0);
+        assert_eq!(m.config.master_volume, 1.0);
+    }
+
+    #[test]
+    fn t_aud_16_set_master_volume_clamps_below_zero() {
+        let mut m = manager();
+        m.set_master_volume(-0.5);
+        assert_eq!(m.config.master_volume, 0.0);
+    }
+
+    // ── T-AUD-17: set_volume category clamping ────────────────────────────────
+
+    #[test]
+    fn t_aud_17_set_volume_clamps_above_one() {
+        let mut m = manager();
+        m.set_volume("sfx", 5.0).unwrap();
+        assert_eq!(m.config.sfx_volume, 1.0);
+    }
+
+    #[test]
+    fn t_aud_17_set_volume_clamps_below_zero() {
+        let mut m = manager();
+        m.set_volume("music", -1.0).unwrap();
+        assert_eq!(m.config.music_volume, 0.0);
+    }
+
+    // ── T-AUD-18: set_volume unknown category returns error ───────────────────
+
+    #[test]
+    fn t_aud_18_set_volume_unknown_category_returns_error() {
+        let mut m = manager();
+        let err = m.set_volume("boom", 1.0).unwrap_err();
+        assert!(matches!(err, AudioError::UnknownCategory(_)));
+    }
+
+    // ── T-AUD-19: stop_category unknown category returns error ────────────────
+
+    #[test]
+    fn t_aud_19_stop_category_unknown_returns_error() {
+        let mut m = manager();
+        let err = m.stop_category("boom").unwrap_err();
+        assert!(matches!(err, AudioError::UnknownCategory(_)));
+    }
+
+    // ── T-AUD-20: play increments active_count ────────────────────────────────
+
+    #[test]
+    fn t_aud_20_play_increments_active_count() {
+        let mut m = manager();
+        assert_eq!(m.active_count, 0);
+        m.play(PlayRequest {
+            path: "sound.wav".into(),
+            category: AudioCategory::Sfx,
+            position: None,
+            looping: false,
+        })
+        .unwrap();
+        assert_eq!(m.active_count, 1);
+    }
+
+    // ── T-AUD-21: stop decrements active_count ───────────────────────────────
+
+    #[test]
+    fn t_aud_21_stop_decrements_active_count() {
+        let mut m = manager();
+        let h = m
+            .play(PlayRequest {
+                path: "sound.wav".into(),
+                category: AudioCategory::Sfx,
+                position: None,
+                looping: false,
+            })
+            .unwrap();
+        assert_eq!(m.active_count, 1);
+        m.stop(h).unwrap();
+        assert_eq!(m.active_count, 0);
+    }
+
+    // ── T-AUD-22: stop on untracked handle does not change active_count ───────
+
+    #[test]
+    fn t_aud_22_stop_untracked_handle_is_noop() {
+        let mut m = manager();
+        m.active_count = 3;
+        m.stop(PlaybackHandle::from_raw(9999)).unwrap();
+        assert_eq!(m.active_count, 3, "untracked stop must not change active_count");
+    }
+
+    // ── T-AUD-23: needs_reinit set when last sound stopped ────────────────────
+
+    #[test]
+    fn t_aud_23_needs_reinit_set_when_last_sound_stopped() {
+        let mut m = manager();
+        let h = m
+            .play(PlayRequest {
+                path: "sound.wav".into(),
+                category: AudioCategory::Sfx,
+                position: None,
+                looping: false,
+            })
+            .unwrap();
+        assert!(!m.needs_reinit);
+        m.stop(h).unwrap();
+        assert!(m.needs_reinit, "needs_reinit should be set after last sound stops");
+    }
+
+    // ── T-AUD-24: needs_reinit not set while other sounds remain ─────────────
+
+    #[test]
+    fn t_aud_24_needs_reinit_not_set_while_sounds_remain() {
+        let mut m = manager();
+        let h1 = m
+            .play(PlayRequest {
+                path: "a.wav".into(),
+                category: AudioCategory::Sfx,
+                position: None,
+                looping: false,
+            })
+            .unwrap();
+        m.play(PlayRequest {
+            path: "b.wav".into(),
+            category: AudioCategory::Sfx,
+            position: None,
+            looping: false,
+        })
+        .unwrap();
+        m.stop(h1).unwrap();
+        assert!(!m.needs_reinit, "needs_reinit should be clear while sounds remain");
+    }
+
+    // ── T-AUD-25: spatial play beyond radius skips active_count ──────────────
+
+    #[test]
+    fn t_aud_25_spatial_play_beyond_radius_skips_active_count() {
+        let mut m = manager_with(AudioConfig {
+            max_audible_radius: 10.0,
+            ..Default::default()
+        });
+        let h = m
+            .play(PlayRequest {
+                path: "sound.wav".into(),
+                category: AudioCategory::Sfx,
+                position: Some(Vec3::new(50.0, 0.0, 0.0)),
+                looping: false,
+            })
+            .unwrap();
+        assert_ne!(h.id(), 0, "culled play still returns non-zero handle");
+        assert_eq!(m.active_count, 0, "culled play must not increment active_count");
+    }
+
+    // ── T-AUD-26: AudioCategory::from_str all valid values ───────────────────
+
+    #[test]
+    fn t_aud_26_category_from_str_valid() {
+        assert_eq!(AudioCategory::from_str("sfx"), Some(AudioCategory::Sfx));
+        assert_eq!(AudioCategory::from_str("dialogue"), Some(AudioCategory::Dialogue));
+        assert_eq!(AudioCategory::from_str("music"), Some(AudioCategory::Music));
+        assert_eq!(AudioCategory::from_str("ambient"), Some(AudioCategory::Ambient));
+    }
+
+    // ── T-AUD-27: AudioCategory::from_str unknown returns None ───────────────
+
+    #[test]
+    fn t_aud_27_category_from_str_unknown_returns_none() {
+        assert_eq!(AudioCategory::from_str("boom"), None);
+        assert_eq!(AudioCategory::from_str(""), None);
+        assert_eq!(AudioCategory::from_str("SFX"), None, "case sensitive");
+    }
+
+    // ── T-AUD-28: PlaybackHandle from_raw / id() roundtrip ───────────────────
+
+    #[test]
+    fn t_aud_28_playback_handle_roundtrip() {
+        let h = PlaybackHandle::from_raw(42);
+        assert_eq!(h.id(), 42);
+        let h0 = PlaybackHandle::from_raw(0);
+        assert_eq!(h0.id(), 0);
+    }
+
+    // ── T-AUD-29: AudioConfig default values ─────────────────────────────────
+
+    #[test]
+    fn t_aud_29_audio_config_defaults() {
+        let c = AudioConfig::default();
+        assert_eq!(c.output_mode, OutputMode::Stereo);
+        assert!((c.master_volume - 1.0).abs() < f32::EPSILON);
+        assert!((c.sfx_volume - 1.0).abs() < f32::EPSILON);
+        assert!((c.dialogue_volume - 1.0).abs() < f32::EPSILON);
+        assert!((c.music_volume - 1.0).abs() < f32::EPSILON);
+        assert!((c.ambient_volume - 1.0).abs() < f32::EPSILON);
+        assert_eq!(c.max_sources, 32);
+        assert!((c.max_audible_radius - 100.0).abs() < f32::EPSILON);
+    }
+
+    // ── T-AUD-30: OutputMode default is Stereo ───────────────────────────────
+
+    #[test]
+    fn t_aud_30_output_mode_default_is_stereo() {
+        assert_eq!(OutputMode::default(), OutputMode::Stereo);
+    }
+
+    // ── T-AUD-31: ambient cull when max_audible exceeds positions count ───────
+
+    #[test]
+    fn t_aud_31_ambient_cull_max_audible_exceeds_positions() {
+        let m = manager();
+        let group = AmbientGroupDef {
+            sound: "wind.ogg".into(),
+            positions: vec![Vec3::new(1.0, 0.0, 0.0), Vec3::new(2.0, 0.0, 0.0)],
+            max_audible: 10,
+        };
+        let active = m.cull_ambient_group(&group);
+        assert_eq!(active.len(), 2, "should return all positions when max_audible > len");
+        assert!(active.contains(&0));
+        assert!(active.contains(&1));
+    }
+
+    // ── T-AUD-32: ambient cull with zero positions ────────────────────────────
+
+    #[test]
+    fn t_aud_32_ambient_cull_zero_positions() {
+        let m = manager();
+        let group = AmbientGroupDef { sound: "wind.ogg".into(), positions: vec![], max_audible: 3 };
+        assert!(m.cull_ambient_group(&group).is_empty());
+    }
+
+    // ── T-AUD-33: register_ambient_group stores the group ────────────────────
+
+    #[test]
+    fn t_aud_33_register_ambient_group() {
+        let mut m = manager();
+        m.register_ambient_group(
+            "forest".to_string(),
+            "birds.ogg".to_string(),
+            vec![Vec3::new(10.0, 0.0, 0.0)],
+            2,
+        );
+        let g = m.ambient_groups.get("forest").expect("group should be stored");
+        assert_eq!(g.sound, "birds.ogg");
+        assert_eq!(g.positions.len(), 1);
+        assert_eq!(g.max_audible, 2);
+    }
+
+    // ── T-AUD-34: on_unload clears handle state without audio hardware ────────
+
+    #[test]
+    fn t_aud_34_on_unload_clears_state_no_hardware() {
+        let mut m = manager();
+        m.handle_categories.insert(1, AudioCategory::Sfx);
+        m.handle_categories.insert(2, AudioCategory::Music);
+        m.active_count = 2;
+
+        m.on_unload(&NoopScheduler).unwrap();
+
+        assert_eq!(m.active_count, 0);
+        assert!(m.handle_categories.is_empty());
+        assert!(m.kira.is_none());
+    }
+
+    // ── T-AUD-35: check_format accepts uppercase extensions ──────────────────
+
+    #[test]
+    fn t_aud_35_check_format_uppercase_accepted() {
+        assert!(AudioManager::check_format("SOUND.WAV").is_ok());
+        assert!(AudioManager::check_format("music.OGG").is_ok());
+        assert!(AudioManager::check_format("track.MP3").is_ok());
+        assert!(AudioManager::check_format("effect.FLAC").is_ok());
+    }
+
+    // ── T-AUD-36: check_format path without extension returns error ───────────
+
+    #[test]
+    fn t_aud_36_check_format_no_extension_returns_error() {
+        let err = AudioManager::check_format("soundfile").unwrap_err();
+        assert!(
+            matches!(err, AudioError::UnsupportedFormat { ref extension } if extension.is_empty()),
+            "expected empty extension in error, got: {err}"
+        );
+    }
+
+    // ── T-AUD-37: play with unsupported format returns error ──────────────────
+
+    #[test]
+    fn t_aud_37_play_unsupported_format_returns_error() {
+        let mut m = manager();
+        let err = m
+            .play(PlayRequest {
+                path: "sound.aac".into(),
+                category: AudioCategory::Sfx,
+                position: None,
+                looping: false,
+            })
+            .unwrap_err();
+        assert!(matches!(err, AudioError::UnsupportedFormat { .. }));
+        assert_eq!(m.active_count, 0, "active_count must not change on format error");
+    }
+
+    // ── T-AUD-38: stop_category sets needs_reinit when all sounds cleared ─────
+
+    #[test]
+    fn t_aud_38_stop_category_sets_needs_reinit_when_all_cleared() {
+        let mut m = manager();
+        m.handle_categories.insert(1, AudioCategory::Sfx);
+        m.handle_categories.insert(2, AudioCategory::Sfx);
+        m.active_count = 2;
+
+        m.stop_category("sfx").unwrap();
+
+        assert_eq!(m.active_count, 0);
+        assert!(m.needs_reinit, "needs_reinit should be set after stop_category empties all sounds");
+    }
+
+    // ── T-AUD-39: handle IDs are sequential and unique ────────────────────────
+
+    #[test]
+    fn t_aud_39_handle_ids_sequential() {
+        let mut m = manager();
+        let h1 = m
+            .play(PlayRequest {
+                path: "a.wav".into(),
+                category: AudioCategory::Sfx,
+                position: None,
+                looping: false,
+            })
+            .unwrap();
+        let h2 = m
+            .play(PlayRequest {
+                path: "b.wav".into(),
+                category: AudioCategory::Sfx,
+                position: None,
+                looping: false,
+            })
+            .unwrap();
+        assert_ne!(h1.id(), 0);
+        assert_ne!(h2.id(), 0);
+        assert_ne!(h1.id(), h2.id(), "IDs must be unique");
+        assert_eq!(h2.id(), h1.id() + 1, "IDs should increment by 1");
+    }
+
+    // ── T-AUD-40: effective_volume for dialogue and ambient ───────────────────
+
+    #[test]
+    fn t_aud_40_effective_volume_dialogue_and_ambient() {
+        let m = manager_with(AudioConfig {
+            master_volume: 0.8,
+            dialogue_volume: 0.5,
+            ambient_volume: 0.25,
+            ..Default::default()
+        });
+        let dv = m.effective_volume(AudioCategory::Dialogue);
+        let av = m.effective_volume(AudioCategory::Ambient);
+        assert!((dv - 0.4).abs() < 1e-6, "dialogue: expected 0.4, got {dv}");
+        assert!((av - 0.2).abs() < 1e-6, "ambient: expected 0.2, got {av}");
+    }
+
     // ── Hardware tests — require a real audio device ──────────────────────────
 
     #[test]
     #[ignore = "requires audio hardware: run with --include-ignored"]
     fn t_aud_01_audio_system_initialization() {
-        struct NoopScheduler;
-        impl SchedulerHandle for NoopScheduler {
-            fn submit_sequential(
-                &self,
-                _f: Box<dyn FnOnce() -> Result<(), EngineError> + Send + 'static>,
-                _priority: rython_core::Priority,
-                _owner: rython_core::OwnerId,
-            ) {
-            }
-            fn cancel_owned(&self, _owner: rython_core::OwnerId) {}
-        }
         let sched = NoopScheduler;
         let mut m = manager();
         m.on_load(&sched).expect("audio manager should load without error");
