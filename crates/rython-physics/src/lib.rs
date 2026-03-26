@@ -346,10 +346,10 @@ impl PhysicsWorld {
                     }
                 }
                 CollisionEvent::Stopped(h1, h2, flags) => {
-                    if flags.contains(CollisionEventFlags::SENSOR) {
-                        let e1 = collider_to_entity.get(&h1).copied();
-                        let e2 = collider_to_entity.get(&h2).copied();
-                        if let (Some(e1), Some(e2)) = (e1, e2) {
+                    let e1 = collider_to_entity.get(&h1).copied();
+                    let e2 = collider_to_entity.get(&h2).copied();
+                    if let (Some(e1), Some(e2)) = (e1, e2) {
+                        if flags.contains(CollisionEventFlags::SENSOR) {
                             let payload = serde_json::json!({
                                 "entity_a": e1.0,
                                 "entity_b": e2.0,
@@ -358,6 +358,14 @@ impl PhysicsWorld {
                             scene.emit("trigger", payload.clone());
                             scene.emit(&format!("trigger_exit:{}", e1.0), payload.clone());
                             scene.emit(&format!("trigger_exit:{}", e2.0), payload);
+                        } else {
+                            let payload = serde_json::json!({
+                                "entity_a": e1.0,
+                                "entity_b": e2.0,
+                            });
+                            scene.emit("collision_end", payload.clone());
+                            scene.emit(&format!("collision_end:{}", e1.0), payload.clone());
+                            scene.emit(&format!("collision_end:{}", e2.0), payload);
                         }
                     }
                 }
@@ -923,6 +931,48 @@ mod tests {
         }
 
         assert!(*exited.lock().unwrap(), "trigger exit event expected");
+    }
+
+    // ── T-PHYS-11b: Solid Collision End Event ─────────────────────────────────
+
+    #[test]
+    fn t_phys_11b_collision_end_solid() {
+        let scene = Scene::new();
+        // Two dynamic bodies moving toward each other along X in zero gravity.
+        // They collide, bounce apart, and a collision_end event fires after separation.
+        let a = spawn(
+            &scene,
+            transform(-2.0, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 1, 1),
+            box_col([1.0, 1.0, 1.0]),
+        );
+        let b = spawn(
+            &scene,
+            transform(2.0, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 1, 1),
+            box_col([1.0, 1.0, 1.0]),
+        );
+
+        let ended: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+        let en = ended.clone();
+        scene.subscribe("collision_end", move |_, _| {
+            *en.lock().unwrap() = true;
+        });
+
+        let mut w = PhysicsWorld::new(PhysicsConfig {
+            gravity: [0.0, 0.0, 0.0],
+            ..Default::default()
+        });
+        w.sync_step(&scene); // register bodies
+        // Launch toward each other at high speed so they collide and bounce apart.
+        w.set_linear_velocity(a, [10.0, 0.0, 0.0]);
+        w.set_linear_velocity(b, [-10.0, 0.0, 0.0]);
+
+        for _ in 0..120 {
+            w.sync_step(&scene);
+        }
+
+        assert!(*ended.lock().unwrap(), "collision_end event expected for solid bodies");
     }
 
     // ── T-PHYS-12: Apply Impulse ──────────────────────────────────────────────
