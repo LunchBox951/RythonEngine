@@ -1,7 +1,9 @@
 use rython_renderer::{
-    norm_to_clip, rect_to_clip_verts, validate_wgsl, Camera, Color, CommandQueue, DrawCommand,
-    DrawMesh, DrawRect, RendererConfig, RendererState,
+    norm_to_clip, rect_to_clip_verts, validate_wgsl, Camera, Color, CommandQueue, DrawBillboard,
+    DrawCircle, DrawCommand, DrawImage, DrawLine, DrawMesh, DrawRect, DrawText, RendererConfig,
+    RendererState,
 };
+use rython_core::math::{Vec2, Vec3};
 
 // ─── T-REND-01: Renderer Initialization ──────────────────────────────────────
 
@@ -776,4 +778,344 @@ fn t_rend_14_mesh_render_pipeline_with_depth_buffer() {
         //   - Vertex/index buffers were uploaded and bound correctly.
         //   - Mesh pipeline executed draw_indexed without error.
     });
+}
+
+// ─── Edge-case helpers ────────────────────────────────────────────────────────
+
+fn make_rect(z: f32) -> DrawCommand {
+    DrawCommand::Rect(DrawRect {
+        x: 0.0, y: 0.0, w: 0.1, h: 0.1,
+        color: Color::rgb(255, 255, 255),
+        border: None, border_width: 0.0, z,
+    })
+}
+
+// ─── CommandQueue edge cases ──────────────────────────────────────────────────
+
+#[test]
+fn edge_command_queue_zero_capacity() {
+    let queue = CommandQueue::new(0);
+    queue.push(make_rect(0.0));
+    assert_eq!(queue.back_len(), 0, "zero-capacity: nothing accepted");
+    assert_eq!(queue.dropped_count(), 1, "zero-capacity: command counted as dropped");
+    queue.swap();
+    let cmds = queue.take_sorted_front();
+    assert!(cmds.is_empty(), "zero-capacity: take returns empty");
+}
+
+#[test]
+fn edge_command_queue_swap_empty_back() {
+    let queue = CommandQueue::new(64);
+    queue.swap(); // swap with nothing pushed — both buffers stay empty
+    assert_eq!(queue.front_len(), 0);
+    assert_eq!(queue.back_len(), 0);
+}
+
+#[test]
+fn edge_command_queue_multiple_swaps_no_push() {
+    let queue = CommandQueue::new(64);
+    queue.push(make_rect(1.0));
+    queue.swap(); // front=[rect], back=[]
+    assert_eq!(queue.front_len(), 1);
+    queue.swap(); // second swap: front gets empty back; back gets front then is cleared
+    assert_eq!(queue.front_len(), 0, "front must be empty after second swap with no new push");
+}
+
+#[test]
+fn edge_command_queue_push_after_swap() {
+    let queue = CommandQueue::new(64);
+    queue.push(make_rect(1.0));
+    queue.swap(); // front=[rect(1)], back=[]
+    queue.push(make_rect(2.0)); // back=[rect(2)], front unchanged
+    assert_eq!(queue.front_len(), 1, "front still has previous frame's command");
+    assert_eq!(queue.back_len(), 1, "back has new command");
+    let cmds = queue.take_sorted_front();
+    assert_eq!(cmds[0].z(), 1.0, "renderer sees previous frame's command");
+}
+
+#[test]
+fn edge_command_queue_take_sorted_front_empty() {
+    let queue = CommandQueue::new(64);
+    queue.swap(); // swap with empty back
+    let cmds = queue.take_sorted_front();
+    assert!(cmds.is_empty(), "take on empty front must return empty vec");
+}
+
+#[test]
+fn edge_command_queue_dropped_count_resets_after_swap() {
+    let queue = CommandQueue::new(2);
+    for _ in 0..5 {
+        queue.push(make_rect(0.0));
+    }
+    assert_eq!(queue.dropped_count(), 3, "3 commands dropped at capacity=2");
+    queue.swap();
+    assert_eq!(queue.dropped_count(), 0, "dropped counter resets on swap");
+}
+
+#[test]
+fn edge_command_queue_nan_z_sorting() {
+    let queue = CommandQueue::new(64);
+    queue.push(make_rect(3.0));
+    queue.push(make_rect(f32::NAN));
+    queue.push(make_rect(1.0));
+    queue.swap();
+    let cmds = queue.take_sorted_front(); // must not panic
+    assert_eq!(cmds.len(), 3, "all three commands survive NaN sort");
+}
+
+#[test]
+fn edge_command_queue_mixed_variants_z_sort() {
+    let queue = CommandQueue::new(64);
+    queue.push(DrawCommand::Text(DrawText {
+        text: "hi".to_string(), font_id: String::new(),
+        x: 0.0, y: 0.0, color: Color::rgb(255, 255, 255), size: 16, z: 3.0,
+    }));
+    queue.push(DrawCommand::Circle(DrawCircle {
+        cx: 0.0, cy: 0.0, radius: 0.1,
+        color: Color::rgb(255, 0, 0), border: None, border_width: 0.0, z: 1.0,
+    }));
+    queue.push(DrawCommand::Line(DrawLine {
+        x0: 0.0, y0: 0.0, x1: 1.0, y1: 1.0,
+        color: Color::rgb(0, 255, 0), width: 1.0, z: 2.0,
+    }));
+    queue.push(make_rect(0.5));
+    queue.swap();
+    let cmds = queue.take_sorted_front();
+    let zs: Vec<f32> = cmds.iter().map(|c| c.z()).collect();
+    assert_eq!(zs, vec![0.5, 1.0, 2.0, 3.0], "mixed variants sorted by z ascending");
+}
+
+#[test]
+fn edge_command_queue_capacity_boundary() {
+    let queue = CommandQueue::new(3);
+    for _ in 0..3 {
+        queue.push(make_rect(0.0));
+    }
+    assert_eq!(queue.back_len(), 3, "exactly at capacity: all accepted");
+    assert_eq!(queue.dropped_count(), 0, "exactly at capacity: no drops");
+    queue.push(make_rect(0.0));
+    assert_eq!(queue.dropped_count(), 1, "one over capacity: one drop");
+}
+
+#[test]
+fn edge_command_queue_negative_z_sorting() {
+    let queue = CommandQueue::new(64);
+    for z in [-5.0f32, 0.0, -1.0, 3.0, -10.0] {
+        queue.push(make_rect(z));
+    }
+    queue.swap();
+    let cmds = queue.take_sorted_front();
+    let zs: Vec<f32> = cmds.iter().map(|c| c.z()).collect();
+    assert_eq!(zs, vec![-10.0, -5.0, -1.0, 0.0, 3.0], "negative z values sorted ascending");
+}
+
+#[test]
+fn edge_command_queue_take_sorted_front_drains() {
+    let queue = CommandQueue::new(64);
+    queue.push(make_rect(1.0));
+    queue.swap();
+    let first = queue.take_sorted_front();
+    assert_eq!(first.len(), 1, "first take returns the command");
+    let second = queue.take_sorted_front();
+    assert!(second.is_empty(), "second take on same frame returns empty — buffer was drained");
+}
+
+// ─── Color edge cases ─────────────────────────────────────────────────────────
+
+#[test]
+fn edge_color_rgb_sets_full_alpha() {
+    assert_eq!(Color::rgb(100, 200, 50).a, 255, "Color::rgb must set alpha=255");
+}
+
+#[test]
+fn edge_color_all_zero() {
+    let [r, g, b, a] = Color::new(0, 0, 0, 0).to_linear();
+    assert_eq!(r, 0.0);
+    assert_eq!(g, 0.0);
+    assert_eq!(b, 0.0);
+    assert_eq!(a, 0.0);
+}
+
+#[test]
+fn edge_color_all_max() {
+    let [r, g, b, a] = Color::new(255, 255, 255, 255).to_linear();
+    assert_eq!(r, 1.0);
+    assert_eq!(g, 1.0);
+    assert_eq!(b, 1.0);
+    assert_eq!(a, 1.0);
+}
+
+#[test]
+fn edge_color_equality() {
+    let a = Color::new(10, 20, 30, 255);
+    let b = Color::new(10, 20, 30, 255);
+    let c = Color::new(10, 20, 30, 128);
+    assert_eq!(a, b, "identical colors must be equal");
+    assert_ne!(a, c, "different alpha makes colors not equal");
+}
+
+#[test]
+fn edge_color_copy() {
+    let a = Color::new(10, 20, 30, 255);
+    let b = a; // Color is Copy — this must compile and both must be equal
+    assert_eq!(a, b);
+}
+
+// ─── Coordinate mapping edge cases ───────────────────────────────────────────
+
+#[test]
+fn edge_norm_to_clip_out_of_range() {
+    // norm_to_clip(nx, ny) = [nx*2-1, -(ny*2-1)]
+    let [cx, cy] = norm_to_clip(-0.5, -0.5);
+    assert!((cx - (-2.0)).abs() < 1e-6, "nx=-0.5 → clip_x=-2.0, got {cx}");
+    assert!((cy - 2.0).abs() < 1e-6, "ny=-0.5 → clip_y=2.0, got {cy}");
+
+    let [cx2, cy2] = norm_to_clip(1.5, 1.5);
+    assert!((cx2 - 2.0).abs() < 1e-6, "nx=1.5 → clip_x=2.0, got {cx2}");
+    assert!((cy2 - (-2.0)).abs() < 1e-6, "ny=1.5 → clip_y=-2.0, got {cy2}");
+}
+
+#[test]
+fn edge_rect_to_clip_zero_size() {
+    // A zero-size rect at (0.5, 0.5): all four corners collapse to the same clip point
+    let [tl, tr, bl, br] = rect_to_clip_verts(0.5, 0.5, 0.0, 0.0);
+    assert_eq!(tl, [0.0, 0.0], "zero-size rect tl at clip origin");
+    assert_eq!(tr, [0.0, 0.0], "zero-size rect tr collapses to tl");
+    assert_eq!(bl, [0.0, 0.0], "zero-size rect bl collapses to tl");
+    assert_eq!(br, [0.0, 0.0], "zero-size rect br collapses to tl");
+}
+
+// ─── Camera edge cases ───────────────────────────────────────────────────────
+
+#[test]
+fn edge_camera_default_values() {
+    let cam = Camera::new();
+    assert_eq!(cam.position.x, 0.0);
+    assert_eq!(cam.position.y, 0.0);
+    assert_eq!(cam.position.z, -10.0, "default position z=-10");
+    assert_eq!(cam.target.x, 0.0);
+    assert_eq!(cam.target.y, 0.0);
+    assert_eq!(cam.target.z, 0.0, "default target is origin");
+    assert_eq!(cam.up.x, 0.0);
+    assert_eq!(cam.up.y, 1.0, "default up is +Y");
+    assert_eq!(cam.up.z, 0.0);
+    assert_eq!(cam.fov_degrees, 90.0, "default FOV 90°");
+    assert_eq!(cam.near, 0.1);
+    assert_eq!(cam.far, 1000.0);
+    assert!((cam.aspect - 16.0 / 9.0).abs() < 1e-5, "default aspect 16:9");
+}
+
+#[test]
+fn edge_camera_view_projection_combines_correctly() {
+    let mut cam = Camera::new();
+    cam.set_position(1.0, 2.0, 3.0);
+    cam.set_look_at(0.0, 0.0, 0.0);
+
+    let vp = cam.view_projection();
+    let expected = cam.projection_matrix() * cam.view_matrix();
+
+    let vp_arr = vp.to_cols_array();
+    let exp_arr = expected.to_cols_array();
+    for (i, (&a, &b)) in vp_arr.iter().zip(exp_arr.iter()).enumerate() {
+        assert!((a - b).abs() < 1e-5, "view_projection element {i}: {a} != {b}");
+    }
+}
+
+#[test]
+fn edge_camera_identity_position() {
+    let mut cam = Camera::new();
+    cam.set_position(0.0, 0.0, 0.0);
+    cam.set_look_at(0.0, 0.0, 1.0);
+    let fwd = cam.forward();
+    assert!(fwd.x.abs() < 1e-5, "forward.x ≈ 0, got {}", fwd.x);
+    assert!(fwd.y.abs() < 1e-5, "forward.y ≈ 0, got {}", fwd.y);
+    assert!((fwd.z - 1.0).abs() < 1e-5, "forward.z ≈ 1.0, got {}", fwd.z);
+}
+
+// ─── DrawCommand z() accessor ─────────────────────────────────────────────────
+
+#[test]
+fn edge_draw_command_z_all_variants() {
+    use rython_core::math::Mat4;
+
+    let cmds = [
+        DrawCommand::Rect(DrawRect { x: 0.0, y: 0.0, w: 0.1, h: 0.1,
+            color: Color::rgb(255, 255, 255), border: None, border_width: 0.0, z: 1.0 }),
+        DrawCommand::Circle(DrawCircle { cx: 0.0, cy: 0.0, radius: 0.1,
+            color: Color::rgb(255, 0, 0), border: None, border_width: 0.0, z: 2.0 }),
+        DrawCommand::Line(DrawLine { x0: 0.0, y0: 0.0, x1: 1.0, y1: 1.0,
+            color: Color::rgb(0, 255, 0), width: 1.0, z: 3.0 }),
+        DrawCommand::Image(DrawImage { asset_id: String::new(),
+            x: 0.0, y: 0.0, w: 1.0, h: 1.0, alpha: 1.0, z: 4.0 }),
+        DrawCommand::Text(DrawText { text: String::new(), font_id: String::new(),
+            x: 0.0, y: 0.0, color: Color::rgb(255, 255, 255), size: 16, z: 5.0 }),
+        DrawCommand::Mesh(DrawMesh { mesh_id: String::new(), texture_id: String::new(),
+            transform: Mat4::IDENTITY, z: 6.0 }),
+        DrawCommand::Billboard(DrawBillboard { asset_id: String::new(),
+            position: Vec3::ZERO, size: Vec2::ONE, color: Color::rgb(255, 255, 255), z: 7.0 }),
+    ];
+    let expected_z = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
+    for (cmd, &ez) in cmds.iter().zip(expected_z.iter()) {
+        assert_eq!(cmd.z(), ez, "z() accessor returned wrong value for {:?}", cmd);
+    }
+}
+
+// ─── Shader validation edge cases ────────────────────────────────────────────
+
+#[test]
+fn edge_shader_validate_empty_string() {
+    let result = validate_wgsl("");
+    assert!(result.is_err(), "empty WGSL must return Err");
+}
+
+#[test]
+fn edge_shader_validate_valid_minimal() {
+    let src = r#"
+        @vertex
+        fn vs_main() -> @builtin(position) vec4<f32> {
+            return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        }
+        @fragment
+        fn fs_main() -> @location(0) vec4<f32> {
+            return vec4<f32>(1.0, 1.0, 1.0, 1.0);
+        }
+    "#;
+    let result = validate_wgsl(src);
+    assert!(result.is_ok(), "minimal valid WGSL should return Ok: {:?}", result.err());
+}
+
+// ─── RendererConfig edge cases ────────────────────────────────────────────────
+
+#[test]
+fn edge_renderer_config_defaults() {
+    let cfg = RendererConfig::default();
+    assert_eq!(cfg.clear_color, [0, 0, 0, 255]);
+    assert_eq!(cfg.max_draw_commands, 65536);
+    assert_eq!(cfg.msaa_samples, 4);
+    assert!(!cfg.use_fxaa);
+}
+
+#[test]
+fn edge_renderer_config_serde_roundtrip() {
+    let cfg = RendererConfig {
+        clear_color: [100, 150, 200, 255],
+        max_draw_commands: 1024,
+        msaa_samples: 2,
+        use_fxaa: true,
+    };
+    let json = serde_json::to_string(&cfg).expect("serialize RendererConfig");
+    let restored: RendererConfig = serde_json::from_str(&json).expect("deserialize RendererConfig");
+    assert_eq!(restored.clear_color, cfg.clear_color);
+    assert_eq!(restored.max_draw_commands, cfg.max_draw_commands);
+    assert_eq!(restored.msaa_samples, cfg.msaa_samples);
+    assert_eq!(restored.use_fxaa, cfg.use_fxaa);
+}
+
+#[test]
+fn edge_renderer_config_serde_defaults_from_empty() {
+    let cfg: RendererConfig = serde_json::from_str("{}").expect("deserialize empty object");
+    assert_eq!(cfg.clear_color, [0, 0, 0, 255]);
+    assert_eq!(cfg.max_draw_commands, 65536);
+    assert_eq!(cfg.msaa_samples, 4);
+    assert!(!cfg.use_fxaa);
 }
