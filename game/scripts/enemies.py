@@ -15,11 +15,13 @@ def register(entity: Any, enemy_type: str = "skeleton", is_boss: bool = False) -
 
 @rython.throttle(hz=15)
 def update(dt: float) -> None:
-    """Tick all active enemy AI states."""
+    """Tick all active enemy AI states in parallel."""
     from game.scripts.npc import skeleton
     px, py, pz = player.get_position()
     for state in _enemies:
-        skeleton.update(state, dt, px, py, pz)
+        def _tick(s=state, d=dt, x=px, y=py, z=pz) -> None:
+            skeleton.update(s, d, x, y, z)
+        rython.scheduler.submit_parallel(_tick)
 
 
 def clear() -> None:
