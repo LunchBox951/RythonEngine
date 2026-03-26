@@ -22,6 +22,7 @@ Game logic in RythonEngine is written in Python. The engine exposes a `rython` m
 12. [Script Classes](#script-classes)
 13. [Hot-Reload (Dev Mode)](#hot-reload-dev-mode)
 14. [Complete Example: Spinning Cubes](#complete-example-spinning-cubes)
+15. [@throttle Decorator](#throttle-decorator)
 
 ---
 
@@ -456,3 +457,57 @@ cargo run --bin rython -- \
     --script-dir scripts \
     --entry-point main
 ```
+
+---
+
+## @throttle Decorator
+
+`rython.throttle(hz)` is a decorator factory that limits how often a function executes. It is imported directly from the `rython` module:
+
+```python
+import rython
+
+@rython.throttle(hz=30)
+def update(dt: float) -> None:
+    # runs at most 30 times per second
+    ...
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `hz` | `float` | Maximum invocations per second. Must be greater than zero. |
+
+**Behaviour:**
+
+- The first call always executes.
+- Subsequent calls that arrive before the minimum interval (`1/hz` seconds) has elapsed are silently skipped — the wrapper returns `None`.
+- Uses `rython.time.elapsed` as the clock, so timing is relative to engine time, not wall-clock time.
+- If the engine clock resets (e.g. a scene reload causes `rython.time.elapsed` to return a value lower than the last recorded call time), the tracking state is cleared and the next call executes immediately.
+
+**When to use:**
+
+Use `@throttle` on per-frame callbacks registered with `rython.scheduler.register_recurring` when the update does not need to run at full frame rate. This is especially useful for AI ticks, camera smoothing, and UI refreshes:
+
+```python
+import rython
+from game.scripts import player
+
+OFFSET = (0.0, 8.0, -12.0)
+
+@rython.throttle(hz=30)
+def camera_update(dt: float) -> None:
+    """Camera follow — capped at 30 Hz, no need to run every frame."""
+    px, py, pz = player.get_position()
+    rython.camera.set_position(px + OFFSET[0], py + OFFSET[1], pz + OFFSET[2])
+    rython.camera.set_look_at(px, py + 1.0, pz)
+
+
+@rython.throttle(hz=15)
+def enemy_update(dt: float) -> None:
+    """AI tick — 15 Hz is sufficient for pathfinding updates."""
+    ...
+```
+
+**Note:** Prefer `rython.scheduler.on_timer` for logic that fires once after a delay. `@throttle` is for functions that are called every frame but should only *run* at a reduced rate.
