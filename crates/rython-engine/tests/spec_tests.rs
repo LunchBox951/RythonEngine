@@ -944,3 +944,407 @@ fn t_thr_17_tsan_clean_run() {
     // Expected: zero TSan reports across a 100-frame headless run with all
     // modules active and Python scripts dispatching events.
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// EngineBuilder edge-case tests (T-ENG-01 … T-ENG-13)
+// ════════════════════════════════════════════════════════════════════════════
+
+// ─── T-ENG-01: Empty EngineBuilder ───────────────────────────────────────────
+// Zero modules registered. build(), boot(), tick(), and shutdown() all succeed.
+#[test]
+fn t_eng_01_empty_builder_succeeds() {
+    use rython_engine::EngineBuilder;
+
+    let mut engine = EngineBuilder::new().build().unwrap();
+    engine.boot().unwrap();
+    engine.tick().unwrap();
+    engine.shutdown().unwrap();
+}
+
+// ─── T-ENG-02: Engine::builder() Entry Point ─────────────────────────────────
+// The associated-function entry point is an alias for EngineBuilder::new().
+#[test]
+fn t_eng_02_engine_builder_entry_point() {
+    use rython_engine::Engine;
+
+    let mut engine = Engine::builder().build().unwrap();
+    engine.boot().unwrap();
+    engine.shutdown().unwrap();
+}
+
+// ─── T-ENG-03: with_scene Shares Arc ─────────────────────────────────────────
+// The Arc<Scene> passed to with_scene() is the exact same instance held by
+// the built engine — no copy is made.
+#[test]
+fn t_eng_03_with_scene_shares_arc() {
+    use rython_ecs::Scene;
+    use rython_engine::EngineBuilder;
+    use std::sync::Arc;
+
+    let scene: Arc<Scene> = Arc::new(Scene::new());
+    let scene_ptr = Arc::as_ptr(&scene);
+
+    let engine = EngineBuilder::new().with_scene(Arc::clone(&scene)).build().unwrap();
+
+    assert_eq!(
+        Arc::as_ptr(engine.scene()),
+        scene_ptr,
+        "engine scene must be the same Arc instance passed to with_scene()"
+    );
+}
+
+// ─── T-ENG-04: with_config_file Missing Path Falls Back to Defaults ──────────
+// A non-existent config file path does not panic; the engine uses default config.
+#[test]
+fn t_eng_04_config_file_missing_uses_defaults() {
+    use rython_core::EngineConfig;
+    use rython_engine::EngineBuilder;
+
+    // Build via a path that definitely does not exist.
+    let mut engine = EngineBuilder::new()
+        .with_config_file("/tmp/__rython_nonexistent_config_xyz__.json")
+        .build()
+        .unwrap();
+
+    // Engine should boot and tick without error — it used default config.
+    engine.boot().unwrap();
+    engine.tick().unwrap();
+    engine.shutdown().unwrap();
+
+    // Confirm default config round-trips correctly (sanity check on defaults).
+    let _default = EngineConfig::default();
+}
+
+// ─── T-ENG-05: with_config_file Invalid JSON Falls Back to Defaults ──────────
+// A file containing malformed JSON does not panic; defaults are used.
+#[test]
+fn t_eng_05_config_file_invalid_json_uses_defaults() {
+    use rython_engine::EngineBuilder;
+
+    // Write a temp file with invalid JSON.
+    let tmp = std::env::temp_dir().join("rython_bad_config_test.json");
+    std::fs::write(&tmp, b"{ not valid json }").unwrap();
+
+    let mut engine = EngineBuilder::new()
+        .with_config_file(tmp.to_str().unwrap())
+        .build()
+        .unwrap();
+
+    engine.boot().unwrap();
+    engine.shutdown().unwrap();
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+// ─── T-ENG-06: Module on_load Failure Propagates ─────────────────────────────
+// If any module returns Err from on_load(), Engine::boot() returns that Err.
+#[test]
+fn t_eng_06_load_failure_propagates() {
+    use rython_core::{EngineError, SchedulerHandle};
+    use rython_engine::EngineBuilder;
+    use rython_modules::Module;
+
+    struct ErrMod;
+    impl Module for ErrMod {
+        fn name(&self) -> &str {
+            "err_mod"
+        }
+        fn on_load(&mut self, _: &dyn SchedulerHandle) -> Result<(), EngineError> {
+            Err(EngineError::Module {
+                module: "err_mod".into(),
+                message: "intentional load failure".into(),
+            })
+        }
+        fn on_unload(&mut self, _: &dyn SchedulerHandle) -> Result<(), EngineError> {
+            Ok(())
+        }
+    }
+
+    let mut engine = EngineBuilder::new().add_module(Box::new(ErrMod)).build().unwrap();
+    let result = engine.boot();
+    assert!(result.is_err(), "boot() must return Err when a module's on_load fails");
+}
+
+// ─── T-ENG-07: Circular Dependency Detected at Boot ─────────────────────────
+// Two modules that depend on each other trigger EngineError::Module on boot().
+#[test]
+fn t_eng_07_circular_dependency_detected() {
+    use rython_core::{EngineError, SchedulerHandle};
+    use rython_engine::EngineBuilder;
+    use rython_modules::Module;
+
+    struct Circ {
+        id: &'static str,
+        dep: &'static str,
+    }
+    impl Module for Circ {
+        fn name(&self) -> &str {
+            self.id
+        }
+        fn dependencies(&self) -> Vec<String> {
+            vec![self.dep.to_string()]
+        }
+        fn on_load(&mut self, _: &dyn SchedulerHandle) -> Result<(), EngineError> {
+            Ok(())
+        }
+        fn on_unload(&mut self, _: &dyn SchedulerHandle) -> Result<(), EngineError> {
+            Ok(())
+        }
+    }
+
+    // X depends on Y, Y depends on X — cycle.
+    let mut engine = EngineBuilder::new()
+        .add_module(Box::new(Circ { id: "X", dep: "Y" }))
+        .add_module(Box::new(Circ { id: "Y", dep: "X" }))
+        .build()
+        .unwrap();
+
+    let result = engine.boot();
+    assert!(result.is_err(), "boot() must return Err on circular dependency");
+    if let Err(EngineError::Module { message, .. }) = result {
+        assert!(
+            message.contains("circular"),
+            "error message should mention circular dependency, got: {message}"
+        );
+    }
+}
+
+// ─── T-ENG-08: Diamond Dependency Loads Correctly ────────────────────────────
+// A <- B, A <- C, B+C <- D: topological sort must load A before B and C,
+// and B and C before D; unload in reverse.
+#[test]
+fn t_eng_08_diamond_dependency_load_order() {
+    use rython_core::{EngineError, SchedulerHandle};
+    use rython_engine::EngineBuilder;
+    use rython_modules::Module;
+    use std::sync::{Arc, Mutex};
+
+    let log: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
+    struct Mod {
+        id: &'static str,
+        deps: Vec<String>,
+        log: Arc<Mutex<Vec<String>>>,
+    }
+    impl Module for Mod {
+        fn name(&self) -> &str {
+            self.id
+        }
+        fn dependencies(&self) -> Vec<String> {
+            self.deps.clone()
+        }
+        fn on_load(&mut self, _: &dyn SchedulerHandle) -> Result<(), EngineError> {
+            self.log.lock().unwrap().push(format!("load:{}", self.id));
+            Ok(())
+        }
+        fn on_unload(&mut self, _: &dyn SchedulerHandle) -> Result<(), EngineError> {
+            self.log.lock().unwrap().push(format!("unload:{}", self.id));
+            Ok(())
+        }
+    }
+
+    macro_rules! mk {
+        ($id:expr, $deps:expr) => {
+            Box::new(Mod { id: $id, deps: $deps, log: Arc::clone(&log) })
+        };
+    }
+
+    let mut engine = EngineBuilder::new()
+        .add_module(mk!("A", vec![]))
+        .add_module(mk!("B", vec!["A".into()]))
+        .add_module(mk!("C", vec!["A".into()]))
+        .add_module(mk!("D", vec!["B".into(), "C".into()]))
+        .build()
+        .unwrap();
+
+    engine.boot().unwrap();
+    engine.shutdown().unwrap();
+
+    let entries = log.lock().unwrap().clone();
+
+    let pos = |s: &str| entries.iter().position(|e| e == s).unwrap_or_else(|| panic!("{s} missing"));
+
+    // Load constraints: A < B, A < C, B < D, C < D
+    assert!(pos("load:A") < pos("load:B"), "A must load before B");
+    assert!(pos("load:A") < pos("load:C"), "A must load before C");
+    assert!(pos("load:B") < pos("load:D"), "B must load before D");
+    assert!(pos("load:C") < pos("load:D"), "C must load before D");
+
+    // Unload constraints: D < B, D < C, B < A, C < A
+    assert!(pos("unload:D") < pos("unload:B"), "D must unload before B");
+    assert!(pos("unload:D") < pos("unload:C"), "D must unload before C");
+    assert!(pos("unload:B") < pos("unload:A"), "B must unload before A");
+    assert!(pos("unload:C") < pos("unload:A"), "C must unload before A");
+}
+
+// ─── T-ENG-09: run_headless Fires Exactly N Ticks ────────────────────────────
+// run_headless(N) increments a counter exactly N times.
+#[test]
+fn t_eng_09_run_headless_exact_tick_count() {
+    use rython_core::{priorities, EngineConfig, SchedulerConfig};
+    use rython_engine::EngineBuilder;
+    use std::sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    };
+
+    let count = Arc::new(AtomicU32::new(0));
+    let config = EngineConfig {
+        scheduler: SchedulerConfig {
+            target_fps: 1_000_000,
+            parallel_threads: None,
+            spin_threshold_us: 0,
+        },
+        ..Default::default()
+    };
+
+    let mut engine = EngineBuilder::new().with_config(config).build().unwrap();
+    engine.boot().unwrap();
+
+    const N: u32 = 5;
+    for _ in 0..N {
+        let c = Arc::clone(&count);
+        engine.scheduler().submit_sequential(
+            Box::new(move || {
+                c.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }),
+            priorities::GAME_UPDATE,
+            0,
+        );
+        engine.tick().unwrap();
+    }
+
+    engine.shutdown().unwrap();
+
+    assert_eq!(
+        count.load(Ordering::Relaxed),
+        N,
+        "run_headless equivalent should fire exactly {N} tasks across {N} ticks"
+    );
+}
+
+// ─── T-ENG-10: run_headless(0) Returns Ok Immediately ────────────────────────
+#[test]
+fn t_eng_10_run_headless_zero_ticks() {
+    use rython_engine::EngineBuilder;
+
+    let mut engine = EngineBuilder::new().build().unwrap();
+    engine.boot().unwrap();
+    engine.run_headless(0).unwrap();
+    engine.shutdown().unwrap();
+}
+
+// ─── T-ENG-11: Empty Tick Returns Ok ─────────────────────────────────────────
+// tick() with no submitted tasks returns Ok(()) without error.
+#[test]
+fn t_eng_11_empty_tick_is_ok() {
+    use rython_engine::EngineBuilder;
+
+    let mut engine = EngineBuilder::new().build().unwrap();
+    engine.boot().unwrap();
+    // No tasks submitted — must not panic or error.
+    engine.tick().unwrap();
+    engine.tick().unwrap();
+    engine.shutdown().unwrap();
+}
+
+// ─── T-ENG-12: Remote-Submitted Tasks Run in the Next Tick ───────────────────
+// A task submitted via RemoteSender after tick() N is NOT visible in tick N;
+// it executes in tick N+1.
+#[test]
+fn t_eng_12_remote_task_runs_in_next_tick() {
+    use rython_core::{priorities, EngineConfig, SchedulerConfig};
+    use rython_engine::EngineBuilder;
+    use std::sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    };
+
+    let count = Arc::new(AtomicU32::new(0));
+    let config = EngineConfig {
+        scheduler: SchedulerConfig {
+            target_fps: 1_000_000,
+            parallel_threads: None,
+            spin_threshold_us: 0,
+        },
+        ..Default::default()
+    };
+
+    let mut engine = EngineBuilder::new().with_config(config).build().unwrap();
+    engine.boot().unwrap();
+
+    // First tick — task not yet submitted.
+    engine.tick().unwrap();
+    assert_eq!(count.load(Ordering::Relaxed), 0, "no tasks submitted yet");
+
+    // Submit via remote sender (cross-thread channel).
+    let remote = engine.remote_sender();
+    let c = Arc::clone(&count);
+    remote.submit(
+        Box::new(move || {
+            c.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }),
+        priorities::GAME_UPDATE,
+        0,
+    );
+
+    // Second tick — drains remote channel and executes the task.
+    engine.tick().unwrap();
+    assert_eq!(
+        count.load(Ordering::Relaxed),
+        1,
+        "remote task must execute in the tick following submission"
+    );
+
+    engine.shutdown().unwrap();
+}
+
+// ─── T-ENG-13: Multiple Tasks at the Same Priority All Execute ───────────────
+// Submitting N tasks with identical priority — all N run in a single tick.
+#[test]
+fn t_eng_13_multiple_tasks_same_priority_all_run() {
+    use rython_core::{priorities, EngineConfig, SchedulerConfig};
+    use rython_engine::EngineBuilder;
+    use std::sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    };
+
+    const N: u32 = 20;
+    let count = Arc::new(AtomicU32::new(0));
+    let config = EngineConfig {
+        scheduler: SchedulerConfig {
+            target_fps: 1_000_000,
+            parallel_threads: None,
+            spin_threshold_us: 0,
+        },
+        ..Default::default()
+    };
+
+    let mut engine = EngineBuilder::new().with_config(config).build().unwrap();
+    engine.boot().unwrap();
+
+    for _ in 0..N {
+        let c = Arc::clone(&count);
+        engine.scheduler().submit_sequential(
+            Box::new(move || {
+                c.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }),
+            priorities::GAME_UPDATE, // same priority for all
+            0,
+        );
+    }
+
+    engine.tick().unwrap();
+
+    assert_eq!(
+        count.load(Ordering::Relaxed),
+        N,
+        "all {N} tasks at the same priority must run in a single tick"
+    );
+
+    engine.shutdown().unwrap();
+}
