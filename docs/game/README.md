@@ -23,6 +23,7 @@ Game logic in RythonEngine is written in Python. The engine exposes a `rython` m
 13. [Hot-Reload (Dev Mode)](#hot-reload-dev-mode)
 14. [Complete Example: Spinning Cubes](#complete-example-spinning-cubes)
 15. [@throttle Decorator](#throttle-decorator)
+16. [Parallel & Background Tasks](#parallel--background-tasks)
 
 ---
 
@@ -54,7 +55,7 @@ The `rython` module is injected into `sys.modules` by the engine. It has the fol
 |---|---|
 | `rython.scene` | Spawn/despawn entities, emit and subscribe to events |
 | `rython.camera` | Control the camera position and orientation |
-| `rython.scheduler` | Register per-frame callbacks; one-shot timers and events |
+| `rython.scheduler` | Register per-frame callbacks; one-shot timers and events; parallel/background task submission |
 | `rython.renderer` | Queue draw commands (text overlays) |
 | `rython.time` | Read elapsed engine time |
 | `rython.engine` | Engine lifecycle control |
@@ -510,4 +511,122 @@ def enemy_update(dt: float) -> None:
     ...
 ```
 
-**Note:** Prefer `rython.scheduler.on_timer` for logic that fires once after a delay. `@throttle` is for functions that are called every frame but should only *run* at a reduced rate.
+**Note:** Prefer `rython.scheduler.on_timer` for logic that fires once after a delay. `@throttle` is for functions that are called every frame but should only *run* at a reduced rate. For CPU-intensive work that must not block the main thread, prefer `rython.scheduler.submit_parallel` (same-frame, GIL-held) or `rython.scheduler.submit_background` (off-thread, fire-and-forget) — see [Parallel & Background Tasks](#parallel--background-tasks).
+
+---
+
+## Parallel & Background Tasks
+
+`rython.scheduler` exposes three methods for pushing work outside the normal per-frame callback:
+
+| Method | Executes on | Returns | When done |
+|---|---|---|---|
+| `submit_background(fn)` | rayon thread pool (off main thread) | `JobHandle` | Future frame, after `flush_python_bg_completions` |
+| `submit_parallel(fn)` | Main thread, current tick (GIL held) | `JobHandle` | End of current tick's parallel flush |
+| `run_sequential(fn)` | Main thread, next tick | *(nothing)* | Next sequential phase |
+
+### `submit_background`
+
+Submits a zero-argument callable to run on the rayon thread pool. The callable acquires the GIL
+independently when it runs, so it can call Python freely. The returned `JobHandle` transitions
+from pending to done in a future frame when the completion channel is drained.
+
+```python
+import rython
+
+def heavy_work():
+    # runs on a rayon thread; can call Python via the GIL
+    result = compute_something_expensive()
+    rython.scene.emit("heavy_done", value=result)
+
+handle = rython.scheduler.submit_background(heavy_work)
+
+# Poll later if needed (e.g. inside register_recurring)
+if handle.is_done and not handle.is_failed:
+    print("background task complete")
+```
+
+### `submit_parallel`
+
+Submits a zero-argument callable to run on the main thread during the current tick's parallel
+flush phase (GIL is already held). The `JobHandle` is done by the end of the same tick — useful
+for CPU-intensive Python work that must stay in-frame but should be scheduled explicitly.
+
+```python
+handle = rython.scheduler.submit_parallel(my_cpu_work)
+# handle.is_done is True by the next register_recurring callback
+```
+
+### `run_sequential`
+
+Queues a zero-argument callable to run on the main thread during the *next* tick's sequential
+phase. No `JobHandle` is returned. Use `on_timer` or events for continuation logic.
+
+```python
+rython.scheduler.run_sequential(lambda: rython.scene.emit("setup_done"))
+```
+
+### `JobHandle`
+
+`submit_background` and `submit_parallel` both return a `JobHandle` object:
+
+```python
+handle = rython.scheduler.submit_background(my_fn)
+```
+
+| Attribute / Method | Type | Description |
+|---|---|---|
+| `handle.is_done` | `bool` | `True` once the task has finished (success or failure) |
+| `handle.is_pending` | `bool` | `True` while the task is still queued or running |
+| `handle.is_failed` | `bool` | `True` if the callable raised an exception |
+| `handle.error` | `str \| None` | Error message when `is_failed`, otherwise `None` |
+| `handle.on_complete(cb)` | — | Register a zero-argument callback. If the task is already done, `cb` fires immediately. |
+
+**Checking completion in a recurring callback:**
+
+```python
+import rython
+
+handle = None
+
+def init():
+    global handle
+    handle = rython.scheduler.submit_background(load_assets)
+    rython.scheduler.register_recurring(on_tick)
+
+def load_assets():
+    # runs off-thread
+    pass
+
+def on_tick():
+    if handle and handle.is_done:
+        if handle.is_failed:
+            print(f"asset load failed: {handle.error}")
+        else:
+            print("assets ready")
+```
+
+**Using `on_complete` for a one-shot reaction:**
+
+```python
+def init():
+    handle = rython.scheduler.submit_background(load_assets)
+    handle.on_complete(lambda: rython.scene.emit("assets_ready"))
+```
+
+**Error handling:**
+
+If the callable raises an exception, `is_failed` is `True` and `error` contains the exception
+string. `on_complete` callbacks fire regardless of success or failure, so check `is_failed` inside
+the callback if the outcome matters.
+
+```python
+def on_done():
+    if handle.is_failed:
+        print(f"Task failed: {handle.error}")
+    else:
+        apply_result()
+
+handle = rython.scheduler.submit_background(risky_work)
+handle.on_complete(on_done)
+```
