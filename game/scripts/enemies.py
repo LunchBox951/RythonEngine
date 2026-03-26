@@ -1,5 +1,6 @@
 """Enemy management wrapper — coordinates all active NPC AI states."""
 from typing import List, Any
+import rython
 from game.scripts import player
 
 _enemies: List[Any] = []
@@ -12,6 +13,7 @@ def register(entity: Any, enemy_type: str = "skeleton", is_boss: bool = False) -
     _enemies.append(state)
 
 
+@rython.throttle(hz=15)
 def update(dt: float) -> None:
     """Tick all active enemy AI states."""
     from game.scripts.npc import skeleton

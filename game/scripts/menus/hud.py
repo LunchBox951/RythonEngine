@@ -11,6 +11,7 @@ def create() -> None:
     _visible = False
 
 
+@rython.throttle(hz=10)
 def update() -> None:
     """Draw HUD elements; called every frame while PLAYING."""
     if not _visible:

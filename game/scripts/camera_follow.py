@@ -21,6 +21,7 @@ def init() -> None:
     rython.camera.set_look_at(px, py + 1.0, pz)
 
 
+@rython.throttle(hz=30)
 def update(dt: float) -> None:
     """Smoothly follow the player each frame."""
     global _cam_x, _cam_y, _cam_z
