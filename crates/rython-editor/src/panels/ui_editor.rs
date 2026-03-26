@@ -1203,3 +1203,276 @@ fn load_theme(v: &Value) -> Theme {
         spacing: v["spacing"].as_f64().unwrap_or(def.spacing as f64) as f32,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::selection::SelectionState;
+
+    // ── Construction ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn new_panel_is_empty() {
+        let panel = UiEditorPanel::new();
+        assert!(panel.widgets.is_empty());
+        assert!(panel.root_order.is_empty());
+        assert_eq!(panel.next_id, 1);
+        assert!(panel.undo_stack.is_empty());
+        assert!(panel.redo_stack.is_empty());
+    }
+
+    // ── add_root_widget ───────────────────────────────────────────────────────
+
+    #[test]
+    fn add_root_widget_creates_widget_entry() {
+        let mut panel = UiEditorPanel::new();
+        let id = panel.add_root_widget(WidgetKind::Label);
+        assert!(panel.widgets.contains_key(&id));
+        assert_eq!(panel.widgets[&id].kind, WidgetKind::Label);
+    }
+
+    #[test]
+    fn add_root_widget_appends_to_root_order() {
+        let mut panel = UiEditorPanel::new();
+        let id = panel.add_root_widget(WidgetKind::Label);
+        assert!(panel.root_order.contains(&id));
+    }
+
+    #[test]
+    fn add_root_widget_increments_next_id() {
+        let mut panel = UiEditorPanel::new();
+        let id1 = panel.add_root_widget(WidgetKind::Label);
+        let id2 = panel.add_root_widget(WidgetKind::Button);
+        assert_ne!(id1, id2);
+        assert_eq!(id2, id1 + 1);
+    }
+
+    // ── add_child_widget ──────────────────────────────────────────────────────
+
+    #[test]
+    fn add_child_widget_links_to_parent() {
+        let mut panel = UiEditorPanel::new();
+        let parent_id = panel.add_root_widget(WidgetKind::Panel);
+        let child_id = panel.add_child_widget(parent_id, WidgetKind::Button);
+        assert_eq!(panel.widgets[&child_id].parent, Some(parent_id));
+        assert!(panel.widgets[&parent_id].children.contains(&child_id));
+    }
+
+    #[test]
+    fn add_child_widget_not_in_root_order() {
+        let mut panel = UiEditorPanel::new();
+        let parent_id = panel.add_root_widget(WidgetKind::Panel);
+        let child_id = panel.add_child_widget(parent_id, WidgetKind::Button);
+        assert!(!panel.root_order.contains(&child_id));
+    }
+
+    // ── delete_widget ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn delete_root_widget_removes_from_map_and_root_order() {
+        let mut panel = UiEditorPanel::new();
+        let mut sel = SelectionState::default();
+        let id = panel.add_root_widget(WidgetKind::Label);
+        panel.delete_widget(id, &mut sel);
+        assert!(!panel.widgets.contains_key(&id));
+        assert!(!panel.root_order.contains(&id));
+    }
+
+    #[test]
+    fn delete_widget_clears_selection_if_selected() {
+        let mut panel = UiEditorPanel::new();
+        let mut sel = SelectionState::default();
+        let id = panel.add_root_widget(WidgetKind::Button);
+        sel.current = Selection::Widget(id);
+        panel.delete_widget(id, &mut sel);
+        assert_eq!(sel.current, Selection::None);
+    }
+
+    #[test]
+    fn delete_widget_removes_child_from_parent_children_list() {
+        let mut panel = UiEditorPanel::new();
+        let mut sel = SelectionState::default();
+        let parent_id = panel.add_root_widget(WidgetKind::Panel);
+        let child_id = panel.add_child_widget(parent_id, WidgetKind::Label);
+        panel.delete_widget(child_id, &mut sel);
+        assert!(!panel.widgets.contains_key(&child_id));
+        assert!(!panel.widgets[&parent_id].children.contains(&child_id));
+    }
+
+    #[test]
+    fn delete_widget_removes_entire_subtree() {
+        let mut panel = UiEditorPanel::new();
+        let mut sel = SelectionState::default();
+        let root = panel.add_root_widget(WidgetKind::Panel);
+        let child = panel.add_child_widget(root, WidgetKind::Panel);
+        let grandchild = panel.add_child_widget(child, WidgetKind::Label);
+        panel.delete_widget(root, &mut sel);
+        assert!(!panel.widgets.contains_key(&root));
+        assert!(!panel.widgets.contains_key(&child));
+        assert!(!panel.widgets.contains_key(&grandchild));
+    }
+
+    // ── duplicate_widget ──────────────────────────────────────────────────────
+
+    #[test]
+    fn duplicate_widget_creates_new_entry_with_copy_suffix() {
+        let mut panel = UiEditorPanel::new();
+        let id = panel.add_root_widget(WidgetKind::Label);
+        panel.widgets.get_mut(&id).unwrap().name = "MyLabel".to_string();
+        let dup_id = panel.duplicate_widget(id);
+        assert_ne!(dup_id, id);
+        assert!(panel.widgets[&dup_id].name.contains("copy"));
+    }
+
+    #[test]
+    fn duplicate_widget_inserts_after_original_in_root_order() {
+        let mut panel = UiEditorPanel::new();
+        let a = panel.add_root_widget(WidgetKind::Label);
+        let _b = panel.add_root_widget(WidgetKind::Button);
+        let a_dup = panel.duplicate_widget(a);
+        let a_pos = panel.root_order.iter().position(|&x| x == a).unwrap();
+        let dup_pos = panel.root_order.iter().position(|&x| x == a_dup).unwrap();
+        assert_eq!(dup_pos, a_pos + 1);
+    }
+
+    #[test]
+    fn duplicate_widget_same_kind() {
+        let mut panel = UiEditorPanel::new();
+        let id = panel.add_root_widget(WidgetKind::Button);
+        let dup_id = panel.duplicate_widget(id);
+        assert_eq!(panel.widgets[&dup_id].kind, WidgetKind::Button);
+    }
+
+    // ── move_up / move_down ───────────────────────────────────────────────────
+
+    #[test]
+    fn move_up_swaps_with_predecessor_in_root_order() {
+        let mut panel = UiEditorPanel::new();
+        let a = panel.add_root_widget(WidgetKind::Label);
+        let b = panel.add_root_widget(WidgetKind::Button);
+        panel.move_up(b);
+        assert_eq!(panel.root_order[0], b);
+        assert_eq!(panel.root_order[1], a);
+    }
+
+    #[test]
+    fn move_up_noop_when_already_first() {
+        let mut panel = UiEditorPanel::new();
+        let a = panel.add_root_widget(WidgetKind::Label);
+        let b = panel.add_root_widget(WidgetKind::Button);
+        panel.move_up(a);
+        assert_eq!(panel.root_order[0], a);
+        assert_eq!(panel.root_order[1], b);
+    }
+
+    #[test]
+    fn move_down_swaps_with_successor_in_root_order() {
+        let mut panel = UiEditorPanel::new();
+        let a = panel.add_root_widget(WidgetKind::Label);
+        let b = panel.add_root_widget(WidgetKind::Button);
+        panel.move_down(a);
+        assert_eq!(panel.root_order[0], b);
+        assert_eq!(panel.root_order[1], a);
+    }
+
+    #[test]
+    fn move_down_noop_when_already_last() {
+        let mut panel = UiEditorPanel::new();
+        let a = panel.add_root_widget(WidgetKind::Label);
+        let b = panel.add_root_widget(WidgetKind::Button);
+        panel.move_down(b);
+        assert_eq!(panel.root_order[0], a);
+        assert_eq!(panel.root_order[1], b);
+    }
+
+    // ── undo / redo ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn undo_restores_state_before_last_change() {
+        let mut panel = UiEditorPanel::new();
+        let mut sel = SelectionState::default();
+        // push_undo is called inside add_root_widget before the change
+        let _ = panel.add_root_widget(WidgetKind::Label);
+        let count_one = panel.widgets.len();
+        let _ = panel.add_root_widget(WidgetKind::Button);
+        assert_eq!(panel.widgets.len(), count_one + 1);
+        panel.undo(&mut sel);
+        assert_eq!(panel.widgets.len(), count_one);
+    }
+
+    #[test]
+    fn redo_reapplies_undone_change() {
+        let mut panel = UiEditorPanel::new();
+        let mut sel = SelectionState::default();
+        let _ = panel.add_root_widget(WidgetKind::Label);
+        let _ = panel.add_root_widget(WidgetKind::Button);
+        let count_two = panel.widgets.len();
+        panel.undo(&mut sel);
+        panel.redo(&mut sel);
+        assert_eq!(panel.widgets.len(), count_two);
+    }
+
+    #[test]
+    fn undo_clears_selection() {
+        let mut panel = UiEditorPanel::new();
+        let mut sel = SelectionState::default();
+        let id = panel.add_root_widget(WidgetKind::Label);
+        sel.current = Selection::Widget(id);
+        let _ = panel.add_root_widget(WidgetKind::Button);
+        panel.undo(&mut sel);
+        assert_eq!(sel.current, Selection::None);
+    }
+
+    #[test]
+    fn undo_stack_caps_at_50_entries() {
+        let mut panel = UiEditorPanel::new();
+        for _ in 0..60 {
+            panel.add_root_widget(WidgetKind::Label);
+        }
+        assert!(panel.undo_stack.len() <= 50);
+    }
+
+    #[test]
+    fn undo_noop_on_empty_stack() {
+        let mut panel = UiEditorPanel::new();
+        let mut sel = SelectionState::default();
+        // Should not panic
+        panel.undo(&mut sel);
+        panel.undo(&mut sel);
+    }
+
+    #[test]
+    fn redo_noop_on_empty_redo_stack() {
+        let mut panel = UiEditorPanel::new();
+        let mut sel = SelectionState::default();
+        // Should not panic
+        panel.redo(&mut sel);
+    }
+
+    // ── compute_layout ────────────────────────────────────────────────────────
+
+    #[test]
+    fn compute_layout_sets_abs_position_for_root_widget() {
+        let mut panel = UiEditorPanel::new();
+        let id = panel.add_root_widget(WidgetKind::Label);
+        panel.widgets.get_mut(&id).unwrap().x = 0.2;
+        panel.widgets.get_mut(&id).unwrap().y = 0.3;
+        panel.compute_layout();
+        assert!((panel.widgets[&id].abs_x - 0.2).abs() < 1e-5);
+        assert!((panel.widgets[&id].abs_y - 0.3).abs() < 1e-5);
+    }
+
+    #[test]
+    fn compute_layout_none_propagates_parent_abs_to_child() {
+        let mut panel = UiEditorPanel::new();
+        let parent = panel.add_root_widget(WidgetKind::Panel);
+        let child = panel.add_child_widget(parent, WidgetKind::Label);
+        panel.widgets.get_mut(&parent).unwrap().x = 0.1;
+        panel.widgets.get_mut(&parent).unwrap().y = 0.2;
+        panel.widgets.get_mut(&child).unwrap().x = 0.05;
+        panel.widgets.get_mut(&child).unwrap().y = 0.05;
+        panel.compute_layout();
+        assert!((panel.widgets[&child].abs_x - 0.15).abs() < 1e-5);
+        assert!((panel.widgets[&child].abs_y - 0.25).abs() < 1e-5);
+    }
+}

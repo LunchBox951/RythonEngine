@@ -391,3 +391,238 @@ impl EditorCommand for DetachComponent {
         "Remove Component"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    // ── Mock command ──────────────────────────────────────────────────────────
+
+    #[derive(Default)]
+    struct Counts {
+        execute: u32,
+        undo: u32,
+    }
+
+    struct MockCmd {
+        counts: Arc<Mutex<Counts>>,
+        label: &'static str,
+    }
+
+    impl MockCmd {
+        fn new(label: &'static str) -> (Self, Arc<Mutex<Counts>>) {
+            let counts = Arc::new(Mutex::new(Counts::default()));
+            (Self { counts: counts.clone(), label }, counts)
+        }
+    }
+
+    impl EditorCommand for MockCmd {
+        fn execute(&self, _scene: &Scene) {
+            self.counts.lock().unwrap().execute += 1;
+        }
+
+        fn undo(&self, _scene: &Scene) {
+            self.counts.lock().unwrap().undo += 1;
+        }
+
+        fn description(&self) -> &str {
+            self.label
+        }
+    }
+
+    // ── UndoStack ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn empty_stack_cannot_undo_or_redo() {
+        let stack = UndoStack::new();
+        assert!(!stack.can_undo());
+        assert!(!stack.can_redo());
+    }
+
+    #[test]
+    fn push_executes_command_immediately() {
+        let mut stack = UndoStack::new();
+        let scene = Scene::new();
+        let (cmd, counts) = MockCmd::new("a");
+        stack.push(Box::new(cmd), &scene);
+        assert_eq!(counts.lock().unwrap().execute, 1);
+    }
+
+    #[test]
+    fn push_enables_undo_not_redo() {
+        let mut stack = UndoStack::new();
+        let scene = Scene::new();
+        let (cmd, _) = MockCmd::new("a");
+        stack.push(Box::new(cmd), &scene);
+        assert!(stack.can_undo());
+        assert!(!stack.can_redo());
+    }
+
+    #[test]
+    fn undo_calls_command_undo() {
+        let mut stack = UndoStack::new();
+        let scene = Scene::new();
+        let (cmd, counts) = MockCmd::new("a");
+        stack.push(Box::new(cmd), &scene);
+        stack.undo(&scene);
+        assert_eq!(counts.lock().unwrap().undo, 1);
+    }
+
+    #[test]
+    fn undo_disables_undo_and_enables_redo() {
+        let mut stack = UndoStack::new();
+        let scene = Scene::new();
+        let (cmd, _) = MockCmd::new("a");
+        stack.push(Box::new(cmd), &scene);
+        stack.undo(&scene);
+        assert!(!stack.can_undo());
+        assert!(stack.can_redo());
+    }
+
+    #[test]
+    fn redo_calls_execute_again() {
+        let mut stack = UndoStack::new();
+        let scene = Scene::new();
+        let (cmd, counts) = MockCmd::new("a");
+        stack.push(Box::new(cmd), &scene);
+        stack.undo(&scene);
+        stack.redo(&scene);
+        assert_eq!(counts.lock().unwrap().execute, 2);
+    }
+
+    #[test]
+    fn redo_enables_undo_and_disables_redo() {
+        let mut stack = UndoStack::new();
+        let scene = Scene::new();
+        let (cmd, _) = MockCmd::new("a");
+        stack.push(Box::new(cmd), &scene);
+        stack.undo(&scene);
+        stack.redo(&scene);
+        assert!(stack.can_undo());
+        assert!(!stack.can_redo());
+    }
+
+    #[test]
+    fn push_after_undo_truncates_redo_tail() {
+        let mut stack = UndoStack::new();
+        let scene = Scene::new();
+        let (cmd_a, _) = MockCmd::new("a");
+        let (cmd_b, _) = MockCmd::new("b");
+        let (cmd_c, _) = MockCmd::new("c");
+        stack.push(Box::new(cmd_a), &scene);
+        stack.push(Box::new(cmd_b), &scene);
+        stack.undo(&scene);
+        assert!(stack.can_redo());
+        stack.push(Box::new(cmd_c), &scene);
+        assert!(!stack.can_redo(), "new push must clear redo tail");
+    }
+
+    #[test]
+    fn clear_empties_entire_stack() {
+        let mut stack = UndoStack::new();
+        let scene = Scene::new();
+        let (cmd, _) = MockCmd::new("a");
+        stack.push(Box::new(cmd), &scene);
+        stack.clear();
+        assert!(!stack.can_undo());
+        assert!(!stack.can_redo());
+    }
+
+    #[test]
+    fn push_no_execute_does_not_call_execute() {
+        let mut stack = UndoStack::new();
+        let (cmd, counts) = MockCmd::new("a");
+        stack.push_no_execute(Box::new(cmd));
+        assert_eq!(counts.lock().unwrap().execute, 0, "push_no_execute must not call execute");
+    }
+
+    #[test]
+    fn push_no_execute_enables_undo() {
+        let mut stack = UndoStack::new();
+        stack.push_no_execute(Box::new(MockCmd::new("a").0));
+        assert!(stack.can_undo());
+    }
+
+    #[test]
+    fn push_no_execute_undo_calls_undo() {
+        let mut stack = UndoStack::new();
+        let scene = Scene::new();
+        let (cmd, counts) = MockCmd::new("a");
+        stack.push_no_execute(Box::new(cmd));
+        stack.undo(&scene);
+        assert_eq!(counts.lock().unwrap().undo, 1);
+    }
+
+    #[test]
+    fn push_no_execute_truncates_redo_tail() {
+        let mut stack = UndoStack::new();
+        let scene = Scene::new();
+        let (cmd_a, _) = MockCmd::new("a");
+        let (cmd_b, _) = MockCmd::new("b");
+        stack.push(Box::new(cmd_a), &scene);
+        stack.undo(&scene);
+        assert!(stack.can_redo());
+        stack.push_no_execute(Box::new(cmd_b));
+        assert!(!stack.can_redo(), "push_no_execute must clear redo tail");
+    }
+
+    #[test]
+    fn max_history_caps_at_200() {
+        let mut stack = UndoStack::new();
+        let scene = Scene::new();
+        for _ in 0..250 {
+            let (cmd, _) = MockCmd::new("x");
+            stack.push(Box::new(cmd), &scene);
+        }
+        let mut undo_count = 0u32;
+        while stack.can_undo() {
+            stack.undo(&scene);
+            undo_count += 1;
+            // Safety guard against runaway loop
+            assert!(undo_count <= 200, "undo count exceeded max_history");
+        }
+        assert_eq!(undo_count, 200);
+    }
+
+    #[test]
+    fn undo_noop_when_stack_is_empty() {
+        let mut stack = UndoStack::new();
+        let scene = Scene::new();
+        // Must not panic
+        stack.undo(&scene);
+        stack.undo(&scene);
+        assert!(!stack.can_undo());
+    }
+
+    #[test]
+    fn redo_noop_when_nothing_to_redo() {
+        let mut stack = UndoStack::new();
+        let scene = Scene::new();
+        // Must not panic
+        stack.redo(&scene);
+        assert!(!stack.can_redo());
+    }
+
+    #[test]
+    fn multiple_push_undo_redo_cycle() {
+        let mut stack = UndoStack::new();
+        let scene = Scene::new();
+        for label in ["a", "b", "c"] {
+            let (cmd, _) = MockCmd::new(label);
+            stack.push(Box::new(cmd), &scene);
+        }
+        // Undo all three
+        stack.undo(&scene);
+        stack.undo(&scene);
+        stack.undo(&scene);
+        assert!(!stack.can_undo());
+        assert!(stack.can_redo());
+        // Redo all three
+        stack.redo(&scene);
+        stack.redo(&scene);
+        stack.redo(&scene);
+        assert!(stack.can_undo());
+        assert!(!stack.can_redo());
+    }
+}
