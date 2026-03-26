@@ -21,7 +21,7 @@ def init() -> None:
     rython.scene.subscribe("player_died", _on_player_died)
     rython.scene.subscribe("level_complete", _on_level_complete)
     rython.scene.subscribe("enemy_attack", _on_enemy_attack)
-    rython.scene.subscribe("input:pressed", _on_input_pressed)
+    rython.scene.subscribe("input:pause", _on_pause_pressed)
 
     main_menu.create()
     pause_menu.create()
@@ -50,9 +50,9 @@ def _game_tick() -> None:
         hud.update()
 
 
-def _on_input_pressed(**kwargs) -> None:
-    action = kwargs.get("action", "")
-    if action != "pause":
+def _on_pause_pressed(**kwargs) -> None:
+    # value=1.0 on press, 0.0 on release — only toggle on press
+    if kwargs.get("value", 0.0) != 1.0:
         return
     state = game_state.get_state()
     if state == game_state.PLAYING:
