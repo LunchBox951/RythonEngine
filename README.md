@@ -180,16 +180,27 @@ RythonEngine/
 
 ### Frame Timeline (60 FPS target)
 
+Each frame in the CLI (`RedrawRequested`) runs these steps in order:
+
 ```
-Priority  0  ModuleLifecycle  -- hot-reload check, module state transitions
-Priority 10  PreUpdate        -- InputModule polls window events, finalizes input state
-Priority 15  GameEarly        -- TransformSystem propagates world transforms
-Priority 20  GameUpdate       -- PhysicsModule steps, Scene drains commands, script events
-Priority 25  GameLate         -- Camera/light/UI command processing, script reactions
-Priority 30  RenderEnqueue    -- RenderSystem queries visible entities, builds draw list
-Priority 35  RenderExecute    -- Renderer sorts and executes draw commands, presents frame
-Priority 40  Idle             -- Deferred maintenance, streaming loads, LRU eviction
+1. set_elapsed_secs()            -- advance Python time
+2. flush_recurring_callbacks()   -- run Python per-frame callbacks
+3. flush_timers()                -- fire any pending on_timer callbacks
+4. scene.drain_commands()        -- apply queued ECS mutations atomically
+5. PhysicsWorld::sync_step()     -- rapier3d physics step + sync to ECS transforms
+6. PlayerController::tick()      -- process raw input events → input snapshot + action events
+7. UIManager: mouse routing      -- route cursor and click events to widgets
+8. TransformSystem::run()        -- propagate world transforms through entity hierarchy
+9. RenderSystem::run()           -- collect DrawMesh commands from visible ECS entities
+10. drain_draw_commands()        -- collect script and UI overlay draw commands
+11. renderer.render_meshes()     -- GPU mesh draw call
+12. renderer.render_rects()      -- solid-color UI rect overlays
+13. renderer.render_text()       -- text overlays (scripts + UI)
+14. frame.present()              -- present swapchain
+15. engine.tick()                -- TaskScheduler pipeline (module-registered tasks)
 ```
+
+The `TaskScheduler` priority levels (0–40) govern **module-registered tasks** submitted via `on_load()`. The core game systems listed above run synchronously in the CLI event loop and are not routed through the scheduler.
 
 ---
 
