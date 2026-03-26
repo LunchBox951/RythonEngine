@@ -1220,4 +1220,280 @@ mod tests {
             assert!(!h.is_pending(), "all handles must settle");
         }
     }
+
+    // ── generate_cube edge-case tests ─────────────────────────────────────────
+
+    /// Per-vertex UV pattern: vertex 0 → [0,0], 1 → [1,0], 2 → [1,1], 3 → [0,1]
+    /// for every face.
+    #[test]
+    fn test_generate_cube_uv_pattern() {
+        let mesh = generate_cube();
+        let expected_uvs: [[f32; 2]; 4] =
+            [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+        for face in 0..6 {
+            let base = face * 4;
+            for (i, &expected) in expected_uvs.iter().enumerate() {
+                let uv = mesh.vertices[base + i].uv;
+                assert_eq!(
+                    uv, expected,
+                    "face {face} vertex {i}: expected UV {expected:?}, got {uv:?}"
+                );
+            }
+        }
+    }
+
+    /// Each face's 4 vertices must have the constant axis-locked coordinate that
+    /// matches the face normal (e.g. +X face: all x = 0.5).
+    #[test]
+    fn test_generate_cube_face_axis_positions() {
+        let mesh = generate_cube();
+        // (axis_index, expected_signed_value) per face in declaration order
+        let expected: [(usize, f32); 6] = [
+            (0,  0.5), // +X
+            (0, -0.5), // -X
+            (1,  0.5), // +Y
+            (1, -0.5), // -Y
+            (2,  0.5), // +Z
+            (2, -0.5), // -Z
+        ];
+        for (face, (axis, val)) in expected.iter().enumerate() {
+            let base = face * 4;
+            for i in 0..4 {
+                let pos = mesh.vertices[base + i].position;
+                assert!(
+                    (pos[*axis] - val).abs() < 1e-5,
+                    "face {face} vertex {i}: axis {axis} expected {val}, got {}",
+                    pos[*axis]
+                );
+            }
+        }
+    }
+
+    /// Each face's 6 indices must follow the exact quad-split pattern:
+    /// [base, base+1, base+2, base, base+2, base+3].
+    #[test]
+    fn test_generate_cube_index_pattern_per_face() {
+        let mesh = generate_cube();
+        for face in 0..6usize {
+            let base = (face * 4) as u32;
+            let idx_base = face * 6;
+            let expected = [base, base + 1, base + 2, base, base + 2, base + 3];
+            let actual = &mesh.indices[idx_base..idx_base + 6];
+            assert_eq!(actual, expected, "face {face} index pattern mismatch");
+        }
+    }
+
+    // ── AssetData::size_bytes ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_asset_data_size_bytes_image() {
+        let d = AssetData::Image(ImageData { width: 4, height: 4, pixels: vec![0u8; 64] });
+        assert_eq!(d.size_bytes(), 64);
+    }
+
+    #[test]
+    fn test_asset_data_size_bytes_mesh() {
+        let d = AssetData::Mesh(generate_cube());
+        // 24 vertices × 32 bytes + 36 indices × 4 bytes = 768 + 144 = 912
+        assert_eq!(d.size_bytes(), 24 * 32 + 36 * 4);
+    }
+
+    #[test]
+    fn test_asset_data_size_bytes_sound() {
+        let d = AssetData::Sound(SoundData {
+            samples: vec![0.0f32; 100],
+            sample_rate: 44100,
+            channels: 1,
+        });
+        assert_eq!(d.size_bytes(), 100 * std::mem::size_of::<f32>());
+    }
+
+    #[test]
+    fn test_asset_data_size_bytes_font() {
+        let d = AssetData::Font(FontData {
+            atlas_width: 4,
+            atlas_height: 4,
+            atlas_pixels: vec![0u8; 16],
+            glyphs: HashMap::new(),
+            font_size: 12.0,
+        });
+        assert_eq!(d.size_bytes(), 16);
+    }
+
+    #[test]
+    fn test_asset_data_size_bytes_spritesheet() {
+        let d = AssetData::Spritesheet(SpritesheetData {
+            image: ImageData { width: 4, height: 4, pixels: vec![0u8; 64] },
+            frames: vec![],
+        });
+        assert_eq!(d.size_bytes(), 64);
+    }
+
+    // ── DecodeRequest::cache_key format ──────────────────────────────────────
+
+    #[test]
+    fn test_cache_key_image_prefix() {
+        let req = DecodeRequest::Image { path: "foo/bar.png".to_string() };
+        assert_eq!(req.cache_key(), "image:foo/bar.png");
+    }
+
+    #[test]
+    fn test_cache_key_mesh_prefix() {
+        let req = DecodeRequest::Mesh { path: "model.glb".to_string() };
+        assert_eq!(req.cache_key(), "mesh:model.glb");
+    }
+
+    #[test]
+    fn test_cache_key_sound_prefix() {
+        let req = DecodeRequest::Sound { path: "boom.wav".to_string() };
+        assert_eq!(req.cache_key(), "sound:boom.wav");
+    }
+
+    #[test]
+    fn test_cache_key_spritesheet_format() {
+        let req = DecodeRequest::Spritesheet {
+            path: "sheet.png".to_string(),
+            cols: 4,
+            rows: 2,
+        };
+        assert_eq!(req.cache_key(), "sprite:sheet.png:4:2");
+    }
+
+    #[test]
+    fn test_cache_key_font_differs_by_size() {
+        let req1 = DecodeRequest::Font { path: "font.ttf".to_string(), size: 12.0 };
+        let req2 = DecodeRequest::Font { path: "font.ttf".to_string(), size: 14.0 };
+        assert_ne!(
+            req1.cache_key(),
+            req2.cache_key(),
+            "different font sizes must produce distinct cache keys"
+        );
+        assert!(req1.cache_key().starts_with("font:font.ttf:"));
+    }
+
+    // ── ManagerState: get_or_insert deduplication ────────────────────────────
+
+    #[test]
+    fn test_manager_state_get_or_insert_new_is_true() {
+        let mut st = ManagerState::new(256.0);
+        let (_, is_new) = st.get_or_insert("image:a.png");
+        assert!(is_new, "first insertion must return is_new=true");
+    }
+
+    #[test]
+    fn test_manager_state_get_or_insert_duplicate_is_false() {
+        let mut st = ManagerState::new(256.0);
+        let (inner1, _) = st.get_or_insert("image:a.png");
+        let (inner2, is_new) = st.get_or_insert("image:a.png");
+        assert!(!is_new, "second call with same key must return is_new=false");
+        assert!(Arc::ptr_eq(&inner1, &inner2), "same key must return the same Arc");
+    }
+
+    // ── ManagerState::on_decode_complete ─────────────────────────────────────
+
+    #[test]
+    fn test_decode_complete_success_marks_ready_and_accounts_bytes() {
+        let mut st = ManagerState::new(256.0);
+        let (inner, _) = st.get_or_insert("image:x.png");
+        let data =
+            AssetData::Image(ImageData { width: 2, height: 2, pixels: vec![0u8; 16] });
+        st.on_decode_complete("image:x.png".to_string(), Arc::clone(&inner), Ok(data));
+        assert_eq!(inner.handle_state(), HandleState::Ready);
+        assert_eq!(st.memory_used_bytes(), 16);
+    }
+
+    #[test]
+    fn test_decode_complete_failure_marks_failed_and_removes_cache_entry() {
+        let mut st = ManagerState::new(256.0);
+        let (inner, _) = st.get_or_insert("image:missing.png");
+        st.on_decode_complete(
+            "image:missing.png".to_string(),
+            Arc::clone(&inner),
+            Err("not found".to_string()),
+        );
+        assert_eq!(inner.handle_state(), HandleState::Failed);
+        assert!(
+            !st.cache.contains_key("image:missing.png"),
+            "failed entry must be removed from cache"
+        );
+    }
+
+    // ── AssetHandle edge cases ────────────────────────────────────────────────
+
+    #[test]
+    fn test_handle_error_returns_none_when_pending() {
+        let h = AssetHandle::from_inner(AssetInner::new());
+        assert!(h.error().is_none());
+    }
+
+    #[test]
+    fn test_handle_error_returns_none_when_ready() {
+        let inner = AssetInner::new();
+        let h = AssetHandle::from_inner(Arc::clone(&inner));
+        inner.set_ready(AssetData::Image(ImageData {
+            width: 1,
+            height: 1,
+            pixels: vec![0u8; 4],
+        }));
+        assert!(h.error().is_none());
+    }
+
+    #[test]
+    fn test_handle_get_data_returns_none_when_failed() {
+        let inner = AssetInner::new();
+        let h = AssetHandle::from_inner(Arc::clone(&inner));
+        inner.set_failed("oops".to_string());
+        assert!(h.get_data().is_none());
+    }
+
+    #[test]
+    fn test_handle_ptr_eq_false_for_distinct_inners() {
+        let h1 = AssetHandle::from_inner(AssetInner::new());
+        let h2 = AssetHandle::from_inner(AssetInner::new());
+        assert!(!h1.ptr_eq(&h2));
+    }
+
+    // ── Module interface ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_module_name_is_resources() {
+        let mgr = make_manager(256.0);
+        assert_eq!(mgr.name(), "resources");
+    }
+
+    #[test]
+    fn test_resource_manager_default_budget_is_256mb() {
+        let mgr = ResourceManager::new(ResourceManagerConfig::default());
+        assert!((mgr.memory_budget_mb() - 256.0).abs() < 0.001);
+        assert_eq!(mgr.memory_used_mb(), 0.0);
+    }
+
+    // ── Unsupported audio format error path ───────────────────────────────────
+
+    /// decode_sound checks the file extension before opening the file, so this
+    /// test requires no real file on disk.
+    #[test]
+    fn test_load_sound_unsupported_extension_fails() {
+        let mgr = make_manager(256.0);
+        let h = mgr.load_sound("music.ogg");
+        assert!(poll_until_done(&mgr, &[&h], 500));
+        assert_eq!(h.state(), HandleState::Failed);
+        let err = h.error().unwrap();
+        assert!(
+            err.contains("ogg") || err.contains("unsupported"),
+            "error must mention the unsupported format: {err}"
+        );
+    }
+
+    // ── next_pow2 large boundary values ──────────────────────────────────────
+
+    #[test]
+    fn test_next_pow2_large_values() {
+        assert_eq!(next_pow2(1023), 1024);
+        assert_eq!(next_pow2(1024), 1024);
+        assert_eq!(next_pow2(1025), 2048);
+        assert_eq!(next_pow2(65535), 65536);
+        assert_eq!(next_pow2(65536), 65536);
+        assert_eq!(next_pow2(65537), 131072);
+    }
 }
