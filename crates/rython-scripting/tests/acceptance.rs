@@ -11,9 +11,11 @@ use rython_ecs::Scene;
 use rython_ecs::component::{MeshComponent, TagComponent, TransformComponent};
 use rython_renderer::DrawCommand;
 use rython_scripting::{
-    clear_recurring_callbacks, drain_draw_commands, ensure_rython_module, flush_recurring_callbacks,
-    gil_dispatch_count, register_script_class, reset_gil_dispatch_count, reset_quit_requested,
-    set_active_scene, set_elapsed_secs, was_quit_requested, ScriptComponent, ScriptSystem,
+    clear_recurring_callbacks, drain_draw_commands, ensure_rython_module, flush_python_bg_completions,
+    flush_python_bg_tasks, flush_python_par_tasks, flush_python_seq_tasks,
+    flush_recurring_callbacks, gil_dispatch_count, register_script_class, reset_gil_dispatch_count,
+    reset_quit_requested, set_active_scene, set_elapsed_secs, was_quit_requested, ScriptComponent,
+    ScriptSystem,
 };
 
 // ─── Test serialisation guard ─────────────────────────────────────────────────
@@ -1507,5 +1509,255 @@ class ScriptV2_47:
             .expect("class must exist after registration");
         let version: i64 = cls.bind(py).getattr("VERSION").unwrap().extract().unwrap();
         assert_eq!(version, 2, "second registration must overwrite the first");
+    });
+}
+
+// ─── T-SCRIPT-48: submit_parallel — handle is_done after flush ───────────────
+
+#[test]
+fn t_script_48_submit_parallel_done_same_tick() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+called_48 = False
+def task_48():
+    global called_48
+    called_48 = True
+handle_48 = rython.scheduler.submit_parallel(task_48)
+",
+            None,
+            None,
+        )
+        .expect("submit_parallel setup");
+
+        let main = py.import("__main__").unwrap();
+
+        // Before flush: still pending
+        let pending_before: bool = main
+            .getattr("handle_48")
+            .unwrap()
+            .getattr("is_pending")
+            .unwrap()
+            .extract()
+            .unwrap();
+        assert!(pending_before, "handle must be pending before flush");
+
+        flush_python_par_tasks(py);
+
+        // After flush: done and callable was invoked
+        let done: bool = main
+            .getattr("handle_48")
+            .unwrap()
+            .getattr("is_done")
+            .unwrap()
+            .extract()
+            .unwrap();
+        assert!(done, "handle must be done after flush_python_par_tasks");
+
+        let called: bool = main.getattr("called_48").unwrap().extract().unwrap();
+        assert!(called, "parallel task function must have been invoked");
+    });
+}
+
+// ─── T-SCRIPT-49: submit_background — pending immediately, done next frame ───
+
+#[test]
+fn t_script_49_submit_background_async() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    // Submit the task; verify pending before spawn.
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+bg_called_49 = False
+def bg_task_49():
+    global bg_called_49
+    bg_called_49 = True
+handle_49 = rython.scheduler.submit_background(bg_task_49)
+",
+            None,
+            None,
+        )
+        .expect("submit_background setup");
+
+        let main = py.import("__main__").unwrap();
+        let pending: bool = main
+            .getattr("handle_49")
+            .unwrap()
+            .getattr("is_pending")
+            .unwrap()
+            .extract()
+            .unwrap();
+        assert!(pending, "background handle must start as pending");
+    });
+
+    // Spawn the task while the GIL is free so the rayon thread can acquire it.
+    flush_python_bg_tasks();
+
+    // Poll: each `Python::attach` releases the GIL on exit, giving the rayon
+    // thread a window to acquire it and run the Python callback.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let done = Python::attach(|py| {
+            flush_python_bg_completions(py);
+            py.import("__main__")
+                .unwrap()
+                .getattr("handle_49")
+                .unwrap()
+                .getattr("is_done")
+                .unwrap()
+                .extract::<bool>()
+                .unwrap()
+        });
+        if done {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "background task timed out");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    Python::attach(|py| {
+        let called: bool = py
+            .import("__main__")
+            .unwrap()
+            .getattr("bg_called_49")
+            .unwrap()
+            .extract()
+            .unwrap();
+        assert!(called, "background task function must have been called");
+    });
+}
+
+// ─── T-SCRIPT-50: run_sequential — fires on next flush ───────────────────────
+
+#[test]
+fn t_script_50_run_sequential_next_tick() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+seq_called_50 = False
+def seq_task_50():
+    global seq_called_50
+    seq_called_50 = True
+rython.scheduler.run_sequential(seq_task_50)
+",
+            None,
+            None,
+        )
+        .expect("run_sequential setup");
+
+        let main = py.import("__main__").unwrap();
+
+        // Not called yet
+        let called_before: bool = main.getattr("seq_called_50").unwrap().extract().unwrap();
+        assert!(!called_before, "sequential task must not run until flush");
+
+        // Run the sequential phase
+        flush_python_seq_tasks(py);
+
+        let called: bool = main.getattr("seq_called_50").unwrap().extract().unwrap();
+        assert!(called, "sequential task must run after flush_python_seq_tasks");
+
+        // A second flush must not re-run it (one-shot)
+        py.run(c"seq_called_50 = False", None, None).unwrap();
+        flush_python_seq_tasks(py);
+        let called_again: bool = main.getattr("seq_called_50").unwrap().extract().unwrap();
+        assert!(!called_again, "sequential task must not run a second time");
+    });
+}
+
+// ─── T-SCRIPT-51: JobHandle.on_complete fires after parallel task done ────────
+
+#[test]
+fn t_script_51_job_handle_on_complete_parallel() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+complete_called_51 = False
+def on_done_51():
+    global complete_called_51
+    complete_called_51 = True
+def task_51(): pass
+handle_51 = rython.scheduler.submit_parallel(task_51)
+handle_51.on_complete(on_done_51)
+",
+            None,
+            None,
+        )
+        .expect("on_complete setup");
+
+        let main = py.import("__main__").unwrap();
+
+        flush_python_par_tasks(py);
+
+        let called: bool = main.getattr("complete_called_51").unwrap().extract().unwrap();
+        assert!(called, "on_complete callback must fire after parallel task completes");
+    });
+}
+
+// ─── T-SCRIPT-52: JobHandle.is_failed when task raises an exception ──────────
+
+#[test]
+fn t_script_52_job_handle_failed_on_exception() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+def failing_task_52():
+    raise ValueError('boom 52')
+handle_52 = rython.scheduler.submit_parallel(failing_task_52)
+",
+            None,
+            None,
+        )
+        .expect("failing task setup");
+
+        let main = py.import("__main__").unwrap();
+
+        flush_python_par_tasks(py);
+
+        let failed: bool = main
+            .getattr("handle_52")
+            .unwrap()
+            .getattr("is_failed")
+            .unwrap()
+            .extract()
+            .unwrap();
+        assert!(failed, "handle must be marked failed when task raises");
+
+        let error: Option<String> = main
+            .getattr("handle_52")
+            .unwrap()
+            .getattr("error")
+            .unwrap()
+            .extract()
+            .unwrap();
+        assert!(error.is_some(), "error message must be populated for failed task");
+        assert!(
+            error.unwrap().contains("boom 52"),
+            "error message must include original exception text"
+        );
     });
 }

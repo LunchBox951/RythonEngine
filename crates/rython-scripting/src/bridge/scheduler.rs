@@ -5,8 +5,10 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
 use super::{
-    get_elapsed_secs, json_to_py_dict, recurring_callbacks_store, scene_store, timer_store,
-    PendingTimer,
+    get_elapsed_secs, job_handle::{JobHandlePy, JobState}, json_to_py_dict,
+    push_bg_request, push_par_request, push_seq_task,
+    recurring_callbacks_store, scene_store, task::{PythonBgRequest, PythonParRequest},
+    timer_store, PendingTimer,
 };
 
 // ─── Scheduler bridge ─────────────────────────────────────────────────────────
@@ -62,6 +64,31 @@ impl SchedulerBridge {
         });
 
         Ok(())
+    }
+
+    /// Submit *fn* as a background (fire-and-forget) task.  The callable runs
+    /// on the rayon thread pool; the returned `JobHandle` becomes done in a
+    /// future frame when `flush_python_bg_completions` is called.
+    fn submit_background(&self, py: Python<'_>, callback: Py<PyAny>) -> PyResult<Py<JobHandlePy>> {
+        let state = JobState::new();
+        push_bg_request(PythonBgRequest { callback, state: Arc::clone(&state) });
+        Py::new(py, JobHandlePy { state })
+    }
+
+    /// Submit *fn* as a parallel task.  The callable runs within the current
+    /// tick's parallel phase (still on the main thread under the GIL) and the
+    /// returned `JobHandle` is already done by the end of `flush_python_par_tasks`.
+    fn submit_parallel(&self, py: Python<'_>, callback: Py<PyAny>) -> PyResult<Py<JobHandlePy>> {
+        let state = JobState::new();
+        push_par_request(PythonParRequest { callback, state: Arc::clone(&state) });
+        Py::new(py, JobHandlePy { state })
+    }
+
+    /// Queue *fn* to run on the main thread during the next tick's sequential
+    /// phase.  No `JobHandle` is returned; use `on_timer` or events for
+    /// continuation logic.
+    fn run_sequential(&self, callback: Py<PyAny>) {
+        push_seq_task(callback);
     }
 
     fn __repr__(&self) -> String {

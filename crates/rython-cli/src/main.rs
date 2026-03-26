@@ -19,7 +19,8 @@ use rython_physics::PhysicsModule;
 use rython_renderer::{Camera, RendererConfig, RendererState};
 use rython_resources::ResourceManager;
 use rython_scripting::{
-    drain_draw_commands, drain_ui_draw_commands, flush_recurring_callbacks, flush_timers,
+    drain_draw_commands, drain_ui_draw_commands, flush_python_bg_completions, flush_python_bg_tasks,
+    flush_python_par_tasks, flush_python_seq_tasks, flush_recurring_callbacks, flush_timers,
     reset_quit_requested, set_active_audio, set_active_input, set_active_physics, set_active_ui,
     set_elapsed_secs, ScriptingConfig, ScriptingModule, was_quit_requested,
 };
@@ -222,9 +223,13 @@ fn run_headless(engine_config: EngineConfig, scripting_config: ScriptingConfig) 
     loop {
         set_elapsed_secs(start.elapsed().as_secs_f64());
         Python::attach(|py| {
+            flush_python_bg_completions(py);
+            flush_python_seq_tasks(py);
+            flush_python_par_tasks(py);
             flush_recurring_callbacks(py);
             flush_timers(py);
         });
+        flush_python_bg_tasks();
         scene.drain_commands();
         physics_world.lock().sync_step(&scene);
         {
@@ -311,9 +316,13 @@ impl App {
         // Update time and run Python callbacks
         set_elapsed_secs(self.start_time.elapsed().as_secs_f64());
         Python::attach(|py| {
+            flush_python_bg_completions(py);
+            flush_python_seq_tasks(py);
+            flush_python_par_tasks(py);
             flush_recurring_callbacks(py);
             flush_timers(py);
         });
+        flush_python_bg_tasks();
         self.scene.drain_commands();
 
         // Physics step

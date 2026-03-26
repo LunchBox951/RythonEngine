@@ -3979,6 +3979,7 @@ dependencies = [
  "pollster 0.3.0",
  "rython-core",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "wgpu",
 ]
@@ -4014,11 +4015,13 @@ dependencies = [
 name = "rython-scripting"
 version = "0.1.0"
 dependencies = [
+ "crossbeam-channel",
  "env_logger",
  "log",
  "notify",
  "parking_lot",
  "pyo3",
+ "rayon",
  "rython-audio",
  "rython-core",
  "rython-ecs",

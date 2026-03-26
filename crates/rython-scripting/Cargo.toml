@@ -20,7 +20,9 @@ rython-ui.workspace = true
 rython-physics.workspace = true
 rython-resources.workspace = true
 pyo3 = { version = "0.28", features = ["auto-initialize"] }
+crossbeam-channel.workspace = true
 parking_lot.workspace = true
+rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

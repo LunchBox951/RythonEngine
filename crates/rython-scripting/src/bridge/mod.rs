@@ -6,11 +6,13 @@ pub mod camera;
 pub mod engine;
 pub mod entity;
 pub mod input;
+pub mod job_handle;
 pub mod physics;
 pub mod renderer;
 pub mod resources;
 pub mod scene;
 pub mod scheduler;
+pub mod task;
 pub mod time;
 pub mod types;
 pub mod ui;
@@ -20,6 +22,7 @@ pub use audio::set_active_audio;
 pub use camera::CameraPy;
 pub use entity::EntityPy;
 pub use input::set_active_input;
+pub use job_handle::JobHandlePy;
 pub use physics::set_active_physics;
 pub use resources::set_active_resources;
 pub use types::{TransformPy, Vec3Py};
@@ -32,6 +35,8 @@ pub use ui::{drain_ui_draw_commands, set_active_ui};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
+
+use crossbeam_channel::{Receiver, Sender};
 
 use parking_lot::Mutex;
 use pyo3::exceptions::PyValueError;
@@ -165,6 +170,116 @@ pub fn flush_timers(py: Python<'_>) {
     }
 }
 
+// ─── Python job queues ────────────────────────────────────────────────────────
+//
+// Three static queues buffer Python-submitted tasks between the script phase
+// (where tasks are submitted) and the engine tick phases (where they run).
+
+use task::{PythonBgRequest, PythonParRequest};
+
+static PYTHON_BG_QUEUE: OnceLock<Arc<Mutex<Vec<PythonBgRequest>>>> = OnceLock::new();
+static PYTHON_PAR_QUEUE: OnceLock<Arc<Mutex<Vec<PythonParRequest>>>> = OnceLock::new();
+static PYTHON_SEQ_QUEUE: OnceLock<Arc<Mutex<Vec<Py<PyAny>>>>> = OnceLock::new();
+
+fn bg_queue() -> &'static Arc<Mutex<Vec<PythonBgRequest>>> {
+    PYTHON_BG_QUEUE.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+}
+
+fn par_queue() -> &'static Arc<Mutex<Vec<PythonParRequest>>> {
+    PYTHON_PAR_QUEUE.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+}
+
+fn seq_queue() -> &'static Arc<Mutex<Vec<Py<PyAny>>>> {
+    PYTHON_SEQ_QUEUE.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+}
+
+// ─── Background completion channel ────────────────────────────────────────────
+
+struct BgCompletionChannel {
+    tx: Sender<(Arc<job_handle::JobState>, Result<(), String>)>,
+    rx: Receiver<(Arc<job_handle::JobState>, Result<(), String>)>,
+}
+
+// SAFETY: Sender/Receiver<T> are Send + Sync when T: Send.
+// Arc<JobState> is Send + Sync; String is Send.
+unsafe impl Sync for BgCompletionChannel {}
+
+static BG_CHANNEL: OnceLock<BgCompletionChannel> = OnceLock::new();
+
+fn bg_channel() -> &'static BgCompletionChannel {
+    BG_CHANNEL.get_or_init(|| {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        BgCompletionChannel { tx, rx }
+    })
+}
+
+pub(crate) fn push_bg_request(req: PythonBgRequest) {
+    bg_queue().lock().push(req);
+}
+
+pub(crate) fn push_par_request(req: PythonParRequest) {
+    par_queue().lock().push(req);
+}
+
+pub(crate) fn push_seq_task(callback: Py<PyAny>) {
+    seq_queue().lock().push(callback);
+}
+
+/// Spawn all queued background tasks onto the global rayon thread pool.
+/// Each task acquires the GIL independently when it runs.  Call once per tick,
+/// before `flush_python_bg_completions`.
+pub fn flush_python_bg_tasks() {
+    let requests: Vec<PythonBgRequest> = std::mem::take(&mut bg_queue().lock());
+    let tx = bg_channel().tx.clone();
+    for req in requests {
+        let state = Arc::clone(&req.state);
+        let callback = req.callback;
+        let tx = tx.clone();
+        rayon::spawn(move || {
+            let result = Python::attach(|py| {
+                callback.bind(py).call0().map(|_| ()).map_err(|e| e.to_string())
+            });
+            let _ = tx.send((state, result));
+        });
+    }
+}
+
+/// Run all queued parallel tasks on the main thread (GIL held).
+/// Tasks complete within the current tick and their `JobHandle` is immediately
+/// marked done.
+pub fn flush_python_par_tasks(py: Python<'_>) {
+    let requests: Vec<PythonParRequest> = std::mem::take(&mut par_queue().lock());
+    for req in requests {
+        let result = req.callback.bind(py).call0();
+        match result {
+            Ok(_) => req.state.complete(py),
+            Err(e) => req.state.fail(py, e.to_string()),
+        }
+    }
+}
+
+/// Run all sequential tasks queued during the previous tick.
+pub fn flush_python_seq_tasks(py: Python<'_>) {
+    let tasks: Vec<Py<PyAny>> = std::mem::take(&mut seq_queue().lock());
+    for task in tasks {
+        if let Err(e) = task.bind(py).call0() {
+            e.print_and_set_sys_last_vars(py);
+        }
+    }
+}
+
+/// Process completed background tasks: update `JobHandle` state and fire
+/// `on_complete` callbacks.  Call once per tick.
+pub fn flush_python_bg_completions(py: Python<'_>) {
+    let rx = &bg_channel().rx;
+    while let Ok((state, result)) = rx.try_recv() {
+        match result {
+            Ok(()) => state.complete(py),
+            Err(e) => state.fail(py, e),
+        }
+    }
+}
+
 // ─── Stub namespace ───────────────────────────────────────────────────────────
 
 #[pyclass(name = "SubModule")]
@@ -265,6 +380,7 @@ pub fn ensure_rython_module(py: Python<'_>, scene: Arc<Scene>) -> PyResult<()> {
     rython.add_class::<types::TransformPy>()?;
     rython.add_class::<entity::EntityPy>()?;
     rython.add_class::<resources::AssetHandlePy>()?;
+    rython.add_class::<job_handle::JobHandlePy>()?;
 
     let scene_bridge = Py::new(py, scene::SceneBridge {})?;
     rython.add("scene", scene_bridge)?;
