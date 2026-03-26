@@ -566,6 +566,316 @@ fn t_err_04_cancelled_on_owner_unload() {
     assert!(err.to_string().contains("cancel"));
 }
 
+// ─── T-SCHED-16: Recurring Parallel Persistence ──────────────────────────────
+
+#[test]
+fn t_sched_16_recurring_parallel_persistence() {
+    let mut sched = TaskScheduler::new(&SchedulerConfig {
+        target_fps: 1000,
+        parallel_threads: Some(2),
+        spin_threshold_us: 0,
+    });
+
+    let counter = Arc::new(AtomicU32::new(0));
+    let c = Arc::clone(&counter);
+
+    sched.register_recurring_parallel(
+        Box::new(move || {
+            c.fetch_add(1, Ordering::Relaxed);
+            true
+        }),
+        priorities::GAME_UPDATE,
+        1,
+    );
+
+    for _ in 0..20 {
+        sched.tick().unwrap();
+    }
+
+    assert_eq!(counter.load(Ordering::Relaxed), 20, "recurring parallel should run every tick");
+}
+
+// ─── T-SCHED-17: Recurring Parallel Self-Termination ─────────────────────────
+
+#[test]
+fn t_sched_17_recurring_parallel_self_termination() {
+    let mut sched = TaskScheduler::new(&SchedulerConfig {
+        target_fps: 1000,
+        parallel_threads: Some(2),
+        spin_threshold_us: 0,
+    });
+
+    let counter = Arc::new(AtomicU32::new(0));
+    let c = Arc::clone(&counter);
+
+    sched.register_recurring_parallel(
+        Box::new(move || {
+            let n = c.fetch_add(1, Ordering::Relaxed) + 1;
+            n < 5
+        }),
+        priorities::GAME_UPDATE,
+        1,
+    );
+
+    for _ in 0..30 {
+        sched.tick().unwrap();
+    }
+
+    assert_eq!(counter.load(Ordering::Relaxed), 5, "recurring parallel should stop after self-termination");
+}
+
+// ─── T-SCHED-18: Empty Tick Returns Ok ───────────────────────────────────────
+
+#[test]
+fn t_sched_18_empty_tick_returns_ok() {
+    let mut sched = default_scheduler();
+    for _ in 0..5 {
+        assert!(sched.tick().is_ok(), "empty tick should return Ok");
+    }
+}
+
+// ─── T-SCHED-19: cancel_owned Clears Parallel Queue ──────────────────────────
+
+#[test]
+fn t_sched_19_cancel_owned_clears_parallel_queue() {
+    let mut sched = TaskScheduler::new(&SchedulerConfig {
+        target_fps: 1000,
+        parallel_threads: Some(2),
+        spin_threshold_us: 0,
+    });
+
+    let owner: u64 = 7;
+    let ran = Arc::new(AtomicU32::new(0));
+    let other_ran = Arc::new(AtomicU32::new(0));
+
+    for _ in 0..5 {
+        let r = Arc::clone(&ran);
+        sched.submit_parallel(
+            Box::new(move || {
+                r.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }),
+            priorities::GAME_UPDATE,
+            owner,
+        );
+    }
+
+    let r = Arc::clone(&other_ran);
+    sched.submit_parallel(
+        Box::new(move || {
+            r.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }),
+        priorities::GAME_UPDATE,
+        owner + 1,
+    );
+
+    sched.cancel_owned(owner);
+    sched.tick().unwrap();
+
+    assert_eq!(ran.load(Ordering::Relaxed), 0, "cancelled parallel tasks should not run");
+    assert_eq!(other_ran.load(Ordering::Relaxed), 1, "other owner's parallel task should run");
+}
+
+// ─── T-SCHED-20: cancel_owned Clears Recurring Parallel ──────────────────────
+
+#[test]
+fn t_sched_20_cancel_owned_clears_recurring_parallel() {
+    let mut sched = TaskScheduler::new(&SchedulerConfig {
+        target_fps: 1000,
+        parallel_threads: Some(2),
+        spin_threshold_us: 0,
+    });
+
+    let owner: u64 = 11;
+    let ran = Arc::new(AtomicU32::new(0));
+    let other_ran = Arc::new(AtomicU32::new(0));
+
+    let r = Arc::clone(&ran);
+    sched.register_recurring_parallel(
+        Box::new(move || {
+            r.fetch_add(1, Ordering::Relaxed);
+            true
+        }),
+        priorities::GAME_UPDATE,
+        owner,
+    );
+
+    let r2 = Arc::clone(&other_ran);
+    sched.register_recurring_parallel(
+        Box::new(move || {
+            r2.fetch_add(1, Ordering::Relaxed);
+            true
+        }),
+        priorities::GAME_UPDATE,
+        owner + 1,
+    );
+
+    sched.cancel_owned(owner);
+
+    for _ in 0..5 {
+        sched.tick().unwrap();
+    }
+
+    assert_eq!(ran.load(Ordering::Relaxed), 0, "cancelled recurring parallel should not run");
+    assert_eq!(other_ran.load(Ordering::Relaxed), 5, "other owner's recurring parallel should keep running");
+}
+
+// ─── T-SCHED-21: Group with Zero Members Fires Immediately on Seal ───────────
+
+#[test]
+fn t_sched_21_group_zero_members_fires_on_seal() {
+    let mut sched = TaskScheduler::new(&SchedulerConfig {
+        target_fps: 1000,
+        parallel_threads: None,
+        spin_threshold_us: 0,
+    });
+
+    let fired = Arc::new(AtomicBool::new(false));
+    let f = Arc::clone(&fired);
+
+    let group_id = sched.create_group(
+        Box::new(move |results| {
+            f.store(true, Ordering::Relaxed);
+            assert!(results.is_empty(), "zero-member group should have empty results");
+            Ok(())
+        }),
+        1,
+    );
+
+    sched.group_seal(group_id);
+
+    assert!(fired.load(Ordering::Relaxed), "zero-member group callback should fire synchronously on seal");
+}
+
+// ─── T-SCHED-22: Multiple Concurrent Remote Senders ──────────────────────────
+
+#[test]
+fn t_sched_22_multiple_concurrent_remote_senders() {
+    let mut sched = TaskScheduler::new(&SchedulerConfig {
+        target_fps: 1000,
+        parallel_threads: None,
+        spin_threshold_us: 0,
+    });
+
+    let counter = Arc::new(AtomicU32::new(0));
+    let n_threads = 8usize;
+    let tasks_per_thread = 10usize;
+
+    let handles: Vec<_> = (0..n_threads)
+        .map(|i| {
+            let remote = sched.remote_sender();
+            let c = Arc::clone(&counter);
+            std::thread::spawn(move || {
+                for _ in 0..tasks_per_thread {
+                    let cc = Arc::clone(&c);
+                    remote.submit(
+                        Box::new(move || {
+                            cc.fetch_add(1, Ordering::Relaxed);
+                            Ok(())
+                        }),
+                        priorities::GAME_UPDATE,
+                        i as u64,
+                    );
+                }
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    // All tasks drained across a few ticks
+    for _ in 0..5 {
+        sched.tick().unwrap();
+    }
+
+    assert_eq!(
+        counter.load(Ordering::Relaxed),
+        (n_threads * tasks_per_thread) as u32,
+        "all remote tasks from all threads should have run"
+    );
+}
+
+// ─── T-SCHED-23: Parallel Tasks with Single-Thread Pool Complete ──────────────
+
+#[test]
+fn t_sched_23_parallel_single_thread_pool() {
+    let mut sched = TaskScheduler::new(&SchedulerConfig {
+        target_fps: 1000,
+        parallel_threads: Some(1),
+        spin_threshold_us: 0,
+    });
+
+    let counter = Arc::new(AtomicU32::new(0));
+
+    for _ in 0..10 {
+        let c = Arc::clone(&counter);
+        sched.submit_parallel(
+            Box::new(move || {
+                c.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }),
+            priorities::GAME_UPDATE,
+            1,
+        );
+    }
+
+    sched.tick().unwrap();
+
+    assert_eq!(
+        counter.load(Ordering::Relaxed),
+        10,
+        "all parallel tasks should complete even with a single-thread pool"
+    );
+}
+
+// ─── T-SCHED-24: cancel_owned Is a No-op When Nothing Queued ─────────────────
+
+#[test]
+fn t_sched_24_cancel_owned_empty_is_noop() {
+    let mut sched = default_scheduler();
+    sched.cancel_owned(999);
+    sched.cancel_owned(0);
+    assert!(sched.tick().is_ok(), "tick after no-op cancel should return Ok");
+}
+
+// ─── T-SCHED-25: Background Callback Returning Err Does Not Crash ────────────
+
+#[test]
+fn t_sched_25_background_callback_err_does_not_crash() {
+    let mut sched = TaskScheduler::new(&SchedulerConfig {
+        target_fps: 1000,
+        parallel_threads: None,
+        spin_threshold_us: 0,
+    });
+
+    let cb_called = Arc::new(AtomicBool::new(false));
+    let c = Arc::clone(&cb_called);
+
+    sched.submit_background(
+        || 0u32,
+        Some(move |_result: Result<u32, EngineError>| {
+            c.store(true, Ordering::Relaxed);
+            Err(EngineError::Config("intentional callback error".to_string()))
+        }),
+        priorities::IDLE,
+        1,
+    );
+
+    for _ in 0..20 {
+        let result = sched.tick();
+        assert!(result.is_ok(), "scheduler must survive an Err-returning callback");
+        if cb_called.load(Ordering::Relaxed) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    assert!(cb_called.load(Ordering::Relaxed), "callback should have been invoked");
+}
+
 // ─── T-SCHED-01: Frame Pacing Accuracy at 60 FPS (reduced ticks for CI) ──────
 
 #[test]
