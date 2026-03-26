@@ -587,3 +587,713 @@ fn t_ecs_24_render_invisible_entity() {
     let mesh_cmds: Vec<_> = cmds.iter().filter(|c| matches!(c, DrawCommand::DrawMesh { .. })).collect();
     assert_eq!(mesh_cmds.len(), 0, "zero DrawCommands for invisible entity");
 }
+
+// ── T-ECS-25: Despawn Non-Existent Entity ────────────────────────────────────
+
+#[test]
+fn t_ecs_25_despawn_nonexistent_entity() {
+    let scene = Scene::new();
+    // queue_despawn on a totally unknown ID — must not panic
+    scene.queue_despawn(EntityId(999_999));
+    scene.drain_commands();
+    assert_eq!(scene.entity_count(), 0);
+}
+
+// ── T-ECS-26: Double Despawn ──────────────────────────────────────────────────
+
+#[test]
+fn t_ecs_26_double_despawn() {
+    let scene = Scene::new();
+    let h = scene.queue_spawn(vec![]);
+    scene.drain_commands();
+    let entity = h.get().unwrap();
+
+    scene.queue_despawn(entity);
+    scene.drain_commands();
+    assert!(!scene.entity_exists(entity));
+
+    // Second despawn of already-gone entity — no panic
+    scene.queue_despawn(entity);
+    scene.drain_commands();
+}
+
+// ── T-ECS-27: Component Overwrite ────────────────────────────────────────────
+
+#[test]
+fn t_ecs_27_component_overwrite() {
+    let scene = Scene::new();
+    let h = scene.queue_spawn(vec![comp(TransformComponent { x: 1.0, ..Default::default() })]);
+    scene.drain_commands();
+    let entity = h.get().unwrap();
+
+    scene.queue_attach(entity, TransformComponent { x: 99.0, ..Default::default() });
+    scene.drain_commands();
+
+    let t = scene.components.get::<TransformComponent>(entity).unwrap();
+    assert_eq!(t.x, 99.0, "second attach must overwrite first");
+    assert_eq!(scene.components.count::<TransformComponent>(), 1, "no duplicate");
+}
+
+// ── T-ECS-28: Get/Has/Remove on Missing Entity ───────────────────────────────
+
+#[test]
+fn t_ecs_28_ops_on_missing_entity() {
+    let scene = Scene::new();
+    let bogus = EntityId(888_888);
+
+    assert!(!scene.components.has::<TransformComponent>(bogus));
+    assert!(scene.components.get::<TransformComponent>(bogus).is_none());
+    let mutated = scene.components.get_mut::<TransformComponent, _>(bogus, |t| t.x = 5.0);
+    assert!(!mutated, "get_mut returns false for missing entity");
+    let removed = scene.components.remove::<TransformComponent>(bogus);
+    assert!(!removed, "remove returns false for missing entity");
+}
+
+// ── T-ECS-29: Attach to Non-Existent Entity is Ignored ───────────────────────
+
+#[test]
+fn t_ecs_29_attach_to_nonexistent_entity_ignored() {
+    let scene = Scene::new();
+    let h = scene.queue_spawn(vec![]);
+    scene.drain_commands();
+    let entity = h.get().unwrap();
+
+    scene.queue_despawn(entity);
+    scene.drain_commands();
+
+    // Attach after despawn — drain's entity_exists check drops it silently
+    scene.queue_attach(entity, TransformComponent::default());
+    scene.drain_commands();
+
+    assert!(!scene.components.has::<TransformComponent>(entity),
+        "attach to dead entity must not store component");
+}
+
+// ── T-ECS-30: Detach Non-Existent Component ──────────────────────────────────
+
+#[test]
+fn t_ecs_30_detach_nonexistent_component() {
+    let scene = Scene::new();
+    let h = scene.queue_spawn(vec![]);
+    scene.drain_commands();
+    let entity = h.get().unwrap();
+
+    // MeshComponent was never attached — must not panic
+    scene.queue_detach::<MeshComponent>(entity);
+    scene.drain_commands();
+
+    assert!(scene.entity_exists(entity), "entity unaffected");
+}
+
+// ── T-ECS-31: Empty Drain is a No-Op; Double Drain Safe ─────────────────────
+
+#[test]
+fn t_ecs_31_empty_drain_noop() {
+    let scene = Scene::new();
+    let h = scene.queue_spawn(vec![]);
+    scene.drain_commands();
+    let entity = h.get().unwrap();
+
+    // Second drain with empty queue must not panic or change state
+    scene.drain_commands();
+    scene.drain_commands();
+    assert!(scene.entity_exists(entity));
+    assert_eq!(scene.entity_count(), 1);
+}
+
+// ── T-ECS-32: CommandQueue len/is_empty ──────────────────────────────────────
+
+#[test]
+fn t_ecs_32_command_queue_len_is_empty() {
+    let scene = Scene::new();
+    assert!(scene.commands.is_empty());
+    assert_eq!(scene.commands.len(), 0);
+
+    scene.queue_spawn_anon(vec![]);
+    scene.queue_spawn_anon(vec![]);
+    assert_eq!(scene.commands.len(), 2);
+    assert!(!scene.commands.is_empty());
+
+    scene.drain_commands();
+    assert!(scene.commands.is_empty());
+    assert_eq!(scene.commands.len(), 0);
+}
+
+// ── T-ECS-33: Hierarchy — Reparent Child ─────────────────────────────────────
+
+#[test]
+fn t_ecs_33_hierarchy_reparent() {
+    let scene = Scene::new();
+    let ha = scene.queue_spawn(vec![]);
+    let hb = scene.queue_spawn(vec![]);
+    let hc = scene.queue_spawn(vec![]);
+    scene.drain_commands();
+    let a = ha.get().unwrap();
+    let b = hb.get().unwrap();
+    let c = hc.get().unwrap();
+
+    scene.queue_set_parent(c, a);
+    scene.drain_commands();
+
+    scene.queue_set_parent(c, b);
+    scene.drain_commands();
+
+    assert_eq!(scene.hierarchy.get_parent(c), Some(b), "parent updated to b");
+    assert!(scene.hierarchy.get_children(b).contains(&c), "c in b's children");
+    assert!(!scene.hierarchy.get_children(a).contains(&c), "c removed from a's children");
+}
+
+// ── T-ECS-34: Hierarchy — Clear Parent With No Parent ────────────────────────
+
+#[test]
+fn t_ecs_34_hierarchy_clear_parent_no_parent() {
+    let scene = Scene::new();
+    let h = scene.queue_spawn(vec![]);
+    scene.drain_commands();
+    let entity = h.get().unwrap();
+
+    // clear_parent on an entity that has no parent — no panic
+    scene.queue_clear_parent(entity);
+    scene.drain_commands();
+
+    assert_eq!(scene.hierarchy.get_parent(entity), None);
+}
+
+// ── T-ECS-35: Hierarchy — Ancestor Chain on Root ─────────────────────────────
+
+#[test]
+fn t_ecs_35_ancestor_chain_root() {
+    let scene = Scene::new();
+    let h = scene.queue_spawn(vec![]);
+    scene.drain_commands();
+    let entity = h.get().unwrap();
+
+    let (chain, exceeded) = scene.hierarchy.ancestor_chain(entity);
+    assert_eq!(chain.len(), 1);
+    assert_eq!(chain[0], entity);
+    assert!(!exceeded, "root must not exceed depth");
+}
+
+// ── T-ECS-36: Hierarchy — Ancestor Chain Multi-Level ─────────────────────────
+
+#[test]
+fn t_ecs_36_ancestor_chain_multi_level() {
+    let scene = Scene::new();
+    let ha = scene.queue_spawn(vec![]);
+    let hb = scene.queue_spawn(vec![]);
+    let hc = scene.queue_spawn(vec![]);
+    scene.drain_commands();
+    let a = ha.get().unwrap();
+    let b = hb.get().unwrap();
+    let c = hc.get().unwrap();
+
+    // a <- b <- c
+    scene.queue_set_parent(b, a);
+    scene.queue_set_parent(c, b);
+    scene.drain_commands();
+
+    let (chain, exceeded) = scene.hierarchy.ancestor_chain(c);
+    assert_eq!(chain, vec![c, b, a]);
+    assert!(!exceeded);
+}
+
+// ── T-ECS-37: Event Bus — Entity Despawned Event Fires ───────────────────────
+
+#[test]
+fn t_ecs_37_event_bus_entity_despawned_fires() {
+    let scene = Scene::new();
+    let despawned_ids = Arc::new(Mutex::new(Vec::<u64>::new()));
+    let ids_c = despawned_ids.clone();
+
+    scene.events.subscribe_entity_despawned(move |eid| {
+        ids_c.lock().unwrap().push(eid);
+    });
+
+    let h = scene.queue_spawn(vec![]);
+    scene.drain_commands();
+    let entity = h.get().unwrap();
+
+    scene.queue_despawn(entity);
+    scene.drain_commands();
+
+    let ids = despawned_ids.lock().unwrap();
+    assert_eq!(ids.len(), 1);
+    assert_eq!(ids[0], entity.0);
+}
+
+// ── T-ECS-38: Event Bus — Unsubscribe Entity Despawned ───────────────────────
+
+#[test]
+fn t_ecs_38_event_bus_unsubscribe_entity_despawned() {
+    let scene = Scene::new();
+    let count = Arc::new(Mutex::new(0u32));
+    let count_c = count.clone();
+
+    let sub_id = scene.events.subscribe_entity_despawned(move |_eid| {
+        *count_c.lock().unwrap() += 1;
+    });
+    scene.events.unsubscribe_entity_despawned(sub_id);
+
+    let h = scene.queue_spawn(vec![]);
+    scene.drain_commands();
+    let entity = h.get().unwrap();
+    scene.queue_despawn(entity);
+    scene.drain_commands();
+
+    assert_eq!(*count.lock().unwrap(), 0, "handler must not fire after unsubscribe");
+}
+
+// ── T-ECS-39: Event Bus — Emit With No Subscribers ───────────────────────────
+
+#[test]
+fn t_ecs_39_event_bus_emit_no_subscribers() {
+    let scene = Scene::new();
+    // All three paths: named, entity_spawned, entity_despawned — no panic
+    scene.emit("UnknownEvent", serde_json::json!({}));
+    scene.events.emit_entity_spawned(1);
+    scene.events.emit_entity_despawned(1);
+}
+
+// ── T-ECS-40: Scene Clear Resets Everything ──────────────────────────────────
+
+#[test]
+fn t_ecs_40_scene_clear_resets_all_state() {
+    let scene = Scene::new();
+    let hp = scene.queue_spawn(vec![comp(TransformComponent::default())]);
+    let hc = scene.queue_spawn(vec![]);
+    scene.drain_commands();
+    let parent = hp.get().unwrap();
+    let child = hc.get().unwrap();
+
+    scene.queue_set_parent(child, parent);
+    scene.drain_commands();
+
+    scene.clear();
+
+    assert_eq!(scene.entity_count(), 0);
+    assert!(!scene.entity_exists(parent));
+    assert!(!scene.components.has::<TransformComponent>(parent));
+    assert_eq!(scene.hierarchy.get_parent(child), None);
+    assert!(scene.hierarchy.get_children(parent).is_empty());
+}
+
+// ── T-ECS-41: Load JSON With Unknown Component ───────────────────────────────
+
+#[test]
+fn t_ecs_41_load_json_unknown_component_skipped() {
+    let scene = Scene::new();
+    let json = serde_json::json!({
+        "entities": [{
+            "id": 77777u64,
+            "parent": null,
+            "components": [
+                { "type": "TransformComponent", "data": { "x": 5.0, "y": 0.0, "z": 0.0,
+                  "rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0,
+                  "scale_x": 1.0, "scale_y": 1.0, "scale_z": 1.0 } },
+                { "type": "FictionalComponent", "data": { "foo": 42 } }
+            ]
+        }]
+    });
+
+    scene.load_json(&json);
+    let eid = EntityId(77777);
+    assert!(scene.entity_exists(eid), "entity created despite unknown component");
+    let t = scene.components.get::<TransformComponent>(eid).unwrap();
+    assert_eq!(t.x, 5.0, "known component loaded correctly");
+}
+
+// ── T-ECS-42: Load Empty Entities Array ──────────────────────────────────────
+
+#[test]
+fn t_ecs_42_load_empty_entities_array() {
+    let scene = Scene::new();
+    scene.queue_spawn_anon(vec![]);
+    scene.drain_commands();
+    assert_eq!(scene.entity_count(), 1);
+
+    scene.load_json(&serde_json::json!({ "entities": [] }));
+    assert_eq!(scene.entity_count(), 0, "loading empty array clears all entities");
+}
+
+// ── T-ECS-43: EntityId Counter Past Loaded IDs ───────────────────────────────
+
+#[test]
+fn t_ecs_43_entity_id_counter_past_loaded() {
+    let high_id = 0xCAFE_0000u64;
+    EntityId::ensure_counter_past(high_id);
+    let next = EntityId::next();
+    assert!(next.0 > high_id,
+        "next ID {} must be > loaded max {}", next.0, high_id);
+}
+
+// ── T-ECS-44: ComponentStorage — for_each ────────────────────────────────────
+
+#[test]
+fn t_ecs_44_for_each() {
+    let scene = Scene::new();
+    for i in 0..5usize {
+        scene.queue_spawn_anon(vec![comp(TransformComponent { x: i as f32, ..Default::default() })]);
+    }
+    scene.drain_commands();
+
+    let mut xs: Vec<f32> = Vec::new();
+    scene.components.for_each::<TransformComponent, _>(|_eid, t| xs.push(t.x));
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert_eq!(xs, vec![0.0, 1.0, 2.0, 3.0, 4.0]);
+}
+
+// ── T-ECS-45: ComponentStorage — entities_with ───────────────────────────────
+
+#[test]
+fn t_ecs_45_entities_with() {
+    let scene = Scene::new();
+    let ha = scene.queue_spawn(vec![comp(TransformComponent::default())]);
+    let hb = scene.queue_spawn(vec![comp(TransformComponent::default()), comp(MeshComponent::default())]);
+    let _hc = scene.queue_spawn(vec![comp(MeshComponent::default())]);
+    scene.drain_commands();
+    let ea = ha.get().unwrap();
+    let eb = hb.get().unwrap();
+
+    let with_t = scene.components.entities_with::<TransformComponent>();
+    assert_eq!(with_t.len(), 2);
+    assert!(with_t.contains(&ea));
+    assert!(with_t.contains(&eb));
+
+    let with_m = scene.components.entities_with::<MeshComponent>();
+    assert_eq!(with_m.len(), 2);
+}
+
+// ── T-ECS-46: ComponentStorage — get_ref Callback ────────────────────────────
+
+#[test]
+fn t_ecs_46_component_get_ref() {
+    let scene = Scene::new();
+    let h = scene.queue_spawn(vec![comp(TagComponent { tags: vec!["a".into(), "b".into()] })]);
+    scene.drain_commands();
+    let entity = h.get().unwrap();
+
+    let len = scene.components.get_ref::<TagComponent, _, usize>(entity, |t| t.tags.len());
+    assert_eq!(len, Some(2));
+
+    let missing = scene.components.get_ref::<TransformComponent, _, f32>(entity, |t| t.x);
+    assert!(missing.is_none());
+}
+
+// ── T-ECS-47: ComponentStorage — snapshot_entity ─────────────────────────────
+
+#[test]
+fn t_ecs_47_snapshot_entity() {
+    let scene = Scene::new();
+    let h = scene.queue_spawn(vec![
+        comp(TransformComponent::default()),
+        comp(TagComponent { tags: vec!["snap".into()] }),
+    ]);
+    scene.drain_commands();
+    let entity = h.get().unwrap();
+
+    let snapshot = scene.components.snapshot_entity(entity);
+    assert_eq!(snapshot.len(), 2);
+
+    let type_names: HashSet<&'static str> = snapshot.iter().map(|(n, _)| *n).collect();
+    assert!(type_names.contains("TransformComponent"));
+    assert!(type_names.contains("TagComponent"));
+}
+
+// ── T-ECS-48: spawn_immediate Bypasses Queue ─────────────────────────────────
+
+#[test]
+fn t_ecs_48_spawn_immediate() {
+    let scene = Scene::new();
+    let entity = scene.spawn_immediate(vec![comp(TransformComponent { x: 7.0, ..Default::default() })]);
+
+    // Entity exists without any drain
+    assert!(scene.entity_exists(entity));
+    let t = scene.components.get::<TransformComponent>(entity).unwrap();
+    assert_eq!(t.x, 7.0);
+}
+
+// ── T-ECS-49: spawn_with_id Restores Specific ID ─────────────────────────────
+
+#[test]
+fn t_ecs_49_spawn_with_id() {
+    let scene = Scene::new();
+    let specific = EntityId(0xABCD_1234);
+    scene.spawn_with_id(specific, vec![comp(TagComponent { tags: vec!["restored".into()] })]);
+
+    assert!(scene.entity_exists(specific));
+    let tag = scene.components.get::<TagComponent>(specific).unwrap();
+    assert_eq!(tag.tags[0], "restored");
+}
+
+// ── T-ECS-50: despawn_immediate Bypasses Queue ───────────────────────────────
+
+#[test]
+fn t_ecs_50_despawn_immediate() {
+    let scene = Scene::new();
+    let entity = scene.spawn_immediate(vec![comp(TransformComponent::default())]);
+    assert!(scene.entity_exists(entity));
+
+    scene.despawn_immediate(entity);
+
+    assert!(!scene.entity_exists(entity));
+    assert!(!scene.components.has::<TransformComponent>(entity));
+}
+
+// ── T-ECS-51: Multiple Children Order Preserved ──────────────────────────────
+
+#[test]
+fn t_ecs_51_multiple_children_order_preserved() {
+    let scene = Scene::new();
+    let hp = scene.queue_spawn(vec![]);
+    scene.drain_commands();
+    let parent = hp.get().unwrap();
+
+    let mut child_ids = Vec::new();
+    for _ in 0..5 {
+        let hc = scene.queue_spawn(vec![]);
+        scene.drain_commands();
+        let child = hc.get().unwrap();
+        scene.queue_set_parent(child, parent);
+        scene.drain_commands();
+        child_ids.push(child);
+    }
+
+    let children = scene.hierarchy.get_children(parent);
+    assert_eq!(children.len(), 5);
+    assert_eq!(children, child_ids, "insertion order preserved");
+}
+
+// ── T-ECS-52: remove_all_for With No Components ──────────────────────────────
+
+#[test]
+fn t_ecs_52_remove_all_for_no_components() {
+    let scene = Scene::new();
+    let entity = scene.spawn_immediate(vec![]);
+    // remove_all_for on entity with no components — no panic
+    scene.components.remove_all_for(entity);
+    assert!(scene.entity_exists(entity), "entity record unaffected");
+}
+
+// ── T-ECS-53: Handler Receives Correct Event Name ────────────────────────────
+
+#[test]
+fn t_ecs_53_handler_receives_correct_event_name() {
+    let scene = Scene::new();
+    let received_name = Arc::new(Mutex::new(String::new()));
+    let name_c = received_name.clone();
+
+    scene.subscribe("MyEvent", move |name, _payload| {
+        *name_c.lock().unwrap() = name.to_string();
+    });
+
+    scene.emit("MyEvent", serde_json::json!({}));
+
+    assert_eq!(*received_name.lock().unwrap(), "MyEvent");
+}
+
+// ── T-ECS-54: Despawn Middle of Chain ────────────────────────────────────────
+
+#[test]
+fn t_ecs_54_despawn_middle_of_chain() {
+    let scene = Scene::new();
+    let ha = scene.queue_spawn(vec![]);
+    let hb = scene.queue_spawn(vec![]);
+    let hc = scene.queue_spawn(vec![]);
+    scene.drain_commands();
+    let a = ha.get().unwrap();
+    let b = hb.get().unwrap();
+    let c = hc.get().unwrap();
+
+    // a <- b <- c
+    scene.queue_set_parent(b, a);
+    scene.queue_set_parent(c, b);
+    scene.drain_commands();
+
+    // Despawn b (middle)
+    scene.queue_despawn(b);
+    scene.drain_commands();
+
+    assert!(!scene.entity_exists(b), "b despawned");
+    assert!(scene.entity_exists(a), "a still alive");
+    assert!(scene.entity_exists(c), "c still alive");
+
+    // c is orphaned (b removed from hierarchy)
+    assert_eq!(scene.hierarchy.get_parent(c), None, "c orphaned");
+    // a has no children (b removed)
+    assert!(scene.hierarchy.get_children(a).is_empty(), "a has no children");
+}
+
+// ── T-ECS-55: Entity Spawned Event Fires Multiple Times ──────────────────────
+
+#[test]
+fn t_ecs_55_entity_spawned_fires_multiple_times() {
+    let scene = Scene::new();
+    let count = Arc::new(Mutex::new(0u32));
+    let count_c = count.clone();
+
+    scene.events.subscribe_entity_spawned(move |_eid| {
+        *count_c.lock().unwrap() += 1;
+    });
+
+    for _ in 0..3 {
+        scene.queue_spawn_anon(vec![]);
+        scene.drain_commands();
+    }
+
+    assert_eq!(*count.lock().unwrap(), 3);
+}
+
+// ── T-ECS-56: queue_spawn_anon — Creates Entities ────────────────────────────
+
+#[test]
+fn t_ecs_56_queue_spawn_anon_creates_entities() {
+    let scene = Scene::new();
+    for _ in 0..7 {
+        scene.queue_spawn_anon(vec![comp(TransformComponent::default())]);
+    }
+    scene.drain_commands();
+    assert_eq!(scene.entity_count(), 7);
+    assert_eq!(scene.components.count::<TransformComponent>(), 7);
+}
+
+// ── T-ECS-57: Save/Load All 6 Component Types ────────────────────────────────
+
+#[test]
+fn t_ecs_57_scene_roundtrip_all_component_types() {
+    let scene = Scene::new();
+    let h = scene.queue_spawn(vec![
+        comp(TransformComponent { x: 1.0, y: 2.0, z: 3.0, ..Default::default() }),
+        comp(MeshComponent { mesh_id: "m".into(), texture_id: "t".into(), visible: true, ..Default::default() }),
+        comp(TagComponent { tags: vec!["all".into()] }),
+        comp(RigidBodyComponent { mass: 5.0, ..Default::default() }),
+        comp(ColliderComponent { shape: "capsule".into(), size: [1.0, 2.0, 1.0], is_trigger: false }),
+        comp(BillboardComponent { asset_id: "b.png".into(), width: 1.5, height: 1.5, ..Default::default() }),
+    ]);
+    scene.drain_commands();
+    let eid = h.get().unwrap();
+
+    let json = scene.save_json();
+    scene.clear();
+    scene.load_json(&json);
+
+    assert!(scene.components.has::<TransformComponent>(eid));
+    assert!(scene.components.has::<MeshComponent>(eid));
+    assert!(scene.components.has::<TagComponent>(eid));
+    assert!(scene.components.has::<RigidBodyComponent>(eid));
+    assert!(scene.components.has::<ColliderComponent>(eid));
+    assert!(scene.components.has::<BillboardComponent>(eid));
+
+    let t = scene.components.get::<TransformComponent>(eid).unwrap();
+    assert_eq!(t.x, 1.0);
+    let rb = scene.components.get::<RigidBodyComponent>(eid).unwrap();
+    assert_eq!(rb.mass, 5.0);
+    let col = scene.components.get::<ColliderComponent>(eid).unwrap();
+    assert_eq!(col.shape, "capsule");
+}
+
+// ── T-ECS-58: Unsubscribe Entity Spawned ─────────────────────────────────────
+
+#[test]
+fn t_ecs_58_unsubscribe_entity_spawned() {
+    let scene = Scene::new();
+    let count = Arc::new(Mutex::new(0u32));
+    let count_c = count.clone();
+
+    let sub_id = scene.events.subscribe_entity_spawned(move |_eid| {
+        *count_c.lock().unwrap() += 1;
+    });
+    scene.events.unsubscribe_entity_spawned(sub_id);
+
+    scene.queue_spawn_anon(vec![]);
+    scene.drain_commands();
+
+    assert_eq!(*count.lock().unwrap(), 0);
+}
+
+// ── T-ECS-59: ComponentStorage Clear ─────────────────────────────────────────
+
+#[test]
+fn t_ecs_59_component_storage_clear() {
+    let scene = Scene::new();
+    for _ in 0..5 {
+        scene.queue_spawn_anon(vec![comp(TransformComponent::default())]);
+    }
+    scene.drain_commands();
+    assert_eq!(scene.components.count::<TransformComponent>(), 5);
+
+    scene.components.clear();
+    assert_eq!(scene.components.count::<TransformComponent>(), 0);
+}
+
+// ── T-ECS-60: Children Empty for Leaf and Non-Existent Entity ────────────────
+
+#[test]
+fn t_ecs_60_children_empty_for_leaf_and_missing() {
+    let scene = Scene::new();
+    let h = scene.queue_spawn(vec![]);
+    scene.drain_commands();
+    let entity = h.get().unwrap();
+
+    // Leaf with no children
+    assert!(scene.hierarchy.get_children(entity).is_empty());
+    // Non-existent entity
+    assert!(scene.hierarchy.get_children(EntityId(777_666)).is_empty());
+}
+
+// ── T-ECS-61: Multiple Component Types — Detach One, Others Remain ───────────
+
+#[test]
+fn t_ecs_61_multiple_component_types_detach_one() {
+    let scene = Scene::new();
+    let h = scene.queue_spawn(vec![
+        comp(TransformComponent::default()),
+        comp(MeshComponent::default()),
+        comp(TagComponent::default()),
+    ]);
+    scene.drain_commands();
+    let entity = h.get().unwrap();
+
+    scene.queue_detach::<MeshComponent>(entity);
+    scene.drain_commands();
+
+    assert!(scene.components.has::<TransformComponent>(entity));
+    assert!(!scene.components.has::<MeshComponent>(entity));
+    assert!(scene.components.has::<TagComponent>(entity));
+}
+
+// ── T-ECS-62: Hierarchy Clear ────────────────────────────────────────────────
+
+#[test]
+fn t_ecs_62_hierarchy_clear() {
+    let scene = Scene::new();
+    let hp = scene.queue_spawn(vec![]);
+    let hc = scene.queue_spawn(vec![]);
+    scene.drain_commands();
+    let parent = hp.get().unwrap();
+    let child = hc.get().unwrap();
+
+    scene.queue_set_parent(child, parent);
+    scene.drain_commands();
+
+    scene.hierarchy.clear();
+
+    assert_eq!(scene.hierarchy.get_parent(child), None);
+    assert!(scene.hierarchy.get_children(parent).is_empty());
+}
+
+// ── T-ECS-63: SpawnHandle — None Before Drain, Some After ────────────────────
+
+#[test]
+fn t_ecs_63_spawn_handle_none_before_some_after() {
+    let scene = Scene::new();
+    let h = scene.queue_spawn(vec![]);
+
+    assert!(h.get().is_none(), "handle is None before drain");
+    assert_eq!(scene.entity_count(), 0, "no entities before drain");
+
+    scene.drain_commands();
+
+    let id = h.get();
+    assert!(id.is_some(), "handle is Some after drain");
+    assert!(scene.entity_exists(id.unwrap()));
+}
