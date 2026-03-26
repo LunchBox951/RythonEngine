@@ -56,7 +56,18 @@ class SceneBridge:
         """
         Subscribe *handler* to *event_name*.
 
-        Returns a subscription ID (reserved for future unsubscribe support).
+        Returns a subscription ID that can be passed to :meth:`unsubscribe`
+        to remove the handler.
+        """
+        raise NotImplementedError
+
+    def unsubscribe(self, subscription_id: int) -> None:
+        """
+        Remove a previously registered event handler.
+
+        :param subscription_id: The integer ID returned by :meth:`subscribe`.
+
+        Calling ``unsubscribe`` with an unknown ID is a no-op.
         """
         raise NotImplementedError
 
