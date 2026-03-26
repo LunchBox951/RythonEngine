@@ -84,7 +84,7 @@ fn t_script_01_python_module_import() {
 
         let rython = py.import("rython").expect("rython");
         for attr in ["scene", "renderer", "physics", "audio", "input", "ui",
-                     "resources", "scheduler", "modules", "camera"] {
+                     "resources", "scheduler", "modules", "camera", "throttle"] {
             let val = rython.getattr(attr).unwrap_or_else(|_| panic!("rython.{attr} missing"));
             assert!(!val.is_none(), "rython.{attr} should not be None");
         }

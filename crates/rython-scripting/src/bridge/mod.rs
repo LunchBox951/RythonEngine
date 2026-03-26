@@ -290,6 +290,45 @@ pub fn ensure_rython_module(py: Python<'_>, scene: Arc<Scene>) -> PyResult<()> {
     rython.add("modules", stub)?;
 
     sys_modules.set_item("rython", &rython)?;
+
+    // Attach rython.throttle — a decorator that rate-limits a function to at
+    // most N calls per second using the engine's own elapsed-time clock.
+    //
+    // Our PyModule has no __path__, so Python cannot resolve rython._decorators
+    // as a subpackage after we replace sys.modules['rython'].  We inline the
+    // implementation here so it works regardless of sys.path contents.
+    // The logic mirrors rython/_decorators.py exactly; keep both in sync.
+    py.run(
+        c"\
+import functools as _ft
+import sys as _sys
+
+def _throttle(hz):
+    if hz <= 0:
+        raise ValueError(f'throttle hz must be > 0, got {hz!r}')
+    _interval = 1.0 / hz
+    def _decorator(fn):
+        _last = [-_interval]
+        @_ft.wraps(fn)
+        def _wrapper(*args, **kwargs):
+            import rython as _r
+            _now = _r.time.elapsed
+            if _now < _last[0]:
+                _last[0] = _now - _interval
+            if _now - _last[0] >= _interval:
+                _last[0] = _now
+                return fn(*args, **kwargs)
+            return None
+        return _wrapper
+    return _decorator
+
+_sys.modules['rython'].throttle = _throttle
+del _ft, _sys, _throttle
+",
+        None,
+        None,
+    )?;
+
     Ok(())
 }
 
