@@ -20,9 +20,17 @@ _TEX_WALL = "game/assets/textures/Light/light_wall.png"
 _TEX_BOX = "game/assets/textures/Light/light_box.png"
 
 
-def _on_collect(entity) -> None:
+def _on_collect(entity, **kwargs) -> None:
     global _collected
     if game_state.get_state() != game_state.PLAYING:
+        return
+    player_entity = player.get_entity()
+    if player_entity is None:
+        return
+    entity_a = kwargs.get("entity_a")
+    entity_b = kwargs.get("entity_b")
+    entrant_id = entity_b if entity_a == entity.id else entity_a
+    if entrant_id != player_entity.id:
         return
     entity.despawn()
     game_state.add_score(100)
@@ -57,7 +65,7 @@ def build() -> None:
     p2 = lb.spawn_pickup(5.0, 3.5, -5.0, pickup_type="score", value=100)
     p3 = lb.spawn_pickup(0.0, 0.5, 0.0, pickup_type="score", value=100)
     for p in (p1, p2, p3):
-        rython.scene.subscribe(f"trigger_enter:{p.id}", lambda entity=p, **kw: _on_collect(entity))
+        rython.scene.subscribe(f"trigger_enter:{p.id}", lambda entity=p, **kw: _on_collect(entity, **kw))
 
     # 1 slow skeleton (patrol speed overridden via waypoints at a slower pace)
     entity = lb.spawn_enemy(3.0, 1.0, 3.0, enemy_type="skeleton", is_boss=False)

@@ -19,9 +19,17 @@ _TEX_PLATFORM = "game/assets/textures/Orange/orange_box.png"
 _TEX_PILLAR = "game/assets/textures/Dark/dark_box.png"
 
 
-def _on_collect(entity) -> None:
+def _on_collect(entity, **kwargs) -> None:
     global _collected
     if game_state.get_state() != game_state.PLAYING:
+        return
+    player_entity = player.get_entity()
+    if player_entity is None:
+        return
+    entity_a = kwargs.get("entity_a")
+    entity_b = kwargs.get("entity_b")
+    entrant_id = entity_b if entity_a == entity.id else entity_a
+    if entrant_id != player_entity.id:
         return
     entity.despawn()
     game_state.add_score(100)
@@ -61,7 +69,7 @@ def build() -> None:
     p2 = lb.spawn_pickup(16.0, 3.0, -8.0,  pickup_type="score", value=100)
     p3 = lb.spawn_pickup(-8.0, 5.5, -14.0, pickup_type="score", value=100)
     for p in (p1, p2, p3):
-        rython.scene.subscribe(f"trigger_enter:{p.id}", lambda entity=p, **kw: _on_collect(entity))
+        rython.scene.subscribe(f"trigger_enter:{p.id}", lambda entity=p, **kw: _on_collect(entity, **kw))
 
     # 3 skeleton enemies on platforms
     skel_data = [
