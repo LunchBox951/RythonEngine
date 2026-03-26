@@ -35,7 +35,7 @@ struct CliArgs {
     headless: bool,
 }
 
-fn parse_args() -> CliArgs {
+fn parse_args_from(mut iter: impl Iterator<Item = String>) -> CliArgs {
     let mut args = CliArgs {
         script_dir: "./scripts".to_string(),
         entry_point: None,
@@ -43,7 +43,6 @@ fn parse_args() -> CliArgs {
         headless: false,
     };
 
-    let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "-h" | "--help" => {
@@ -80,6 +79,10 @@ fn parse_args() -> CliArgs {
     }
 
     args
+}
+
+fn parse_args() -> CliArgs {
+    parse_args_from(std::env::args().skip(1))
 }
 
 // ── Winit → rython key mapping ────────────────────────────────────────────────
@@ -671,6 +674,208 @@ fn run_windowed(engine_config: EngineConfig, scripting_config: ScriptingConfig) 
         player_controller,
     );
     event_loop.run_app(&mut app).expect("event loop error");
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use winit::keyboard::KeyCode as WinitKeyCode;
+
+    fn args(v: &[&str]) -> impl Iterator<Item = String> {
+        v.iter().map(|s| s.to_string()).collect::<Vec<_>>().into_iter()
+    }
+
+    // ── parse_args_from ───────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_defaults() {
+        let a = parse_args_from(args(&[]));
+        assert_eq!(a.script_dir, "./scripts");
+        assert!(a.entry_point.is_none());
+        assert!(a.config_path.is_none());
+        assert!(!a.headless);
+    }
+
+    #[test]
+    fn parse_script_dir() {
+        let a = parse_args_from(args(&["--script-dir", "game/scripts"]));
+        assert_eq!(a.script_dir, "game/scripts");
+    }
+
+    #[test]
+    fn parse_entry_point() {
+        let a = parse_args_from(args(&["--entry-point", "main"]));
+        assert_eq!(a.entry_point.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn parse_config() {
+        let a = parse_args_from(args(&["--config", "engine.json"]));
+        assert_eq!(a.config_path.as_deref(), Some("engine.json"));
+    }
+
+    #[test]
+    fn parse_headless() {
+        let a = parse_args_from(args(&["--headless"]));
+        assert!(a.headless);
+    }
+
+    #[test]
+    fn parse_multiple_options() {
+        let a = parse_args_from(args(&[
+            "--script-dir", "scripts",
+            "--entry-point", "game.main",
+            "--config", "cfg.json",
+            "--headless",
+        ]));
+        assert_eq!(a.script_dir, "scripts");
+        assert_eq!(a.entry_point.as_deref(), Some("game.main"));
+        assert_eq!(a.config_path.as_deref(), Some("cfg.json"));
+        assert!(a.headless);
+    }
+
+    #[test]
+    fn parse_unknown_flags_ignored() {
+        let a = parse_args_from(args(&["--unknown", "--also-unknown"]));
+        assert_eq!(a.script_dir, "./scripts");
+        assert!(!a.headless);
+    }
+
+    #[test]
+    fn parse_script_dir_missing_value_keeps_default() {
+        // --script-dir with no following value: default is preserved
+        let a = parse_args_from(args(&["--script-dir"]));
+        assert_eq!(a.script_dir, "./scripts");
+    }
+
+    // ── winit_key_to_rython ───────────────────────────────────────────────────
+
+    #[test]
+    fn key_mapping_letters() {
+        let cases = [
+            (WinitKeyCode::KeyA, KeyCode::A),
+            (WinitKeyCode::KeyB, KeyCode::B),
+            (WinitKeyCode::KeyC, KeyCode::C),
+            (WinitKeyCode::KeyD, KeyCode::D),
+            (WinitKeyCode::KeyE, KeyCode::E),
+            (WinitKeyCode::KeyF, KeyCode::F),
+            (WinitKeyCode::KeyG, KeyCode::G),
+            (WinitKeyCode::KeyH, KeyCode::H),
+            (WinitKeyCode::KeyI, KeyCode::I),
+            (WinitKeyCode::KeyJ, KeyCode::J),
+            (WinitKeyCode::KeyK, KeyCode::K),
+            (WinitKeyCode::KeyL, KeyCode::L),
+            (WinitKeyCode::KeyM, KeyCode::M),
+            (WinitKeyCode::KeyN, KeyCode::N),
+            (WinitKeyCode::KeyO, KeyCode::O),
+            (WinitKeyCode::KeyP, KeyCode::P),
+            (WinitKeyCode::KeyQ, KeyCode::Q),
+            (WinitKeyCode::KeyR, KeyCode::R),
+            (WinitKeyCode::KeyS, KeyCode::S),
+            (WinitKeyCode::KeyT, KeyCode::T),
+            (WinitKeyCode::KeyU, KeyCode::U),
+            (WinitKeyCode::KeyV, KeyCode::V),
+            (WinitKeyCode::KeyW, KeyCode::W),
+            (WinitKeyCode::KeyX, KeyCode::X),
+            (WinitKeyCode::KeyY, KeyCode::Y),
+            (WinitKeyCode::KeyZ, KeyCode::Z),
+        ];
+        for (winit, expected) in cases {
+            assert_eq!(winit_key_to_rython(&winit), Some(expected), "failed for {winit:?}");
+        }
+    }
+
+    #[test]
+    fn key_mapping_digits() {
+        let cases = [
+            (WinitKeyCode::Digit0, KeyCode::Key0),
+            (WinitKeyCode::Digit1, KeyCode::Key1),
+            (WinitKeyCode::Digit2, KeyCode::Key2),
+            (WinitKeyCode::Digit3, KeyCode::Key3),
+            (WinitKeyCode::Digit4, KeyCode::Key4),
+            (WinitKeyCode::Digit5, KeyCode::Key5),
+            (WinitKeyCode::Digit6, KeyCode::Key6),
+            (WinitKeyCode::Digit7, KeyCode::Key7),
+            (WinitKeyCode::Digit8, KeyCode::Key8),
+            (WinitKeyCode::Digit9, KeyCode::Key9),
+        ];
+        for (winit, expected) in cases {
+            assert_eq!(winit_key_to_rython(&winit), Some(expected), "failed for {winit:?}");
+        }
+    }
+
+    #[test]
+    fn key_mapping_special_keys() {
+        let cases = [
+            (WinitKeyCode::Space, KeyCode::Space),
+            (WinitKeyCode::Enter, KeyCode::Enter),
+            (WinitKeyCode::Escape, KeyCode::Escape),
+            (WinitKeyCode::Tab, KeyCode::Tab),
+            (WinitKeyCode::Backspace, KeyCode::Backspace),
+        ];
+        for (winit, expected) in cases {
+            assert_eq!(winit_key_to_rython(&winit), Some(expected), "failed for {winit:?}");
+        }
+    }
+
+    #[test]
+    fn key_mapping_modifiers() {
+        let cases = [
+            (WinitKeyCode::ShiftLeft, KeyCode::LeftShift),
+            (WinitKeyCode::ShiftRight, KeyCode::RightShift),
+            (WinitKeyCode::ControlLeft, KeyCode::LeftControl),
+            (WinitKeyCode::ControlRight, KeyCode::RightControl),
+            (WinitKeyCode::AltLeft, KeyCode::LeftAlt),
+            (WinitKeyCode::AltRight, KeyCode::RightAlt),
+        ];
+        for (winit, expected) in cases {
+            assert_eq!(winit_key_to_rython(&winit), Some(expected), "failed for {winit:?}");
+        }
+    }
+
+    #[test]
+    fn key_mapping_arrows() {
+        let cases = [
+            (WinitKeyCode::ArrowUp, KeyCode::Up),
+            (WinitKeyCode::ArrowDown, KeyCode::Down),
+            (WinitKeyCode::ArrowLeft, KeyCode::Left),
+            (WinitKeyCode::ArrowRight, KeyCode::Right),
+        ];
+        for (winit, expected) in cases {
+            assert_eq!(winit_key_to_rython(&winit), Some(expected), "failed for {winit:?}");
+        }
+    }
+
+    #[test]
+    fn key_mapping_function_keys() {
+        let cases = [
+            (WinitKeyCode::F1, KeyCode::F1),
+            (WinitKeyCode::F2, KeyCode::F2),
+            (WinitKeyCode::F3, KeyCode::F3),
+            (WinitKeyCode::F4, KeyCode::F4),
+            (WinitKeyCode::F5, KeyCode::F5),
+            (WinitKeyCode::F6, KeyCode::F6),
+            (WinitKeyCode::F7, KeyCode::F7),
+            (WinitKeyCode::F8, KeyCode::F8),
+            (WinitKeyCode::F9, KeyCode::F9),
+            (WinitKeyCode::F10, KeyCode::F10),
+            (WinitKeyCode::F11, KeyCode::F11),
+            (WinitKeyCode::F12, KeyCode::F12),
+        ];
+        for (winit, expected) in cases {
+            assert_eq!(winit_key_to_rython(&winit), Some(expected), "failed for {winit:?}");
+        }
+    }
+
+    #[test]
+    fn key_mapping_unmapped_returns_none() {
+        // Keys not in the game-relevant subset should return None
+        assert_eq!(winit_key_to_rython(&WinitKeyCode::F13), None);
+        assert_eq!(winit_key_to_rython(&WinitKeyCode::Numpad0), None);
+        assert_eq!(winit_key_to_rython(&WinitKeyCode::CapsLock), None);
+    }
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
