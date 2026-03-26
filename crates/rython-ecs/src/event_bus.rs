@@ -1,11 +1,12 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use parking_lot::RwLock;
 use serde_json::Value;
 
 pub type HandlerId = u64;
 
 /// Handler for named (custom) events.
-pub type NamedHandler = Box<dyn Fn(&str, &Value) + Send + Sync + 'static>;
+pub type NamedHandler = Arc<dyn Fn(&str, &Value) + Send + Sync + 'static>;
 
 struct Subscription {
     id: HandlerId,
@@ -17,9 +18,9 @@ pub struct EventBus {
     /// event_name -> list of subscriptions
     named: RwLock<HashMap<String, Vec<Subscription>>>,
     /// entity_spawned subscribers
-    entity_spawned: RwLock<Vec<(HandlerId, Box<dyn Fn(u64) + Send + Sync + 'static>)>>,
+    entity_spawned: RwLock<Vec<(HandlerId, Arc<dyn Fn(u64) + Send + Sync + 'static>)>>,
     /// entity_despawned subscribers
-    entity_despawned: RwLock<Vec<(HandlerId, Box<dyn Fn(u64) + Send + Sync + 'static>)>>,
+    entity_despawned: RwLock<Vec<(HandlerId, Arc<dyn Fn(u64) + Send + Sync + 'static>)>>,
 }
 
 impl Default for EventBus {
@@ -49,7 +50,7 @@ impl EventBus {
         self.named.write()
             .entry(event_name.to_string())
             .or_default()
-            .push(Subscription { id, handler: Box::new(handler) });
+            .push(Subscription { id, handler: Arc::new(handler) });
         id
     }
 
@@ -60,11 +61,16 @@ impl EventBus {
     }
 
     pub fn emit(&self, event_name: &str, payload: &Value) {
-        let named = self.named.read();
-        if let Some(subs) = named.get(event_name) {
-            for s in subs.iter() {
-                (s.handler)(event_name, payload);
-            }
+        // Snapshot handler Arcs while holding read lock, then drop lock before calling.
+        // This prevents deadlock when a handler calls subscribe() (which needs a write lock).
+        let handlers: Vec<NamedHandler> = {
+            let named = self.named.read();
+            named.get(event_name)
+                .map(|subs| subs.iter().map(|s| Arc::clone(&s.handler)).collect())
+                .unwrap_or_default()
+        };
+        for h in handlers {
+            h(event_name, payload);
         }
     }
 
@@ -73,7 +79,7 @@ impl EventBus {
         F: Fn(u64) + Send + Sync + 'static,
     {
         let id = self.alloc_id();
-        self.entity_spawned.write().push((id, Box::new(handler)));
+        self.entity_spawned.write().push((id, Arc::new(handler)));
         id
     }
 
@@ -82,8 +88,11 @@ impl EventBus {
     }
 
     pub fn emit_entity_spawned(&self, entity_id: u64) {
-        let subs = self.entity_spawned.read();
-        for (_, h) in subs.iter() {
+        let handlers: Vec<Arc<dyn Fn(u64) + Send + Sync + 'static>> = {
+            let subs = self.entity_spawned.read();
+            subs.iter().map(|(_, h)| Arc::clone(h)).collect()
+        };
+        for h in handlers {
             h(entity_id);
         }
     }
@@ -93,7 +102,7 @@ impl EventBus {
         F: Fn(u64) + Send + Sync + 'static,
     {
         let id = self.alloc_id();
-        self.entity_despawned.write().push((id, Box::new(handler)));
+        self.entity_despawned.write().push((id, Arc::new(handler)));
         id
     }
 
@@ -102,8 +111,11 @@ impl EventBus {
     }
 
     pub fn emit_entity_despawned(&self, entity_id: u64) {
-        let subs = self.entity_despawned.read();
-        for (_, h) in subs.iter() {
+        let handlers: Vec<Arc<dyn Fn(u64) + Send + Sync + 'static>> = {
+            let subs = self.entity_despawned.read();
+            subs.iter().map(|(_, h)| Arc::clone(h)).collect()
+        };
+        for h in handlers {
             h(entity_id);
         }
     }
