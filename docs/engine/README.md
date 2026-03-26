@@ -205,8 +205,12 @@ EngineBuilder::build()          // create scheduler + loader; modules not yet ac
   ┌── [windowed] winit EventLoop::run_app()
   │     RedrawRequested  →  tick_and_render()
   │       ├── set_elapsed_secs(…)              // advance Python time
+  │       ├── flush_python_bg_completions(py)  // fire on_complete callbacks for finished bg tasks
+  │       ├── flush_python_seq_tasks(py)       // run queued sequential Python callables (main thread)
+  │       ├── flush_python_par_tasks(py)       // run queued parallel tasks synchronously under GIL
   │       ├── flush_recurring_callbacks(py)    // run Python per-frame callbacks
   │       ├── flush_timers(py)                 // fire pending on_timer callbacks
+  │       ├── flush_python_bg_tasks()          // dispatch background tasks to rayon (releases GIL)
   │       ├── scene.drain_commands()           // apply ECS mutations atomically
   │       ├── PhysicsWorld::sync_step(…)       // rapier3d step + sync to ECS transforms
   │       ├── PlayerController::tick(…)        // process raw events → input snapshot + action events
@@ -223,7 +227,10 @@ EngineBuilder::build()          // create scheduler + loader; modules not yet ac
   │     CloseRequested → engine.shutdown() + exit
   │
   └── [headless] loop {
-        set_elapsed_secs(…) + flush_recurring_callbacks(py) + flush_timers(py)
+        set_elapsed_secs(…)
+        flush_python_bg_completions(py) + flush_python_seq_tasks(py) + flush_python_par_tasks(py)
+        flush_recurring_callbacks(py) + flush_timers(py)
+        flush_python_bg_tasks()
         scene.drain_commands() + PhysicsWorld::sync_step(…)
         PlayerController::tick(…) + set_active_input(…) + emit input events
         engine.tick()
