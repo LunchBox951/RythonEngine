@@ -213,6 +213,11 @@ pz = rython.camera.pos_z
 rython.camera.rot_pitch
 rython.camera.rot_yaw
 rython.camera.rot_roll
+
+# Read current look-at target (world-space point the camera is aimed at)
+rython.camera.target_x
+rython.camera.target_y
+rython.camera.target_z
 ```
 
 ---

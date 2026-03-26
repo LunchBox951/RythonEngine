@@ -203,18 +203,32 @@ EngineBuilder::build()          // create scheduler + loader; modules not yet ac
               (LOADING → LOADED for each)
 
   ┌── [windowed] winit EventLoop::run_app()
-  │     RedrawRequested
-  │       ├── set_elapsed_secs(…)            // update Python time
-  │       ├── flush_recurring_callbacks(py)  // run Python per-frame callbacks
-  │       ├── scene.drain_commands()         // apply ECS mutations atomically
-  │       ├── TransformSystem::run(…)        // propagate world transforms
-  │       ├── RenderSystem::run(…)           // build draw list from ECS
-  │       ├── renderer.render_meshes(…)      // GPU draw call
+  │     RedrawRequested  →  tick_and_render()
+  │       ├── set_elapsed_secs(…)              // advance Python time
+  │       ├── flush_recurring_callbacks(py)    // run Python per-frame callbacks
+  │       ├── flush_timers(py)                 // fire pending on_timer callbacks
+  │       ├── scene.drain_commands()           // apply ECS mutations atomically
+  │       ├── PhysicsWorld::sync_step(…)       // rapier3d step + sync to ECS transforms
+  │       ├── PlayerController::tick(…)        // process raw events → input snapshot + action events
+  │       ├── UIManager::on_mouse_*(…)         // route cursor/click events to widgets
+  │       ├── TransformSystem::run(…)          // propagate world transforms
+  │       ├── RenderSystem::run(…)             // collect DrawMesh commands from ECS
+  │       ├── UIManager::compute_layout()      // finalize widget positions
+  │       ├── drain_draw_commands()            // collect script + UI overlay commands
+  │       ├── renderer.render_meshes(…)        // GPU mesh draw call
+  │       ├── renderer.render_rects(…)         // solid-color UI rect overlays
+  │       ├── renderer.render_text(…)          // text overlays (scripts + UI)
   │       ├── frame.present()
-  │       └── engine.tick()                  // TaskScheduler pipeline
+  │       └── engine.tick()                    // TaskScheduler pipeline (module tasks)
   │     CloseRequested → engine.shutdown() + exit
   │
-  └── [headless] loop { engine.tick(); if quit_requested { break } }
+  └── [headless] loop {
+        set_elapsed_secs(…) + flush_recurring_callbacks(py) + flush_timers(py)
+        scene.drain_commands() + PhysicsWorld::sync_step(…)
+        PlayerController::tick(…) + set_active_input(…) + emit input events
+        engine.tick()
+        if quit_requested { break }
+      }
 
 engine.shutdown()               // ModuleLoader::unload_all()
   └── on_unload() per module, in reverse load order

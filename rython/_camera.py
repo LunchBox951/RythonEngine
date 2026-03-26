@@ -19,6 +19,9 @@ class Camera:
     rot_pitch: float
     rot_yaw: float
     rot_roll: float
+    target_x: float
+    target_y: float
+    target_z: float
 
     def set_position(self, x: float, y: float, z: float) -> None:
         """Move the camera to world-space position *(x, y, z)*."""
