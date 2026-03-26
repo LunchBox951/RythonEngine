@@ -671,7 +671,7 @@ impl GlyphAtlas {
         ];
 
         let font_bytes = font_paths.iter().find_map(|p| {
-            std::fs::read(p).ok().map(|b| { log::info!("GlyphAtlas: loaded font {}", p); b })
+            std::fs::read(p).ok().inspect(|_b| { log::info!("GlyphAtlas: loaded font {}", p); })
         });
 
         let font_bytes = match font_bytes {
@@ -1015,7 +1015,7 @@ impl RendererState {
     pub fn ensure_depth_texture(&mut self, width: u32, height: u32) {
         let needs_new = self.depth_texture
             .as_ref()
-            .map_or(true, |&(_, _, w, h)| w != width || h != height);
+            .is_none_or(|&(_, _, w, h)| w != width || h != height);
 
         if needs_new {
             let tex = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -1047,7 +1047,7 @@ impl RendererState {
         }
         let needs_new = self.msaa_texture
             .as_ref()
-            .map_or(true, |&(_, _, w, h, f)| w != width || h != height || f != format);
+            .is_none_or(|&(_, _, w, h, f)| w != width || h != height || f != format);
 
         if needs_new {
             let tex = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
