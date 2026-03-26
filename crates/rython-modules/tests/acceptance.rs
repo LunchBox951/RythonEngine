@@ -1,5 +1,5 @@
 use rython_core::{EngineError, OwnerId, SchedulerHandle, priorities};
-use rython_modules::{Module, ModuleLoader, ModuleState};
+use rython_modules::{Module, ModuleLoader, ModuleRegistry, ModuleState, topological_sort};
 use std::sync::{Arc, Mutex};
 
 // ─── No-op scheduler stub for tests ──────────────────────────────────────────
@@ -499,4 +499,418 @@ fn t_mod_13_missing_config_falls_back_to_defaults() {
         *warned.lock().unwrap(),
         "module should have logged a warning about missing config"
     );
+}
+
+// ─── T-MOD-14: on_load Failure Short-Circuits load_all ───────────────────────
+
+#[test]
+fn t_mod_14_on_load_failure_short_circuits() {
+    struct FailingModule;
+    impl Module for FailingModule {
+        fn name(&self) -> &str { "Failing" }
+        fn on_load(&mut self, _: &dyn SchedulerHandle) -> Result<(), EngineError> {
+            Err(EngineError::Module {
+                module: "Failing".into(),
+                message: "intentional load failure".into(),
+            })
+        }
+        fn on_unload(&mut self, _: &dyn SchedulerHandle) -> Result<(), EngineError> { Ok(()) }
+    }
+
+    let load_log = Arc::new(Mutex::new(Vec::<String>::new()));
+    let sched = NoopScheduler;
+    let mut loader = ModuleLoader::new();
+
+    loader.register(Box::new(FailingModule), None);
+    // "After" depends on "Failing", so loads second; must never run
+    loader.register(
+        TrackingModule::new("After", vec!["Failing"], Arc::clone(&load_log), Arc::clone(&load_log)),
+        None,
+    );
+
+    let result = loader.load_all(&sched);
+    assert!(result.is_err(), "load_all must propagate on_load error");
+    assert!(
+        load_log.lock().unwrap().is_empty(),
+        "modules following the failing one must not run on_load"
+    );
+}
+
+// ─── T-MOD-15: on_unload Failure Propagates ──────────────────────────────────
+
+#[test]
+fn t_mod_15_on_unload_failure_propagates() {
+    struct FailOnUnload;
+    impl Module for FailOnUnload {
+        fn name(&self) -> &str { "FailUnload" }
+        fn on_load(&mut self, _: &dyn SchedulerHandle) -> Result<(), EngineError> { Ok(()) }
+        fn on_unload(&mut self, _: &dyn SchedulerHandle) -> Result<(), EngineError> {
+            Err(EngineError::Module {
+                module: "FailUnload".into(),
+                message: "intentional unload failure".into(),
+            })
+        }
+    }
+
+    let sched = NoopScheduler;
+    let mut loader = ModuleLoader::new();
+    loader.register(Box::new(FailOnUnload), None);
+    loader.load_all(&sched).unwrap();
+
+    let result = loader.unload_by_name("FailUnload", &sched);
+    assert!(result.is_err(), "on_unload error must propagate through unload_by_name");
+}
+
+// ─── T-MOD-16: Unregistered Dependency Is Silently Skipped ───────────────────
+
+#[test]
+fn t_mod_16_unregistered_dep_silently_skipped() {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let sched = NoopScheduler;
+    let mut loader = ModuleLoader::new();
+
+    // "B" declares "External" as a dep, but External is never registered.
+    loader.register(
+        TrackingModule::new("B", vec!["External"], Arc::clone(&log), Arc::clone(&log)),
+        None,
+    );
+
+    let result = loader.load_all(&sched);
+    assert!(result.is_ok(), "load should succeed when dep is not registered");
+    assert!(loader.is_loaded("B"), "B should be loaded despite unregistered dep");
+}
+
+// ─── T-MOD-17: Empty Loader Is a No-Op ───────────────────────────────────────
+
+#[test]
+fn t_mod_17_empty_loader_is_noop() {
+    let sched = NoopScheduler;
+    let mut loader = ModuleLoader::new();
+    assert!(loader.load_all(&sched).is_ok(), "load_all on empty loader must succeed");
+    assert!(loader.unload_all(&sched).is_ok(), "unload_all on empty loader must succeed");
+}
+
+// ─── T-MOD-18: Unload Non-Existent Module Is a No-Op ─────────────────────────
+
+#[test]
+fn t_mod_18_unload_nonexistent_is_noop() {
+    let sched = NoopScheduler;
+    let mut loader = ModuleLoader::new();
+    let result = loader.unload_by_name("DoesNotExist", &sched);
+    assert!(result.is_ok(), "unloading non-existent module must not error");
+}
+
+// ─── T-MOD-19: on_unload Can Call cancel_owned on the Scheduler ──────────────
+
+#[test]
+fn t_mod_19_on_unload_calls_cancel_owned() {
+    use std::sync::atomic::AtomicBool;
+
+    struct CancelOnUnload { owner: OwnerId }
+    impl Module for CancelOnUnload {
+        fn name(&self) -> &str { "CancelMod" }
+        fn on_load(&mut self, _: &dyn SchedulerHandle) -> Result<(), EngineError> { Ok(()) }
+        fn on_unload(&mut self, scheduler: &dyn SchedulerHandle) -> Result<(), EngineError> {
+            scheduler.cancel_owned(self.owner);
+            Ok(())
+        }
+    }
+
+    struct TrackCancel { flag: Arc<AtomicBool> }
+    impl SchedulerHandle for TrackCancel {
+        fn submit_sequential(
+            &self,
+            _f: Box<dyn FnOnce() -> Result<(), EngineError> + Send + 'static>,
+            _p: rython_core::Priority,
+            _o: OwnerId,
+        ) {}
+        fn cancel_owned(&self, _: OwnerId) {
+            self.flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    let flag = Arc::new(AtomicBool::new(false));
+    let sched = TrackCancel { flag: Arc::clone(&flag) };
+    let mut loader = ModuleLoader::new();
+    loader.register(Box::new(CancelOnUnload { owner: 42 }), None);
+    loader.load_all(&sched).unwrap();
+    loader.unload_by_name("CancelMod", &sched).unwrap();
+
+    assert!(
+        flag.load(std::sync::atomic::Ordering::Relaxed),
+        "cancel_owned should have been called during on_unload"
+    );
+}
+
+// ─── T-MOD-20: Self-Transfer (owner → same owner) Succeeds ───────────────────
+
+#[test]
+fn t_mod_20_self_transfer_is_valid() {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let sched = NoopScheduler;
+    let mut loader = ModuleLoader::new();
+    let owner: OwnerId = 7;
+
+    loader.register(
+        TrackingModule::new("ExclMod", vec![], Arc::clone(&log), Arc::clone(&log)).exclusive(),
+        Some(owner),
+    );
+    loader.load_all(&sched).unwrap();
+
+    let result = loader.transfer_ownership("ExclMod", owner, owner);
+    assert!(result.is_ok(), "transferring ownership to self must succeed");
+    assert_eq!(loader.exclusive_owner("ExclMod"), Some(owner));
+}
+
+// ─── T-MOD-21: Ownership Ops on Non-Exclusive Module Are Rejected ────────────
+
+#[test]
+fn t_mod_21_non_exclusive_ownership_ops_rejected() {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let sched = NoopScheduler;
+    let mut loader = ModuleLoader::new();
+    let owner: OwnerId = 1;
+
+    // Registered without .exclusive()
+    loader.register(
+        TrackingModule::new("NonExclMod", vec![], Arc::clone(&log), Arc::clone(&log)),
+        Some(owner),
+    );
+    loader.load_all(&sched).unwrap();
+
+    assert!(
+        loader.transfer_ownership("NonExclMod", owner, 2).is_err(),
+        "transfer_ownership on non-exclusive module must return Err"
+    );
+    assert!(
+        loader.relinquish_ownership("NonExclMod", owner).is_err(),
+        "relinquish_ownership on non-exclusive module must return Err"
+    );
+}
+
+// ─── T-MOD-22: Relinquish by Wrong Owner Is Rejected ─────────────────────────
+
+#[test]
+fn t_mod_22_relinquish_wrong_owner_rejected() {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let sched = NoopScheduler;
+    let mut loader = ModuleLoader::new();
+    let owner_a: OwnerId = 1;
+    let owner_b: OwnerId = 2;
+
+    loader.register(
+        TrackingModule::new("ExclMod", vec![], Arc::clone(&log), Arc::clone(&log)).exclusive(),
+        Some(owner_a),
+    );
+    loader.load_all(&sched).unwrap();
+
+    let err = loader.relinquish_ownership("ExclMod", owner_b);
+    assert!(err.is_err(), "non-owner must not be able to relinquish");
+    assert_eq!(
+        loader.exclusive_owner("ExclMod"),
+        Some(owner_a),
+        "ownership must remain with original owner after failed relinquish"
+    );
+}
+
+// ─── T-MOD-23: Diamond Dependency — Shared Transitive Dep Loads Exactly Once ─
+
+#[test]
+fn t_mod_23_diamond_dependency_loads_once() {
+    let load_log = Arc::new(Mutex::new(Vec::<String>::new()));
+    let unload_log = Arc::new(Mutex::new(Vec::<String>::new()));
+    let sched = NoopScheduler;
+    let mut loader = ModuleLoader::new();
+
+    // D←B←A and D←C←A (diamond)
+    loader.register(TrackingModule::new("D", vec![], Arc::clone(&load_log), Arc::clone(&unload_log)), None);
+    loader.register(TrackingModule::new("B", vec!["D"], Arc::clone(&load_log), Arc::clone(&unload_log)), None);
+    loader.register(TrackingModule::new("C", vec!["D"], Arc::clone(&load_log), Arc::clone(&unload_log)), None);
+    loader.register(TrackingModule::new("A", vec!["B", "C"], Arc::clone(&load_log), Arc::clone(&unload_log)), None);
+
+    loader.load_all(&sched).unwrap();
+
+    let log = load_log.lock().unwrap();
+    assert_eq!(log.len(), 4, "each module loads exactly once: {log:?}");
+    let d_count = log.iter().filter(|s| s.as_str() == "D").count();
+    assert_eq!(d_count, 1, "D must appear exactly once in load log: {log:?}");
+
+    let d_pos = log.iter().position(|s| s == "D").unwrap();
+    let a_pos = log.iter().position(|s| s == "A").unwrap();
+    assert!(d_pos < a_pos, "D must load before A: {log:?}");
+}
+
+// ─── T-MOD-24: Ownership Ops on Missing Module Return Err ────────────────────
+
+#[test]
+fn t_mod_24_ownership_ops_on_missing_module() {
+    let mut loader = ModuleLoader::new();
+    assert!(
+        loader.transfer_ownership("NoSuchModule", 1, 2).is_err(),
+        "transfer_ownership on non-existent module must return Err"
+    );
+    assert!(
+        loader.relinquish_ownership("NoSuchModule", 1).is_err(),
+        "relinquish_ownership on non-existent module must return Err"
+    );
+}
+
+// ─── T-MOD-25: Module State Is Loading Immediately After Registration ─────────
+
+#[test]
+fn t_mod_25_state_is_loading_after_register() {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let mut loader = ModuleLoader::new();
+
+    loader.register(
+        TrackingModule::new("M", vec![], Arc::clone(&log), Arc::clone(&log)),
+        None,
+    );
+
+    assert_eq!(
+        loader.get_state("M"),
+        Some(ModuleState::Loading),
+        "module state must be Loading before load_all is called"
+    );
+}
+
+// ─── T-MOD-26: topological_sort — Single Node No Deps ────────────────────────
+
+#[test]
+fn t_mod_26_topo_sort_single_node() {
+    let mut deps = std::collections::HashMap::new();
+    deps.insert("Solo".to_string(), vec![]);
+    let order = topological_sort(&deps).unwrap();
+    assert_eq!(order, vec!["Solo"]);
+}
+
+// ─── T-MOD-27: topological_sort — Independent Nodes Are Sorted Deterministically
+
+#[test]
+fn t_mod_27_topo_sort_independent_nodes_deterministic() {
+    let mut deps = std::collections::HashMap::new();
+    deps.insert("Zeta".to_string(), vec![]);
+    deps.insert("Alpha".to_string(), vec![]);
+    deps.insert("Mu".to_string(), vec![]);
+    let order = topological_sort(&deps).unwrap();
+    // All three appear exactly once; order must be deterministic (alphabetical DFS start)
+    assert_eq!(order.len(), 3);
+    let mut sorted = order.clone();
+    sorted.sort();
+    assert_eq!(sorted, vec!["Alpha", "Mu", "Zeta"]);
+    // Run again — must produce same order
+    let order2 = topological_sort(&deps).unwrap();
+    assert_eq!(order, order2, "topological_sort must be deterministic");
+}
+
+// ─── T-MOD-28: topological_sort — Long Chain ─────────────────────────────────
+
+#[test]
+fn t_mod_28_topo_sort_long_chain() {
+    // E->D->C->B->A (A has no deps, E depends on D, etc.)
+    let mut deps = std::collections::HashMap::new();
+    deps.insert("A".to_string(), vec![]);
+    deps.insert("B".to_string(), vec!["A".to_string()]);
+    deps.insert("C".to_string(), vec!["B".to_string()]);
+    deps.insert("D".to_string(), vec!["C".to_string()]);
+    deps.insert("E".to_string(), vec!["D".to_string()]);
+    let order = topological_sort(&deps).unwrap();
+    assert_eq!(order, vec!["A", "B", "C", "D", "E"]);
+}
+
+// ─── T-MOD-29: topological_sort — Empty Graph ────────────────────────────────
+
+#[test]
+fn t_mod_29_topo_sort_empty_graph() {
+    let deps = std::collections::HashMap::new();
+    let order = topological_sort(&deps).unwrap();
+    assert!(order.is_empty(), "empty dep graph must produce empty order");
+}
+
+// ─── T-MOD-30: ModuleRegistry — ref-count decrement signals unload ───────────
+
+#[test]
+fn t_mod_30_registry_decrement_ref_signals_unload() {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let registry = ModuleRegistry::new();
+
+    let m1 = TrackingModule::new("Shared", vec![], Arc::clone(&log), Arc::clone(&log));
+    registry.insert(m1, None);
+    registry.insert(
+        TrackingModule::new("Shared", vec![], Arc::clone(&log), Arc::clone(&log)),
+        None,
+    );
+    assert_eq!(registry.ref_count("Shared"), Some(2));
+
+    let should_unload = registry.decrement_ref("Shared");
+    assert!(!should_unload, "should not unload when ref_count goes to 1");
+    assert_eq!(registry.ref_count("Shared"), Some(1));
+
+    let should_unload = registry.decrement_ref("Shared");
+    assert!(should_unload, "should unload when ref_count reaches 0");
+}
+
+// ─── T-MOD-31: ModuleRegistry — is_owner check ───────────────────────────────
+
+#[test]
+fn t_mod_31_registry_is_owner() {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let registry = ModuleRegistry::new();
+    let owner: OwnerId = 99;
+
+    let m = TrackingModule::new("ExclMod", vec![], Arc::clone(&log), Arc::clone(&log)).exclusive();
+    registry.insert(m, Some(owner));
+
+    assert!(registry.is_owner("ExclMod", owner), "owner should be recognised");
+    assert!(!registry.is_owner("ExclMod", 100), "non-owner must not be recognised");
+    assert!(!registry.is_owner("NoSuchMod", owner), "missing module must return false");
+}
+
+// ─── T-MOD-32: ModuleRegistry — thread-safe concurrent insert/read ───────────
+
+#[test]
+fn t_mod_32_registry_concurrent_access() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::thread;
+
+    let registry = Arc::new(ModuleRegistry::new());
+    let insert_count = Arc::new(AtomicUsize::new(0));
+
+    // Pre-seed one entry so readers have something to look at immediately
+    {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        registry.insert(
+            TrackingModule::new("Base", vec![], Arc::clone(&log), Arc::clone(&log)),
+            None,
+        );
+    }
+
+    let handles: Vec<_> = (0..8)
+        .map(|i| {
+            let reg = Arc::clone(&registry);
+            let count = Arc::clone(&insert_count);
+            let log = Arc::new(Mutex::new(Vec::new()));
+            thread::spawn(move || {
+                let name = format!("Mod{i}");
+                reg.insert(
+                    TrackingModule::new(&name, vec![], Arc::clone(&log), Arc::clone(&log)),
+                    None,
+                );
+                count.fetch_add(1, Ordering::Relaxed);
+                // Also exercise reads under concurrent write pressure
+                let _ = reg.contains("Base");
+                let _ = reg.get_state("Base");
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().expect("thread must not panic");
+    }
+
+    assert_eq!(insert_count.load(Ordering::Relaxed), 8, "all 8 threads must complete");
+    // All inserted modules should now be present
+    for i in 0..8u32 {
+        assert!(registry.contains(&format!("Mod{i}")), "Mod{i} must be in registry");
+    }
 }
