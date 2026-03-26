@@ -300,10 +300,10 @@ pub fn ensure_rython_module(py: Python<'_>, scene: Arc<Scene>) -> PyResult<()> {
     // The logic mirrors rython/_decorators.py exactly; keep both in sync.
     py.run(
         c"\
-import functools as _ft
 import sys as _sys
 
 def _throttle(hz):
+    import functools as _ft
     if hz <= 0:
         raise ValueError(f'throttle hz must be > 0, got {hz!r}')
     _interval = 1.0 / hz
@@ -323,7 +323,7 @@ def _throttle(hz):
     return _decorator
 
 _sys.modules['rython'].throttle = _throttle
-del _ft, _sys, _throttle
+del _sys, _throttle
 ",
         None,
         None,
