@@ -231,6 +231,18 @@ rython.scheduler.register_recurring(on_tick)
 
 `register_recurring` accepts any callable. Multiple callbacks can be registered; they are called in registration order each frame.
 
+**Prefer `on_timer` and `on_event` for new code.** They return cancellable handles and are more expressive than `register_recurring`:
+
+```python
+# Call a function every 2 seconds; cancel it later
+handle = rython.scheduler.on_timer(2.0, spawn_wave)
+rython.scheduler.cancel(handle)
+
+# Subscribe to a named event via the scheduler
+handle = rython.scheduler.on_event("player_died", on_player_died)
+rython.scheduler.cancel(handle)
+```
+
 ---
 
 ## Custom Events
@@ -246,6 +258,9 @@ def on_player_died(score=0, reason="unknown"):
     print(f"Player died with score {score} ({reason})")
 
 subscription_id = rython.scene.subscribe("player_died", on_player_died)
+
+# Unsubscribe when the handler is no longer needed
+rython.scene.unsubscribe(subscription_id)
 ```
 
 Event payloads support `None`, `bool`, `int`, `float`, and `str` values.
