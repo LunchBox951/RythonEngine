@@ -1129,3 +1129,383 @@ fn t_script_20_entry_point_execution() {
         sys.getattr("modules").unwrap().del_item("ep_main_20").ok();
     });
 }
+
+// ─── T-SCRIPT-33: json_val_to_py — Null becomes Python None ──────────────────
+
+#[test]
+fn t_script_33_json_null_to_py_none() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        let val = serde_json::json!({ "n": null });
+        let dict = rython_scripting::bridge::json_to_py_dict(py, &val).expect("json_to_py_dict");
+        let n = dict.get_item("n").expect("no PyErr").expect("key 'n'");
+        assert!(n.is_none(), "JSON null must become Python None");
+    });
+}
+
+// ─── T-SCRIPT-34: json_val_to_py — Bool values become Python booleans ────────
+
+#[test]
+fn t_script_34_json_bool_to_py() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        let val = serde_json::json!({ "t": true, "f": false });
+        let dict = rython_scripting::bridge::json_to_py_dict(py, &val).expect("json_to_py_dict");
+        let t: bool = dict.get_item("t").unwrap().expect("key 't'").extract().unwrap();
+        let f: bool = dict.get_item("f").unwrap().expect("key 'f'").extract().unwrap();
+        assert!(t, "JSON true must become Python True");
+        assert!(!f, "JSON false must become Python False");
+    });
+}
+
+// ─── T-SCRIPT-35: json_val_to_py — Numbers: i64 stays int, float stays float ─
+
+#[test]
+fn t_script_35_json_number_to_py() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        let val = serde_json::json!({ "i": 42i64, "fl": 3.14f64 });
+        let dict = rython_scripting::bridge::json_to_py_dict(py, &val).expect("json_to_py_dict");
+        let i: i64 = dict.get_item("i").unwrap().expect("key 'i'").extract().unwrap();
+        let fl: f64 = dict.get_item("fl").unwrap().expect("key 'fl'").extract().unwrap();
+        assert_eq!(i, 42, "JSON integer must map to Python int");
+        assert!((fl - 3.14).abs() < 1e-9, "JSON float must map to Python float");
+    });
+}
+
+// ─── T-SCRIPT-36: json_val_to_py — String value becomes Python str ────────────
+
+#[test]
+fn t_script_36_json_string_to_py() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        let val = serde_json::json!({ "s": "hello world" });
+        let dict = rython_scripting::bridge::json_to_py_dict(py, &val).expect("json_to_py_dict");
+        let s: String = dict.get_item("s").unwrap().expect("key 's'").extract().unwrap();
+        assert_eq!(s, "hello world", "JSON string must map to Python str");
+    });
+}
+
+// ─── T-SCRIPT-37: json_val_to_py — Array with mixed types becomes Python list ─
+
+#[test]
+fn t_script_37_json_array_to_py() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        let val = serde_json::json!({ "arr": [1, true, "x", null] });
+        let dict = rython_scripting::bridge::json_to_py_dict(py, &val).expect("json_to_py_dict");
+        let arr = dict.get_item("arr").unwrap().expect("key 'arr'");
+        assert_eq!(arr.len().unwrap(), 4, "array must have 4 elements");
+        let e0: i64 = arr.get_item(0).unwrap().extract().unwrap();
+        assert_eq!(e0, 1);
+        let e1: bool = arr.get_item(1).unwrap().extract().unwrap();
+        assert!(e1);
+        let e2: String = arr.get_item(2).unwrap().extract().unwrap();
+        assert_eq!(e2, "x");
+        assert!(arr.get_item(3).unwrap().is_none(), "null array element must be Python None");
+    });
+}
+
+// ─── T-SCRIPT-38: json_val_to_py — Nested Object becomes dict-in-dict ─────────
+
+#[test]
+fn t_script_38_json_nested_object_to_py() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        let val = serde_json::json!({ "inner": { "x": 7i64, "label": "deep" } });
+        let dict = rython_scripting::bridge::json_to_py_dict(py, &val).expect("json_to_py_dict");
+        let inner = dict.get_item("inner").unwrap().expect("key 'inner'");
+        let x: i64 = inner.get_item("x").unwrap().extract().unwrap();
+        let label: String = inner.get_item("label").unwrap().extract().unwrap();
+        assert_eq!(x, 7, "nested object integer field");
+        assert_eq!(label, "deep", "nested object string field");
+    });
+}
+
+// ─── T-SCRIPT-39: Event — Multiple subscribers both fire on same emit ─────────
+
+#[test]
+fn t_script_39_multiple_event_subscribers() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+count_a_39 = 0
+count_b_39 = 0
+def handler_a_39(**kwargs):
+    global count_a_39
+    count_a_39 += 1
+def handler_b_39(**kwargs):
+    global count_b_39
+    count_b_39 += 1
+rython.scene.subscribe('multi_39', handler_a_39)
+rython.scene.subscribe('multi_39', handler_b_39)
+rython.scene.emit('multi_39')
+",
+            None, None,
+        ).expect("multiple subscribers");
+
+        let main = py.import("__main__").unwrap();
+        let a: i64 = main.getattr("count_a_39").unwrap().extract().unwrap();
+        let b: i64 = main.getattr("count_b_39").unwrap().extract().unwrap();
+        assert_eq!(a, 1, "handler_a must fire");
+        assert_eq!(b, 1, "handler_b must fire");
+    });
+}
+
+// ─── T-SCRIPT-40: Event — Emit with no subscribers is a no-op ────────────────
+
+#[test]
+fn t_script_40_emit_no_subscribers() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        // Must not panic
+        py.run(
+            c"import rython; rython.scene.emit('orphan_event_40')",
+            None, None,
+        ).expect("emit with no subscribers must not panic");
+    });
+}
+
+// ─── T-SCRIPT-41: Event — subscribe returns unique IDs ───────────────────────
+
+#[test]
+fn t_script_41_subscribe_unique_ids() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+def noop_41(**kwargs): pass
+hid1 = rython.scene.subscribe('unique_id_41', noop_41)
+hid2 = rython.scene.subscribe('unique_id_41', noop_41)
+",
+            None, None,
+        ).expect("subscribe unique IDs");
+
+        let main = py.import("__main__").unwrap();
+        let id1: i64 = main.getattr("hid1").unwrap().extract().unwrap();
+        let id2: i64 = main.getattr("hid2").unwrap().extract().unwrap();
+        assert_ne!(id1, id2, "two subscriptions must return different IDs");
+    });
+}
+
+// ─── T-SCRIPT-42: Timer — Partial expiry: only past-deadline timers fire ──────
+
+#[test]
+fn t_script_42_timer_partial_expiry() {
+    use rython_scripting::flush_timers;
+
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    set_elapsed_secs(5.0);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+fired_early_42 = 0
+fired_late_42 = 0
+def on_early_42():
+    global fired_early_42
+    fired_early_42 += 1
+def on_late_42():
+    global fired_late_42
+    fired_late_42 += 1
+# fire_at = 5.0 + 1.0 = 6.0
+rython.scheduler.on_timer(1.0, on_early_42)
+# fire_at = 5.0 + 5.0 = 10.0
+rython.scheduler.on_timer(5.0, on_late_42)
+",
+            None, None,
+        ).expect("timer setup");
+
+        // elapsed=7.0: early fires, late does not
+        set_elapsed_secs(7.0);
+        flush_timers(py);
+
+        let main = py.import("__main__").unwrap();
+        let early: i64 = main.getattr("fired_early_42").unwrap().extract().unwrap();
+        let late: i64 = main.getattr("fired_late_42").unwrap().extract().unwrap();
+        assert_eq!(early, 1, "early timer (fire_at=6.0) must fire at elapsed=7.0");
+        assert_eq!(late, 0, "late timer (fire_at=10.0) must NOT fire at elapsed=7.0");
+
+        // elapsed=11.0: late fires
+        set_elapsed_secs(11.0);
+        flush_timers(py);
+        let late: i64 = main.getattr("fired_late_42").unwrap().extract().unwrap();
+        assert_eq!(late, 1, "late timer must fire when elapsed >= fire_at");
+    });
+}
+
+// ─── T-SCRIPT-43: Timer — Exact deadline equality triggers fire ───────────────
+
+#[test]
+fn t_script_43_timer_exact_deadline() {
+    use rython_scripting::flush_timers;
+
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    set_elapsed_secs(100.0);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+exact_fired_43 = 0
+def on_exact_43():
+    global exact_fired_43
+    exact_fired_43 += 1
+# fire_at = 100.0 + 2.5 = 102.5
+rython.scheduler.on_timer(2.5, on_exact_43)
+",
+            None, None,
+        ).expect("timer setup");
+
+        // elapsed == fire_at exactly: must fire (>= check)
+        set_elapsed_secs(102.5);
+        flush_timers(py);
+        let main = py.import("__main__").unwrap();
+        let fired: i64 = main.getattr("exact_fired_43").unwrap().extract().unwrap();
+        assert_eq!(fired, 1, "timer must fire when elapsed == fire_at (>= boundary)");
+    });
+}
+
+// ─── T-SCRIPT-44: Timer — Exception in one callback doesn't block others ──────
+
+#[test]
+fn t_script_44_timer_exception_continues() {
+    use rython_scripting::flush_timers;
+
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    set_elapsed_secs(200.0);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+safe_fired_44 = 0
+def bad_timer_44():
+    raise RuntimeError('timer exploded')
+def safe_timer_44():
+    global safe_fired_44
+    safe_fired_44 += 1
+rython.scheduler.on_timer(0.0, bad_timer_44)
+rython.scheduler.on_timer(0.0, safe_timer_44)
+",
+            None, None,
+        ).expect("timer setup");
+
+        flush_timers(py); // must not panic despite bad_timer raising
+
+        let main = py.import("__main__").unwrap();
+        let safe: i64 = main.getattr("safe_fired_44").unwrap().extract().unwrap();
+        assert_eq!(safe, 1, "safe timer must fire even after another timer raised an exception");
+    });
+}
+
+// ─── T-SCRIPT-45: Bridge — get_script_class returns None for unknown name ─────
+
+#[test]
+fn t_script_45_get_script_class_unknown() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    let result = rython_scripting::get_script_class("CompletelyUnknownClass_45");
+    assert!(result.is_none(), "get_script_class for unregistered name must return None");
+}
+
+// ─── T-SCRIPT-46: Bridge — drain_draw_commands second drain is empty ──────────
+
+#[test]
+fn t_script_46_drain_draw_commands_idempotent() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+    let _ = drain_draw_commands(); // clear any residual from prior tests
+
+    Python::attach(|py| {
+        py.run(
+            c"import rython; rython.renderer.draw_text('X', font_id='f', x=0.0, y=0.0, size=10)",
+            None, None,
+        ).expect("draw_text");
+    });
+
+    let first = drain_draw_commands();
+    assert_eq!(first.len(), 1, "first drain must contain the enqueued command");
+
+    let second = drain_draw_commands();
+    assert!(second.is_empty(), "second drain must return empty after first consumed all");
+}
+
+// ─── T-SCRIPT-47: Bridge — register_script_class overwrites duplicate name ────
+
+#[test]
+fn t_script_47_register_script_class_overwrite() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+class ScriptV1_47:
+    VERSION = 1
+    def __init__(self, entity): self.entity = entity
+
+class ScriptV2_47:
+    VERSION = 2
+    def __init__(self, entity): self.entity = entity
+",
+            None, None,
+        ).unwrap();
+
+        let main = py.import("__main__").unwrap();
+        let v1 = main.getattr("ScriptV1_47").unwrap().unbind();
+        let v2 = main.getattr("ScriptV2_47").unwrap().unbind();
+
+        register_script_class("OverwriteTarget_47", v1);
+        register_script_class("OverwriteTarget_47", v2);
+
+        let cls = rython_scripting::get_script_class("OverwriteTarget_47")
+            .expect("class must exist after registration");
+        let version: i64 = cls.bind(py).getattr("VERSION").unwrap().extract().unwrap();
+        assert_eq!(version, 2, "second registration must overwrite the first");
+    });
+}
