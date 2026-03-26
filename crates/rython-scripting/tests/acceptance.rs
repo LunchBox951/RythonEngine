@@ -897,6 +897,207 @@ fn t_script_27_engine_request_quit() {
     reset_quit_requested(); // clean up for future tests
 }
 
+// ─── T-SCRIPT-28: scene.unsubscribe removes a handler ────────────────────────
+
+#[test]
+fn t_script_28_scene_unsubscribe() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+count_28 = 0
+def handler_28(**kwargs):
+    global count_28
+    count_28 += 1
+
+hid = rython.scene.subscribe('test_28', handler_28)
+rython.scene.emit('test_28')
+rython.scene.unsubscribe('test_28', hid)
+rython.scene.emit('test_28')
+",
+            None,
+            None,
+        )
+        .expect("unsubscribe test");
+
+        let main = py.import("__main__").unwrap();
+        let count: i64 = main.getattr("count_28").unwrap().extract().unwrap();
+        assert_eq!(count, 1, "handler should fire once before unsubscribe, not after");
+    });
+}
+
+// ─── T-SCRIPT-29: scheduler.on_timer fires at the scheduled time ─────────────
+
+#[test]
+fn t_script_29_scheduler_on_timer() {
+    use rython_scripting::flush_timers;
+
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    set_elapsed_secs(10.0);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+timer_fired_29 = 0
+def on_timer_29():
+    global timer_fired_29
+    timer_fired_29 += 1
+# At elapsed=10.0, schedule to fire in 2 seconds (deadline = 12.0)
+rython.scheduler.on_timer(2.0, on_timer_29)
+",
+            None,
+            None,
+        )
+        .expect("on_timer setup");
+
+        // elapsed=11.0 — should NOT fire yet
+        set_elapsed_secs(11.0);
+        flush_timers(py);
+        let main = py.import("__main__").unwrap();
+        let count: i64 = main.getattr("timer_fired_29").unwrap().extract().unwrap();
+        assert_eq!(count, 0, "timer must not fire before deadline");
+
+        // elapsed=12.0 — should fire exactly once
+        set_elapsed_secs(12.0);
+        flush_timers(py);
+        let count: i64 = main.getattr("timer_fired_29").unwrap().extract().unwrap();
+        assert_eq!(count, 1, "timer must fire at deadline");
+
+        // another flush — must NOT re-fire
+        flush_timers(py);
+        let count: i64 = main.getattr("timer_fired_29").unwrap().extract().unwrap();
+        assert_eq!(count, 1, "timer must fire exactly once");
+    });
+}
+
+// ─── T-SCRIPT-30: scheduler.on_event fires the callback exactly once ─────────
+
+#[test]
+fn t_script_30_scheduler_on_event() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+event_count_30 = 0
+def on_my_event_30(**kwargs):
+    global event_count_30
+    event_count_30 += 1
+
+rython.scheduler.on_event('test_event_30', on_my_event_30)
+rython.scene.emit('test_event_30')   # should fire
+rython.scene.emit('test_event_30')   # should NOT fire (one-shot)
+",
+            None,
+            None,
+        )
+        .expect("on_event test");
+
+        let main = py.import("__main__").unwrap();
+        let count: i64 = main.getattr("event_count_30").unwrap().extract().unwrap();
+        assert_eq!(count, 1, "on_event callback must fire exactly once");
+    });
+}
+
+// ─── T-SCRIPT-31: PlayerController emits axis-change events over deadzone ─────
+
+#[test]
+fn t_script_31_axis_change_events() {
+    use rython_input::{AxisBinding, InputMap, PlayerController};
+    use rython_window::{KeyCode, RawInputEvent};
+
+    let _lock = test_lock();
+
+    let mut pc = PlayerController::new(0);
+    let mut map = InputMap::new("test31");
+    map.bind_axis(
+        "horizontal",
+        AxisBinding::KBAxis { negative: KeyCode::D, positive: KeyCode::A },
+    );
+    pc.register_map(map);
+
+    // Tick with no input — prime previous state, clear events
+    pc.tick(&[]);
+    pc.pending_events().lock().unwrap().clear();
+
+    // Press A → axis 0.0 → 1.0, crosses deadzone → axis event expected
+    pc.tick(&[RawInputEvent::KeyPressed(KeyCode::A)]);
+    {
+        let evs = pc.pending_events();
+        let guard = evs.lock().unwrap();
+        let axis_evs: Vec<_> = guard.iter().filter(|e| e.action.starts_with("axis:")).collect();
+        assert!(!axis_evs.is_empty(), "axis change event expected when key pressed above deadzone");
+        let ev = axis_evs[0];
+        assert_eq!(ev.action, "axis:horizontal");
+        assert!((ev.value - 1.0).abs() < 1e-5, "axis value should be 1.0");
+    }
+    pc.pending_events().lock().unwrap().clear();
+
+    // No new events (A still held, value unchanged)
+    pc.tick(&[]);
+    {
+        let evs = pc.pending_events();
+        let guard = evs.lock().unwrap();
+        let axis_evs: Vec<_> = guard.iter().filter(|e| e.action.starts_with("axis:")).collect();
+        assert!(axis_evs.is_empty(), "no axis event when value unchanged");
+    }
+    pc.pending_events().lock().unwrap().clear();
+
+    // Release A → axis 1.0 → 0.0, crosses back below deadzone → axis event expected
+    pc.tick(&[RawInputEvent::KeyReleased(KeyCode::A)]);
+    {
+        let evs = pc.pending_events();
+        let guard = evs.lock().unwrap();
+        let axis_evs: Vec<_> = guard.iter().filter(|e| e.action.starts_with("axis:")).collect();
+        assert!(!axis_evs.is_empty(), "axis change event expected when key released");
+        let ev = axis_evs[0];
+        assert_eq!(ev.action, "axis:horizontal");
+        assert!(ev.value.abs() < 1e-5, "axis value should be 0.0 after release");
+    }
+}
+
+// ─── T-SCRIPT-32: Per-entity event subscription via Python API ───────────────
+
+#[test]
+fn t_script_32_per_entity_event_subscription() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+received_32 = None
+def on_collision_42(**kwargs):
+    global received_32
+    received_32 = kwargs.get('entity_a')
+
+rython.scene.subscribe('collision:42', on_collision_42)
+rython.scene.emit('collision:42', entity_a=42, entity_b=99)
+",
+            None,
+            None,
+        )
+        .expect("per-entity event test");
+
+        let main = py.import("__main__").unwrap();
+        let eid: i64 = main.getattr("received_32").unwrap().extract().unwrap();
+        assert_eq!(eid, 42, "per-entity event must deliver correct payload");
+    });
+}
+
 // ─── T-SCRIPT-20: Entry Point Execution ──────────────────────────────────────
 
 #[test]

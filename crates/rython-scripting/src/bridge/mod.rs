@@ -128,6 +128,43 @@ pub fn reset_quit_requested() {
     QUIT_REQUESTED.store(false, Ordering::Relaxed);
 }
 
+// ─── Timer system ─────────────────────────────────────────────────────────────
+
+pub(crate) struct PendingTimer {
+    pub fire_at: f64,
+    pub callback: Py<PyAny>,
+}
+
+static PENDING_TIMERS: OnceLock<Arc<Mutex<Vec<PendingTimer>>>> = OnceLock::new();
+
+pub(crate) fn timer_store() -> &'static Arc<Mutex<Vec<PendingTimer>>> {
+    PENDING_TIMERS.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+}
+
+/// Fire any timers whose deadline has passed. Call once per frame after
+/// updating elapsed time.
+pub fn flush_timers(py: Python<'_>) {
+    let now = get_elapsed_secs();
+    let expired: Vec<Py<PyAny>> = {
+        let mut timers = timer_store().lock();
+        let mut expired = Vec::new();
+        timers.retain(|t| {
+            if now >= t.fire_at {
+                expired.push(t.callback.clone_ref(py));
+                false
+            } else {
+                true
+            }
+        });
+        expired
+    };
+    for cb in &expired {
+        if let Err(e) = cb.bind(py).call0() {
+            e.print_and_set_sys_last_vars(py);
+        }
+    }
+}
+
 // ─── Stub namespace ───────────────────────────────────────────────────────────
 
 #[pyclass(name = "SubModule")]
