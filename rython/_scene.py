@@ -61,13 +61,14 @@ class SceneBridge:
         """
         raise NotImplementedError
 
-    def unsubscribe(self, subscription_id: int) -> None:
+    def unsubscribe(self, event_name: str, subscription_id: int) -> None:
         """
         Remove a previously registered event handler.
 
+        :param event_name: The event name originally passed to :meth:`subscribe`.
         :param subscription_id: The integer ID returned by :meth:`subscribe`.
 
-        Calling ``unsubscribe`` with an unknown ID is a no-op.
+        Calling ``unsubscribe`` with an unknown event name or ID is a no-op.
         """
         raise NotImplementedError
 

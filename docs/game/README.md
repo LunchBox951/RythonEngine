@@ -53,7 +53,7 @@ The `rython` module is injected into `sys.modules` by the engine. It has the fol
 |---|---|
 | `rython.scene` | Spawn/despawn entities, emit and subscribe to events |
 | `rython.camera` | Control the camera position and orientation |
-| `rython.scheduler` | Register per-frame callbacks |
+| `rython.scheduler` | Register per-frame callbacks; one-shot timers and events |
 | `rython.renderer` | Queue draw commands (text overlays) |
 | `rython.time` | Read elapsed engine time |
 | `rython.engine` | Engine lifecycle control |
@@ -231,17 +231,24 @@ rython.scheduler.register_recurring(on_tick)
 
 `register_recurring` accepts any callable. Multiple callbacks can be registered; they are called in registration order each frame.
 
-**Prefer `on_timer` and `on_event` for new code.** They return cancellable handles and are more expressive than `register_recurring`:
+**Use `on_timer` for delayed one-shot actions and `on_event` for reacting to the next occurrence of an event.** Both are one-shot: the callback fires exactly once.
 
 ```python
-# Call a function every 2 seconds; cancel it later
-handle = rython.scheduler.on_timer(2.0, spawn_wave)
-rython.scheduler.cancel(handle)
+# Fire once after 5 seconds
+rython.scheduler.on_timer(5.0, spawn_boss)
 
-# Subscribe to a named event via the scheduler
-handle = rython.scheduler.on_event("player_died", on_player_died)
-rython.scheduler.cancel(handle)
+# Repeat by re-arming from within the callback
+def spawn_wave():
+    do_spawn()
+    rython.scheduler.on_timer(10.0, spawn_wave)   # re-arm for next wave
+
+rython.scheduler.on_timer(10.0, spawn_wave)
+
+# React to the next occurrence of a named event (fires once, then done)
+rython.scheduler.on_event("player_died", lambda **kw: show_respawn_screen())
 ```
+
+For a persistent subscription that fires on every occurrence, use `rython.scene.subscribe` instead (see [Custom Events](#custom-events)).
 
 ---
 
@@ -260,7 +267,7 @@ def on_player_died(score=0, reason="unknown"):
 subscription_id = rython.scene.subscribe("player_died", on_player_died)
 
 # Unsubscribe when the handler is no longer needed
-rython.scene.unsubscribe(subscription_id)
+rython.scene.unsubscribe("player_died", subscription_id)
 ```
 
 Event payloads support `None`, `bool`, `int`, `float`, and `str` values.

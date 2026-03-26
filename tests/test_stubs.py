@@ -60,13 +60,6 @@ class TestSchedulerBridgeStubs:
         with pytest.raises(NotImplementedError):
             self.s.on_event("player_died", lambda **kw: None)
 
-    def test_cancel_exists(self):
-        assert callable(self.s.cancel)
-
-    def test_cancel_raises(self):
-        with pytest.raises(NotImplementedError):
-            self.s.cancel(42)
-
     def test_repr_raises(self):
         with pytest.raises(NotImplementedError):
             repr(self.s)
@@ -102,7 +95,7 @@ class TestSceneBridgeStubs:
 
     def test_unsubscribe_raises(self):
         with pytest.raises(NotImplementedError):
-            self.sc.unsubscribe(0)
+            self.sc.unsubscribe("test_event", 0)
 
     def test_repr_raises(self):
         with pytest.raises(NotImplementedError):

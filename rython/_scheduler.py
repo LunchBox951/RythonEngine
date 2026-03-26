@@ -14,10 +14,10 @@ class SchedulerBridge:
     Wraps ``TaskScheduler::register_recurring_sequential`` at the Python level.
 
     .. note::
-        For most use cases, prefer the higher-level helpers
-        :meth:`on_timer` and :meth:`on_event` over the low-level
-        :meth:`register_recurring` callback. They are more expressive,
-        return cancellable handles, and make intent clearer.
+        :meth:`on_timer` and :meth:`on_event` are **one-shot** helpers — each
+        fires the callback exactly once, then becomes a no-op.  To repeat,
+        schedule a new call from within the callback.  For persistent
+        per-frame work use :meth:`register_recurring`.
     """
 
     def register_recurring(self, callback: Callable[[], None]) -> None:
@@ -26,52 +26,44 @@ class SchedulerBridge:
         the engine run.  The callable receives no arguments.
 
         .. note::
-            Prefer :meth:`on_timer` or :meth:`on_event` for new code.
-            ``register_recurring`` has no built-in way to cancel or throttle
-            the callback.
+            Prefer :meth:`on_timer` or :meth:`on_event` for time- or
+            event-based logic.  ``register_recurring`` has no built-in way to
+            throttle or stop the callback.
         """
         raise NotImplementedError
 
-    def on_timer(self, interval_s: float, callback: Callable[[], None]) -> int:
+    def on_timer(self, delay_secs: float, callback: Callable[[], None]) -> None:
         """
-        Call *callback* repeatedly every *interval_s* seconds.
+        Call *callback* **once** after *delay_secs* seconds have elapsed.
 
-        Returns an integer handle that can be passed to :meth:`cancel` to
-        stop future invocations.
+        This is a **one-shot** delay: the callback fires exactly once, then
+        becomes a no-op.  To repeat the behaviour, schedule a new timer from
+        within *callback*::
 
-        :param interval_s: Interval in seconds between each invocation.
-        :param callback: Zero-argument callable to invoke on each tick.
-        :returns: Cancellable subscription handle (int).
+            def wave():
+                spawn_enemies()
+                rython.scheduler.on_timer(10.0, wave)   # re-arm
+
+            rython.scheduler.on_timer(10.0, wave)
+
+        :param delay_secs: Seconds to wait before invoking *callback*.
+        :param callback: Zero-argument callable to invoke after the delay.
         """
         raise NotImplementedError
 
-    def on_event(self, event_name: str, callback: Callable[..., None]) -> int:
+    def on_event(self, event_name: str, callback: Callable[..., None]) -> None:
         """
-        Subscribe *callback* to the named scene event, firing every time
-        ``rython.scene.emit(event_name, ...)`` is called.
+        Subscribe *callback* to the named scene event for **one firing**.
 
-        The callback receives the event payload as keyword arguments, matching
-        the signature of :meth:`~rython._scene.SceneBridge.subscribe`.
+        The callback is invoked the next time ``rython.scene.emit(event_name,
+        ...)`` is called, receiving the event payload as keyword arguments.
+        After that single invocation the subscription becomes a no-op.
 
-        Returns an integer handle that can be passed to :meth:`cancel` to
-        unsubscribe.
+        For a persistent subscription use :meth:`~rython._scene.SceneBridge.subscribe`
+        directly on ``rython.scene``.
 
         :param event_name: The event name to listen for.
         :param callback: Callable accepting keyword arguments from the payload.
-        :returns: Cancellable subscription handle (int).
-        """
-        raise NotImplementedError
-
-    def cancel(self, handle: int) -> None:
-        """
-        Cancel a recurring timer or event subscription previously registered
-        with :meth:`on_timer` or :meth:`on_event`.
-
-        Calling ``cancel`` with an already-cancelled or unknown handle is a
-        no-op.
-
-        :param handle: The integer handle returned by :meth:`on_timer` or
-            :meth:`on_event`.
         """
         raise NotImplementedError
 
