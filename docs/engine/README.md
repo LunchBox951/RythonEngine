@@ -293,6 +293,51 @@ scheduler.group_seal(gid);   // callback fires when both members complete
 The `ModuleLoader` calls this automatically when a module unloads — no orphaned work survives
 module teardown.
 
+### Python Job Infrastructure
+
+`rython-scripting` layers a parallel/background job system on top of the scheduler for use from
+Python. Four global queues (all `OnceLock<Arc<Mutex<Vec<…>>>>`) and a crossbeam channel drive it:
+
+| Store | Type | Purpose |
+|---|---|---|
+| `PYTHON_BG_QUEUE` | `Vec<PythonBgRequest>` | Callables from `submit_background()` — dispatched to rayon threads |
+| `PYTHON_PAR_QUEUE` | `Vec<PythonParRequest>` | Callables from `submit_parallel()` — run synchronously this tick under the GIL |
+| `PYTHON_SEQ_QUEUE` | `Vec<Py<PyAny>>` | Callables from `run_sequential()` — run on the main thread next tick |
+| `bg_channel` (crossbeam) | `(Arc<JobState>, Result<(), String>)` | Completion signals from background rayon workers back to the main thread |
+
+The scripting module calls four flush functions per tick in this order:
+
+1. **`flush_python_bg_tasks()`** — drains `PYTHON_BG_QUEUE`; each callable is handed to
+   `rayon::spawn`; when the callable returns its result is sent through `bg_channel`.
+2. **`flush_python_par_tasks(py)`** — drains `PYTHON_PAR_QUEUE`; runs each callable
+   synchronously under the GIL; the associated `JobHandle` is done by the end of this call.
+3. **`flush_python_seq_tasks(py)`** — drains `PYTHON_SEQ_QUEUE`; runs each callable on the
+   main thread in FIFO order.
+4. **`flush_python_bg_completions(py)`** — drains the `bg_channel` receive end; updates
+   `JobState` and fires any `on_complete` callbacks registered on the handle.
+
+**`JobState` / `JobHandlePy`**
+
+`JobState` is shared between the Rust worker and the Python-visible `JobHandlePy` via
+`Arc<Mutex<JobStateInner>>`:
+
+```
+JobStateInner {
+    done:        bool            // true once the task finishes (success or failure)
+    failed:      bool            // true if the callable raised or its spawn panicked
+    error:       Option<String>  // error text when failed
+    on_complete: Vec<Py<PyAny>> // zero-argument callbacks registered before completion
+}
+```
+
+`JobState::complete(py)` and `JobState::fail(py, error)` set the flags, drain `on_complete`,
+and call each callback under the GIL. If a callback is registered via `JobHandlePy::on_complete`
+after the task is already done, it fires immediately rather than being queued.
+
+`JobHandlePy` is the PyO3 class returned to Python scripts from `submit_background` and
+`submit_parallel`. It exposes the `is_done`, `is_pending`, `is_failed`, and `error` getters, and
+the `on_complete(callback)` method.
+
 **Cross-thread submission:**
 
 ```rust
