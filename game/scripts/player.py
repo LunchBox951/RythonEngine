@@ -11,7 +11,7 @@ _spawn_pos: Tuple[float, float, float] = (0.0, 2.0, 0.0)
 _jump_sub_id: Optional[int] = None
 _collision_sub_id: Optional[int] = None
 _collision_end_sub_id: Optional[int] = None
-_grounded: bool = False
+_floor_contacts: set = set()
 
 
 def _on_jump(**kwargs) -> None:
@@ -26,23 +26,31 @@ def _on_jump(**kwargs) -> None:
 
 def _on_collision(**kwargs) -> None:
     """Track ground contact via upward-facing collision normal."""
-    global _grounded
+    global _floor_contacts
     normal = kwargs.get("normal", [0.0, 0.0, 0.0])
     if normal[1] > 0.7:
-        _grounded = True
+        entity_a = kwargs.get("entity_a")
+        entity_b = kwargs.get("entity_b")
+        other_id = entity_b if (_entity is not None and entity_a == _entity.id) else entity_a
+        if other_id is not None:
+            _floor_contacts.add(other_id)
 
 
 def _on_collision_end(**kwargs) -> None:
-    """Clear grounded flag when solid contact ends."""
-    global _grounded
-    _grounded = False
+    """Remove entity from floor contacts when solid contact ends."""
+    global _floor_contacts
+    entity_a = kwargs.get("entity_a")
+    entity_b = kwargs.get("entity_b")
+    other_id = entity_b if (_entity is not None and entity_a == _entity.id) else entity_a
+    if other_id is not None:
+        _floor_contacts.discard(other_id)
 
 
 def spawn(x: float = 0.0, y: float = 2.0, z: float = 0.0) -> Entity:
     """Spawn the player entity at (x, y, z) and store its handle."""
-    global _entity, _spawn_pos, _jump_sub_id, _collision_sub_id, _collision_end_sub_id, _grounded
+    global _entity, _spawn_pos, _jump_sub_id, _collision_sub_id, _collision_end_sub_id, _floor_contacts
     _spawn_pos = (x, y, z)
-    _grounded = False
+    _floor_contacts = set()
     _entity = rython.scene.spawn(
         transform=Transform(x=x, y=y, z=z, scale_x=0.8, scale_y=1.8, scale_z=0.8),
         mesh={"mesh_id": "cube", "texture_id": "game/assets/textures/Light/light_box_alt1.png"},
@@ -77,7 +85,7 @@ def update(dt: float) -> None:
 
 def is_grounded() -> bool:
     """Return True when the player has an active upward-facing solid contact."""
-    return _grounded
+    return len(_floor_contacts) > 0
 
 
 def get_entity() -> Optional[Entity]:
@@ -94,7 +102,7 @@ def get_position() -> Tuple[float, float, float]:
 
 def respawn() -> None:
     """Teleport the player back to the spawn position."""
-    global _entity, _collision_sub_id, _collision_end_sub_id, _grounded
+    global _entity, _collision_sub_id, _collision_end_sub_id, _floor_contacts
     if _entity is not None:
         if _collision_sub_id is not None:
             rython.scene.unsubscribe(f"collision:{_entity.id}", _collision_sub_id)
@@ -103,7 +111,7 @@ def respawn() -> None:
             rython.scene.unsubscribe(f"collision_end:{_entity.id}", _collision_end_sub_id)
             _collision_end_sub_id = None
         _entity.despawn()
-    _grounded = False
+    _floor_contacts = set()
     x, y, z = _spawn_pos
     _entity = rython.scene.spawn(
         transform=Transform(x=x, y=y, z=z, scale_x=0.8, scale_y=1.8, scale_z=0.8),
@@ -122,7 +130,7 @@ def respawn() -> None:
 
 def despawn() -> None:
     """Remove the player entity."""
-    global _entity, _collision_sub_id, _collision_end_sub_id, _grounded
+    global _entity, _collision_sub_id, _collision_end_sub_id, _floor_contacts
     if _entity is not None:
         if _collision_sub_id is not None:
             rython.scene.unsubscribe(f"collision:{_entity.id}", _collision_sub_id)
@@ -132,4 +140,4 @@ def despawn() -> None:
             _collision_end_sub_id = None
         _entity.despawn()
         _entity = None
-    _grounded = False
+    _floor_contacts = set()
