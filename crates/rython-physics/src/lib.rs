@@ -1249,4 +1249,347 @@ mod tests {
         assert!(m.world.is_none());
         assert_eq!(m.name(), "physics");
     }
+
+    // ── T-PHYS-20: Sync cycle idempotent registration ─────────────────────────
+    //
+    // Repeated sync_step calls must not re-register the same entity.
+
+    #[test]
+    fn t_phys_20_sync_cycle_idempotent_registration() {
+        let scene = Scene::new();
+        let _e = spawn(&scene, transform(0.0, 0.0, 0.0), dyn_rb(), box_col([1.0, 1.0, 1.0]));
+
+        let mut w = world_zero_gravity();
+        for _ in 0..5 {
+            w.sync_step(&scene);
+        }
+        assert_eq!(w.body_count(), 1, "sync_step must not re-register the same body");
+    }
+
+    // ── T-PHYS-21: Per-entity collision events fire for both entities ──────────
+    //
+    // Both collision:{a} and collision:{b} must fire when two bodies overlap.
+    // Each payload must name both entity IDs.
+
+    #[test]
+    fn t_phys_21_per_entity_collision_both_entities() {
+        let scene = Scene::new();
+        let a = spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 1, 1),
+            box_col([1.0, 1.0, 1.0]),
+        );
+        let b = spawn(
+            &scene,
+            transform(0.5, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 1, 1),
+            box_col([1.0, 1.0, 1.0]),
+        );
+
+        let got_a: Arc<Mutex<Option<serde_json::Value>>> = Arc::new(Mutex::new(None));
+        let got_b: Arc<Mutex<Option<serde_json::Value>>> = Arc::new(Mutex::new(None));
+
+        let ga = got_a.clone();
+        scene.subscribe(&format!("collision:{}", a.0), move |_, payload| {
+            if ga.lock().unwrap().is_none() {
+                ga.lock().unwrap().replace(payload.clone());
+            }
+        });
+        let gb = got_b.clone();
+        scene.subscribe(&format!("collision:{}", b.0), move |_, payload| {
+            if gb.lock().unwrap().is_none() {
+                gb.lock().unwrap().replace(payload.clone());
+            }
+        });
+
+        let mut w =
+            PhysicsWorld::new(PhysicsConfig { gravity: [0.0, 0.0, 0.0], ..Default::default() });
+        for _ in 0..5 {
+            w.sync_step(&scene);
+        }
+
+        let pa = got_a.lock().unwrap();
+        let pb = got_b.lock().unwrap();
+        assert!(pa.is_some(), "collision:{} not fired", a.0);
+        assert!(pb.is_some(), "collision:{} not fired", b.0);
+
+        // Both payloads must contain both entity IDs.
+        let ids_a: std::collections::HashSet<u64> = [
+            pa.as_ref().unwrap()["entity_a"].as_u64().unwrap(),
+            pa.as_ref().unwrap()["entity_b"].as_u64().unwrap(),
+        ]
+        .into();
+        assert!(
+            ids_a.contains(&a.0) && ids_a.contains(&b.0),
+            "payload for collision:{} must name both entity IDs",
+            a.0
+        );
+
+        let ids_b: std::collections::HashSet<u64> = [
+            pb.as_ref().unwrap()["entity_a"].as_u64().unwrap(),
+            pb.as_ref().unwrap()["entity_b"].as_u64().unwrap(),
+        ]
+        .into();
+        assert!(
+            ids_b.contains(&a.0) && ids_b.contains(&b.0),
+            "payload for collision:{} must name both entity IDs",
+            b.0
+        );
+    }
+
+    // ── T-PHYS-22: Per-entity collision_end events fire for both entities ──────
+    //
+    // After two solid bodies collide and separate, both collision_end:{a} and
+    // collision_end:{b} must fire.
+
+    #[test]
+    fn t_phys_22_per_entity_collision_end_both_entities() {
+        let scene = Scene::new();
+        let a = spawn(
+            &scene,
+            transform(-2.0, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 1, 1),
+            box_col([1.0, 1.0, 1.0]),
+        );
+        let b = spawn(
+            &scene,
+            transform(2.0, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 1, 1),
+            box_col([1.0, 1.0, 1.0]),
+        );
+
+        let ended_a: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+        let ended_b: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+
+        let ea = ended_a.clone();
+        scene.subscribe(&format!("collision_end:{}", a.0), move |_, _| {
+            *ea.lock().unwrap() = true;
+        });
+        let eb = ended_b.clone();
+        scene.subscribe(&format!("collision_end:{}", b.0), move |_, _| {
+            *eb.lock().unwrap() = true;
+        });
+
+        let mut w =
+            PhysicsWorld::new(PhysicsConfig { gravity: [0.0, 0.0, 0.0], ..Default::default() });
+        w.sync_step(&scene);
+        w.set_linear_velocity(a, [10.0, 0.0, 0.0]);
+        w.set_linear_velocity(b, [-10.0, 0.0, 0.0]);
+
+        for _ in 0..120 {
+            w.sync_step(&scene);
+        }
+
+        assert!(*ended_a.lock().unwrap(), "collision_end:{} not fired", a.0);
+        assert!(*ended_b.lock().unwrap(), "collision_end:{} not fired", b.0);
+    }
+
+    // ── T-PHYS-23: Per-entity trigger_enter and trigger_exit events ───────────
+    //
+    // Both trigger_enter:{trigger_id} and trigger_enter:{body_id} must fire when
+    // a dynamic body enters a sensor volume; likewise trigger_exit on departure.
+
+    #[test]
+    fn t_phys_23_per_entity_trigger_events() {
+        let scene = Scene::new();
+        let trigger = spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("static", 0.0, 1, 1),
+            trigger_col([4.0, 4.0, 4.0]),
+        );
+        // Body starts inside the trigger zone and falls under gravity out the bottom.
+        let body = spawn(&scene, transform(0.0, 1.0, 0.0), dyn_rb(), box_col([0.4, 0.4, 0.4]));
+
+        let entered_trigger: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+        let entered_body: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+        let exited_trigger: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+        let exited_body: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+
+        let et = entered_trigger.clone();
+        scene.subscribe(&format!("trigger_enter:{}", trigger.0), move |_, _| {
+            *et.lock().unwrap() = true;
+        });
+        let eb = entered_body.clone();
+        scene.subscribe(&format!("trigger_enter:{}", body.0), move |_, _| {
+            *eb.lock().unwrap() = true;
+        });
+        let xt = exited_trigger.clone();
+        scene.subscribe(&format!("trigger_exit:{}", trigger.0), move |_, _| {
+            *xt.lock().unwrap() = true;
+        });
+        let xb = exited_body.clone();
+        scene.subscribe(&format!("trigger_exit:{}", body.0), move |_, _| {
+            *xb.lock().unwrap() = true;
+        });
+
+        let mut w = world();
+        for _ in 0..180 {
+            w.sync_step(&scene);
+        }
+
+        assert!(*entered_trigger.lock().unwrap(), "trigger_enter:{} not fired", trigger.0);
+        assert!(*entered_body.lock().unwrap(), "trigger_enter:{} not fired", body.0);
+        assert!(*exited_trigger.lock().unwrap(), "trigger_exit:{} not fired", trigger.0);
+        assert!(*exited_body.lock().unwrap(), "trigger_exit:{} not fired", body.0);
+    }
+
+    // ── T-PHYS-24: Sensor overlap emits trigger, not collision ────────────────
+    //
+    // When a dynamic body overlaps a sensor, only 'trigger' fires.
+    // 'collision' must NOT fire.
+
+    #[test]
+    fn t_phys_24_sensor_no_solid_collision_event() {
+        let scene = Scene::new();
+        spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("static", 0.0, 1, 1),
+            trigger_col([4.0, 4.0, 4.0]),
+        );
+        spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 1, 1),
+            box_col([0.5, 0.5, 0.5]),
+        );
+
+        let trigger_fired: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+        let collision_fired: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+
+        let tf = trigger_fired.clone();
+        scene.subscribe("trigger", move |_, _| {
+            *tf.lock().unwrap() = true;
+        });
+        let cf = collision_fired.clone();
+        scene.subscribe("collision", move |_, _| {
+            *cf.lock().unwrap() = true;
+        });
+
+        let mut w =
+            PhysicsWorld::new(PhysicsConfig { gravity: [0.0, 0.0, 0.0], ..Default::default() });
+        for _ in 0..10 {
+            w.sync_step(&scene);
+        }
+
+        assert!(*trigger_fired.lock().unwrap(), "trigger event expected for sensor overlap");
+        assert!(
+            !*collision_fired.lock().unwrap(),
+            "collision event must NOT fire for sensor overlap"
+        );
+    }
+
+    // ── T-PHYS-25: Normal orientation — horizontal X-axis collision ───────────
+    //
+    // Each per-entity collision event must deliver a normal pointing TOWARD that
+    // entity, regardless of rapier's internal collider-handle ordering.
+    // Body a (left, -X) must receive normal[0] < -0.5.
+    // Body b (right, +X) must receive normal[0] > +0.5.
+
+    #[test]
+    fn t_phys_25_per_entity_normal_orientation_x_axis() {
+        let scene = Scene::new();
+        let a = spawn(
+            &scene,
+            transform(-2.0, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 1, 1),
+            box_col([1.0, 1.0, 1.0]),
+        );
+        let b = spawn(
+            &scene,
+            transform(2.0, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 1, 1),
+            box_col([1.0, 1.0, 1.0]),
+        );
+
+        let normal_a: Arc<Mutex<Option<[f64; 3]>>> = Arc::new(Mutex::new(None));
+        let normal_b: Arc<Mutex<Option<[f64; 3]>>> = Arc::new(Mutex::new(None));
+
+        let na = normal_a.clone();
+        scene.subscribe(&format!("collision:{}", a.0), move |_, payload| {
+            if na.lock().unwrap().is_none() {
+                if let Some(arr) = payload["normal"].as_array() {
+                    let nx = arr[0].as_f64().unwrap_or(0.0);
+                    let ny = arr[1].as_f64().unwrap_or(0.0);
+                    let nz = arr[2].as_f64().unwrap_or(0.0);
+                    *na.lock().unwrap() = Some([nx, ny, nz]);
+                }
+            }
+        });
+        let nb = normal_b.clone();
+        scene.subscribe(&format!("collision:{}", b.0), move |_, payload| {
+            if nb.lock().unwrap().is_none() {
+                if let Some(arr) = payload["normal"].as_array() {
+                    let nx = arr[0].as_f64().unwrap_or(0.0);
+                    let ny = arr[1].as_f64().unwrap_or(0.0);
+                    let nz = arr[2].as_f64().unwrap_or(0.0);
+                    *nb.lock().unwrap() = Some([nx, ny, nz]);
+                }
+            }
+        });
+
+        let mut w =
+            PhysicsWorld::new(PhysicsConfig { gravity: [0.0, 0.0, 0.0], ..Default::default() });
+        w.sync_step(&scene);
+        w.set_linear_velocity(a, [10.0, 0.0, 0.0]);
+        w.set_linear_velocity(b, [-10.0, 0.0, 0.0]);
+
+        for _ in 0..60 {
+            w.sync_step(&scene);
+            if normal_a.lock().unwrap().is_some() && normal_b.lock().unwrap().is_some() {
+                break;
+            }
+        }
+
+        let na = normal_a.lock().unwrap().expect("collision:{a} per-entity event not fired");
+        let nb = normal_b.lock().unwrap().expect("collision:{b} per-entity event not fired");
+
+        // a is on the left: its per-entity normal must point leftward (-X, toward a).
+        assert!(
+            na[0] < -0.5,
+            "collision:{} normal[0]={} must be < -0.5 (pointing toward a on the left)",
+            a.0,
+            na[0]
+        );
+        // b is on the right: its per-entity normal must point rightward (+X, toward b).
+        assert!(
+            nb[0] > 0.5,
+            "collision:{} normal[0]={} must be > +0.5 (pointing toward b on the right)",
+            b.0,
+            nb[0]
+        );
+    }
+
+    // ── T-PHYS-26: set_gravity runtime change ────────────────────────────────
+    //
+    // Calling set_gravity between steps must change the acceleration applied in
+    // subsequent steps.
+
+    #[test]
+    fn t_phys_26_set_gravity_runtime_change() {
+        let scene = Scene::new();
+        let e = spawn(&scene, transform(0.0, 10.0, 0.0), dyn_rb(), box_col([1.0, 1.0, 1.0]));
+
+        let mut w = world_zero_gravity();
+        // 30 frames of zero gravity — body should stay at y=10.
+        for _ in 0..30 {
+            w.sync_step(&scene);
+        }
+        let y_before = scene.components.get::<TransformComponent>(e).unwrap().y;
+        assert!((y_before - 10.0).abs() < 0.01, "y={} should be 10.0 with zero gravity", y_before);
+
+        // Enable gravity mid-simulation.
+        w.set_gravity([0.0, -9.81, 0.0]);
+        for _ in 0..60 {
+            w.sync_step(&scene);
+        }
+        let y_after = scene.components.get::<TransformComponent>(e).unwrap().y;
+        assert!(
+            y_after < y_before - 1.0,
+            "y={} should have fallen after enabling gravity",
+            y_after
+        );
+    }
 }
