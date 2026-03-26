@@ -216,7 +216,7 @@ pub fn json_to_py_dict<'py>(
 }
 
 fn json_val_to_py<'py>(py: Python<'py>, val: &serde_json::Value) -> PyResult<Bound<'py, PyAny>> {
-    use pyo3::types::{PyBool, PyNone};
+    use pyo3::types::{PyBool, PyDict, PyList, PyNone};
     Ok(match val {
         serde_json::Value::Null => PyNone::get(py).as_any().to_owned(),
         serde_json::Value::Bool(b) => PyBool::new(py, *b).as_any().to_owned(),
@@ -228,7 +228,20 @@ fn json_val_to_py<'py>(py: Python<'py>, val: &serde_json::Value) -> PyResult<Bou
             }
         }
         serde_json::Value::String(s) => PyString::new(py, s).into_any(),
-        _ => PyNone::get(py).as_any().to_owned(),
+        serde_json::Value::Array(arr) => {
+            let elements: Vec<Bound<'py, PyAny>> = arr
+                .iter()
+                .map(|v| json_val_to_py(py, v))
+                .collect::<PyResult<_>>()?;
+            PyList::new(py, elements)?.into_any()
+        }
+        serde_json::Value::Object(obj) => {
+            let dict = PyDict::new(py);
+            for (k, v) in obj {
+                dict.set_item(PyString::new(py, k), json_val_to_py(py, v)?)?;
+            }
+            dict.into_any()
+        }
     })
 }
 
