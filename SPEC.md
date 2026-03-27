@@ -34,3 +34,11 @@ Quick Wins (1-2 hour implementations)
 - Light direction editor — Make the hardcoded light direction configurable in the editor → [.spec/material-properties.spec.md](.spec/material-properties.spec.md#2-light-direction-editor)
 - Background color picker — Currently hardcoded gray (0.15, 0.15, 0.15) → [.spec/material-properties.spec.md](.spec/material-properties.spec.md#3-background-color-picker)
 - Depth fog — Linear or exponential fog as a simple post-effect → [.spec/fog-atmosphere.spec.md](.spec/fog-atmosphere.spec.md)
+
+
+**Acceptance Criteria** - These tests must pass before any commits happen
+1. All tests (new and old) pass without fail.
+2. `make build` compiles without errors.
+
+3. When changes to `game/` are made, `make run SCRIPT_DIR=. SCRIPT=game.scripts.main` compiles and runs without errors.
+- If changes have been made to visuals, confirm with the user with a screenshot that everything works as intended. (`Screenshot_20260327_123417 (Pre-changes).png` shows how the game looked before changes have been made)
