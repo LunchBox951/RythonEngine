@@ -37,7 +37,7 @@ Quick Wins (1-2 hour implementations)
 
 
 **Acceptance Criteria** - These tests must pass before any commits happen
-1. All tests (new and old) pass without fail.
+1. All tests (new and old) pass without fail. `cargo test -q 2>&1`
 2. `make build` compiles without errors.
 
 3. When changes to `game/` are made, `make run SCRIPT_DIR=. SCRIPT=game.scripts.main` compiles and runs without errors.
