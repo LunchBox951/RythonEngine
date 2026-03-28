@@ -76,6 +76,10 @@ impl SceneBridge {
                                 .get("visible")
                                 .and_then(|v| v.extract::<bool>().ok())
                                 .unwrap_or(true);
+                            let normal_map_id = map
+                                .get("normal_map")
+                                .and_then(|v| v.extract::<String>().ok())
+                                .filter(|s| !s.is_empty());
                             let metallic = map
                                 .get("metallic")
                                 .and_then(|v| v.extract::<f32>().ok())
@@ -101,6 +105,7 @@ impl SceneBridge {
                                 Box::new(MeshComponent {
                                     mesh_id,
                                     texture_id,
+                                    normal_map_id,
                                     visible,
                                     metallic,
                                     roughness,

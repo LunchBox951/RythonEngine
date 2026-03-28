@@ -61,9 +61,11 @@ pub struct BindGroupLayouts {
     pub mesh_camera: wgpu::BindGroupLayout,
     /// `mesh` shader: group(1) = model uniform buffer
     pub mesh_model: wgpu::BindGroupLayout,
-    /// `mesh` shader: group(2) = texture_2d + sampler
+    /// `mesh` shader: group(2) = diffuse texture_2d + sampler
     pub mesh_texture: wgpu::BindGroupLayout,
-    /// `mesh` shader: group(3) = directional light uniform
+    /// `mesh` shader: group(3) = normal map texture_2d + sampler
+    pub mesh_normal_map: wgpu::BindGroupLayout,
+    /// `mesh` shader: group(4) = directional light uniform
     pub mesh_dir_light: wgpu::BindGroupLayout,
 }
 
@@ -334,7 +336,7 @@ impl GpuContext {
             true,
             sample_count,
         )?;
-        let (mesh, mesh_camera_bgl, mesh_model_bgl, mesh_texture_bgl, mesh_dir_light_bgl) =
+        let (mesh, mesh_camera_bgl, mesh_model_bgl, mesh_texture_bgl, mesh_normal_map_bgl, mesh_dir_light_bgl) =
             Self::build_mesh_pipeline(device, surface_format, sample_count)?;
 
         let pipelines = Pipelines { primitive, image, text, mesh };
@@ -345,6 +347,7 @@ impl GpuContext {
             mesh_camera: mesh_camera_bgl,
             mesh_model: mesh_model_bgl,
             mesh_texture: mesh_texture_bgl,
+            mesh_normal_map: mesh_normal_map_bgl,
             mesh_dir_light: mesh_dir_light_bgl,
         };
         Ok((pipelines, bind_group_layouts))
@@ -459,7 +462,7 @@ impl GpuContext {
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
         sample_count: u32,
-    ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout), RendererError> {
+    ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout), RendererError> {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh"),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(MESH_WGSL)),
@@ -480,7 +483,7 @@ impl GpuContext {
             }],
         });
 
-        // group(1): model uniform (model matrix + color) — vertex and fragment
+        // group(1): model uniform (model matrix + color + flags) — vertex and fragment
         let model_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("mesh_model"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -495,7 +498,7 @@ impl GpuContext {
             }],
         });
 
-        // group(2): texture + sampler — fragment-only
+        // group(2): diffuse texture + sampler — fragment-only
         let texture_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("mesh_texture"),
             entries: &[
@@ -518,7 +521,30 @@ impl GpuContext {
             ],
         });
 
-        // group(3): directional light uniform — fragment-only
+        // group(3): normal map texture + sampler — fragment-only
+        let normal_map_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("mesh_normal_map"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        // group(4): directional light uniform — fragment-only
         let dir_light_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("mesh_dir_light"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -535,14 +561,23 @@ impl GpuContext {
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh"),
-            bind_group_layouts: &[&camera_bgl, &model_bgl, &texture_bgl, &dir_light_bgl],
+            bind_group_layouts: &[
+                &camera_bgl,
+                &model_bgl,
+                &texture_bgl,
+                &normal_map_bgl,
+                &dir_light_bgl,
+            ],
             push_constant_ranges: &[],
         });
 
         let vertex_attrs = wgpu::vertex_attr_array![
-            0 => Float32x3, // position
-            1 => Float32x3, // normal
-            2 => Float32x2, // uv
+            0 => Float32x3, // position   (offset  0, 12 B)
+            1 => Float32x3, // normal     (offset 12, 12 B)
+            2 => Float32x2, // uv         (offset 24,  8 B)
+            3 => Float32x3, // tangent    (offset 32, 12 B)
+            4 => Float32x3, // bitangent  (offset 44, 12 B)
+            // _pad [f32;2] at offset 56 — not read by shader, stride accounts for it
         ];
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -553,7 +588,7 @@ impl GpuContext {
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
                 buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: 32,
+                    array_stride: 64,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &vertex_attrs,
                 }],
@@ -589,7 +624,7 @@ impl GpuContext {
             cache: None,
         });
 
-        Ok((pipeline, camera_bgl, model_bgl, texture_bgl, dir_light_bgl))
+        Ok((pipeline, camera_bgl, model_bgl, texture_bgl, normal_map_bgl, dir_light_bgl))
     }
 }
 
@@ -611,12 +646,12 @@ struct CameraUniform {
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct ModelUniform {
-    model: [[f32; 4]; 4],  // 64 B
-    color: [f32; 4],        // 16 B
-    has_texture: u32,       //  4 B
-    metallic: f32,          //  4 B
-    roughness: f32,         //  4 B
-    _pad2: u32,             //  4 B
+    model: [[f32; 4]; 4],   // 64 B [0-63]
+    color: [f32; 4],         // 16 B [64-79]
+    has_texture: u32,        //  4 B [80-83]
+    metallic: f32,           //  4 B [84-87]
+    roughness: f32,          //  4 B [88-91]
+    has_normal_map: u32,     //  4 B [92-95]
 }
 
 // DirectionalLightUniform: 32 bytes — matches MESH_WGSL DirectionalLightUniform.
@@ -860,8 +895,12 @@ pub struct RendererState {
     glyph_atlas: Option<GlyphAtlas>,
     /// Cached texture bind groups keyed by file path.
     texture_cache: HashMap<String, wgpu::BindGroup>,
-    /// 1×1 white fallback bind group used when no texture is specified.
+    /// 1×1 white fallback bind group used when no diffuse texture is specified.
     fallback_texture_bg: wgpu::BindGroup,
+    /// Cached normal map bind groups keyed by file path.
+    normal_map_cache: HashMap<String, wgpu::BindGroup>,
+    /// 1×1 flat-normal fallback bind group (RGB=127,127,255) used when normal_map_id=None or missing.
+    fallback_normal_map_bg: wgpu::BindGroup,
 }
 
 impl RendererState {
@@ -918,6 +957,58 @@ impl RendererState {
             ],
         });
 
+        // Create 1×1 flat-normal fallback texture (127, 127, 255) used when no normal map is set.
+        // This encodes the tangent-space up vector (0, 0, 1) which leaves normals unchanged.
+        let flat_normal_pixel: [u8; 4] = [127, 127, 255, 255];
+        let flat_normal_tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("fallback_flat_normal"),
+            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        gpu.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &flat_normal_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &flat_normal_pixel,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        );
+        let flat_normal_view = flat_normal_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let flat_normal_sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("fallback_normal_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        let fallback_normal_map_bg = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("fallback_normal_map_bg"),
+            layout: &gpu.bind_group_layouts.mesh_normal_map,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&flat_normal_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&flat_normal_sampler),
+                },
+            ],
+        });
+
         Self {
             gpu,
             config,
@@ -928,6 +1019,8 @@ impl RendererState {
             glyph_atlas: None,
             texture_cache: HashMap::new(),
             fallback_texture_bg,
+            normal_map_cache: HashMap::new(),
+            fallback_normal_map_bg,
         }
     }
 
@@ -971,7 +1064,7 @@ impl RendererState {
             MeshBuffers { vertex_buf, index_buf, index_count: indices.len() as u32 },
         );
         log::debug!("mesh uploaded: '{}' ({} verts, {} indices)", mesh_id,
-            vertices_bytes.len() / 32, indices.len());
+            vertices_bytes.len() / 64, indices.len());
     }
 
     /// Load a PNG texture from disk into the texture cache if not already loaded.
@@ -1037,6 +1130,73 @@ impl RendererState {
             }
             Err(e) => {
                 log::warn!("failed to load texture '{}': {}", texture_id, e);
+            }
+        }
+    }
+
+    /// Load a PNG normal map from disk into the normal_map_cache if not already loaded.
+    /// Falls back to the flat-normal texture on missing files (logs a warning).
+    fn ensure_normal_map_loaded(&mut self, normal_map_id: &str) {
+        if normal_map_id.is_empty() || self.normal_map_cache.contains_key(normal_map_id) {
+            return;
+        }
+        match image::open(normal_map_id) {
+            Ok(img) => {
+                let rgba = img.to_rgba8();
+                let (w, h) = (rgba.width(), rgba.height());
+                let tex = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some(normal_map_id),
+                    size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                self.gpu.queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &tex,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &rgba,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(4 * w),
+                        rows_per_image: Some(h),
+                    },
+                    wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                );
+                let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                let sampler = self.gpu.device.create_sampler(&wgpu::SamplerDescriptor {
+                    label: Some("normal_map_sampler"),
+                    address_mode_u: wgpu::AddressMode::Repeat,
+                    address_mode_v: wgpu::AddressMode::Repeat,
+                    mag_filter: wgpu::FilterMode::Linear,
+                    min_filter: wgpu::FilterMode::Linear,
+                    ..Default::default()
+                });
+                let bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("normal_map_bg"),
+                    layout: &self.gpu.bind_group_layouts.mesh_normal_map,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&sampler),
+                        },
+                    ],
+                });
+                log::debug!("normal map loaded: '{}' ({}x{})", normal_map_id, w, h);
+                self.normal_map_cache.insert(normal_map_id.to_string(), bg);
+            }
+            Err(e) => {
+                log::warn!("failed to load normal map '{}': {} — using flat-normal fallback", normal_map_id, e);
             }
         }
     }
@@ -1124,6 +1284,9 @@ impl RendererState {
         // Pre-load all textures referenced by this batch.
         for cmd in commands {
             self.ensure_texture_loaded(&cmd.texture_id);
+            if let Some(ref nm_id) = cmd.normal_map_id {
+                self.ensure_normal_map_loaded(nm_id);
+            }
         }
 
         // Access depth texture view (must have been created by ensure_depth_texture).
@@ -1222,7 +1385,7 @@ impl RendererState {
 
             pass.set_pipeline(&self.gpu.pipelines.mesh);
             pass.set_bind_group(0, &cam_bg, &[]);
-            pass.set_bind_group(3, &dir_light_bg, &[]);
+            pass.set_bind_group(4, &dir_light_bg, &[]);
 
             for cmd in commands {
                 let Some(mesh) = self.mesh_cache.get(&cmd.mesh_id) else {
@@ -1231,13 +1394,14 @@ impl RendererState {
                 };
 
                 let has_tex = if cmd.texture_id.is_empty() { 0u32 } else { 1u32 };
+                let has_normal_map = if cmd.normal_map_id.is_some() { 1u32 } else { 0u32 };
                 let model_uniform = ModelUniform {
                     model: cmd.transform.to_cols_array_2d(),
                     color: [1.0, 1.0, 1.0, 1.0],
                     has_texture: has_tex,
                     metallic: cmd.metallic.clamp(0.0, 1.0),
                     roughness: cmd.roughness.clamp(0.0, 1.0),
-                    _pad2: 0,
+                    has_normal_map,
                 };
                 let model_bytes: &[u8] = bytemuck::bytes_of(&model_uniform);
                 let model_buf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
@@ -1266,8 +1430,18 @@ impl RendererState {
                         .unwrap_or(&self.fallback_texture_bg)
                 };
 
+                let normal_map_bg = match &cmd.normal_map_id {
+                    Some(nm_id) => {
+                        self.normal_map_cache
+                            .get(nm_id.as_str())
+                            .unwrap_or(&self.fallback_normal_map_bg)
+                    }
+                    None => &self.fallback_normal_map_bg,
+                };
+
                 pass.set_bind_group(1, &model_bg, &[]);
                 pass.set_bind_group(2, tex_bg, &[]);
+                pass.set_bind_group(3, normal_map_bg, &[]);
                 pass.set_vertex_buffer(0, mesh.vertex_buf.slice(..));
                 pass.set_index_buffer(mesh.index_buf.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, 0..1);

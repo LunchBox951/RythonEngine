@@ -19,6 +19,10 @@ _TEX_FLOOR = "game/assets/textures/Light/light_floor_grid.png"
 _TEX_WALL = "game/assets/textures/Light/light_wall.png"
 _TEX_BOX = "game/assets/textures/Light/light_box.png"
 
+_NRM_FLOOR = "game/assets/textures/Light/light_floor_grid_n.png"
+_NRM_WALL = "game/assets/textures/Light/light_wall_n.png"
+_NRM_BOX = "game/assets/textures/Light/light_box_n.png"
+
 
 def _on_collect(entity, **kwargs) -> None:
     global _collected
@@ -52,19 +56,19 @@ def build() -> None:
     rython.renderer.set_light_intensity(1.1)
 
     # Ground — 20x20
-    lb.spawn_static_block(0.0, -0.5, 0.0, 20.0, 1.0, 20.0, texture=_TEX_FLOOR)
+    lb.spawn_static_block(0.0, -0.5, 0.0, 20.0, 1.0, 20.0, texture=_TEX_FLOOR, normal_map=_NRM_FLOOR)
 
     # Border walls
-    lb.spawn_static_block(-10.0, 1.0, 0.0, 1.0, 2.0, 20.0, texture=_TEX_WALL)  # west
-    lb.spawn_static_block(10.0, 1.0, 0.0, 1.0, 2.0, 20.0, texture=_TEX_WALL)   # east
-    lb.spawn_static_block(0.0, 1.0, -10.0, 20.0, 2.0, 1.0, texture=_TEX_WALL)  # north
-    lb.spawn_static_block(0.0, 1.0, 10.0, 20.0, 2.0, 1.0, texture=_TEX_WALL)   # south
+    lb.spawn_static_block(-10.0, 1.0, 0.0, 1.0, 2.0, 20.0, texture=_TEX_WALL, normal_map=_NRM_WALL)  # west
+    lb.spawn_static_block(10.0, 1.0, 0.0, 1.0, 2.0, 20.0, texture=_TEX_WALL, normal_map=_NRM_WALL)   # east
+    lb.spawn_static_block(0.0, 1.0, -10.0, 20.0, 2.0, 1.0, texture=_TEX_WALL, normal_map=_NRM_WALL)  # north
+    lb.spawn_static_block(0.0, 1.0, 10.0, 20.0, 2.0, 1.0, texture=_TEX_WALL, normal_map=_NRM_WALL)   # south
 
     # 4 raised platforms
-    lb.spawn_static_block(-5.0, 2.0, -5.0, 4.0, 0.5, 4.0, texture=_TEX_BOX)
-    lb.spawn_static_block(5.0, 3.0, -5.0, 4.0, 0.5, 4.0, texture=_TEX_BOX)
-    lb.spawn_static_block(-5.0, 4.0, 5.0, 4.0, 0.5, 4.0, texture=_TEX_BOX)
-    lb.spawn_static_block(5.0, 2.5, 5.0, 4.0, 0.5, 4.0, texture=_TEX_BOX)
+    lb.spawn_static_block(-5.0, 2.0, -5.0, 4.0, 0.5, 4.0, texture=_TEX_BOX, normal_map=_NRM_BOX)
+    lb.spawn_static_block(5.0, 3.0, -5.0, 4.0, 0.5, 4.0, texture=_TEX_BOX, normal_map=_NRM_BOX)
+    lb.spawn_static_block(-5.0, 4.0, 5.0, 4.0, 0.5, 4.0, texture=_TEX_BOX, normal_map=_NRM_BOX)
+    lb.spawn_static_block(5.0, 2.5, 5.0, 4.0, 0.5, 4.0, texture=_TEX_BOX, normal_map=_NRM_BOX)
 
     # 3 score pickups — subscribe trigger_enter for each
     p1 = lb.spawn_pickup(-5.0, 2.5, -5.0, pickup_type="score", value=100)

@@ -45,6 +45,9 @@ impl Component for TransformComponent {
 pub struct MeshComponent {
     pub mesh_id: String,
     pub texture_id: String,
+    /// Asset key for normal map texture; `None` means flat normals (vertex normals only).
+    #[serde(default)]
+    pub normal_map_id: Option<String>,
     pub yaw_offset: f32,
     pub shininess: f32,
     pub visible: bool,
@@ -65,6 +68,7 @@ impl Default for MeshComponent {
         Self {
             mesh_id: String::new(),
             texture_id: String::new(),
+            normal_map_id: None,
             yaw_offset: 0.0,
             shininess: 0.0,
             visible: true,

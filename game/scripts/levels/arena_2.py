@@ -18,6 +18,9 @@ _collected: int = 0
 _TEX_PLATFORM = "game/assets/textures/Orange/orange_box.png"
 _TEX_PILLAR = "game/assets/textures/Dark/dark_box.png"
 
+_NRM_PLATFORM = "game/assets/textures/Orange/orange_box_n.png"
+_NRM_PILLAR = "game/assets/textures/Dark/dark_box_n.png"
+
 
 def _on_collect(entity, **kwargs) -> None:
     global _collected
@@ -52,7 +55,7 @@ def build() -> None:
 
     # No ground — void below. Floating platforms form a path.
     # Start platform
-    lb.spawn_static_block(0.0, 0.0, 0.0, 6.0, 0.5, 6.0, texture=_TEX_PLATFORM)
+    lb.spawn_static_block(0.0, 0.0, 0.0, 6.0, 0.5, 6.0, texture=_TEX_PLATFORM, normal_map=_NRM_PLATFORM)
 
     # Platform chain across the void
     platform_data = [
@@ -64,11 +67,11 @@ def build() -> None:
         (-8.0, 4.0, -14.0, 6.0, 0.5, 6.0),  # end platform
     ]
     for x, y, z, w, h, d in platform_data:
-        lb.spawn_static_block(x, y, z, w, h, d, texture=_TEX_PLATFORM)
+        lb.spawn_static_block(x, y, z, w, h, d, texture=_TEX_PLATFORM, normal_map=_NRM_PLATFORM)
 
     # Decorative pillars
-    lb.spawn_static_block(16.0, 2.25, -6.5, texture=_TEX_PILLAR)
-    lb.spawn_static_block(16.0, 2.25, -9.5, texture=_TEX_PILLAR)
+    lb.spawn_static_block(16.0, 2.25, -6.5, texture=_TEX_PILLAR, normal_map=_NRM_PILLAR)
+    lb.spawn_static_block(16.0, 2.25, -9.5, texture=_TEX_PILLAR, normal_map=_NRM_PILLAR)
 
     # 3 score pickups — subscribe trigger_enter for each
     p1 = lb.spawn_pickup(8.0,  1.5,  0.0,  pickup_type="score", value=100)

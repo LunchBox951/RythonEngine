@@ -6,13 +6,17 @@ use rython_renderer::{Camera, DrawMesh, RendererState};
 
 use crate::viewport::ViewportTexture;
 
-/// Raw vertex for grid geometry: position + normal + uv (32 bytes, matches mesh pipeline).
+/// Raw vertex for grid geometry: 64 bytes, matches the §1 mesh pipeline layout.
+/// position (12B) + normal (12B) + uv (8B) + tangent (12B) + bitangent (12B) + _pad (8B) = 64B.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Vertex {
     position: [f32; 3],
     normal: [f32; 3],
     uv: [f32; 2],
+    tangent: [f32; 3],
+    bitangent: [f32; 3],
+    _pad: [f32; 2],
 }
 
 const GRID_MESH_ID: &str = "__editor_grid__";
@@ -40,10 +44,10 @@ fn generate_grid_vertices_indices() -> (Vec<u8>, Vec<u32>) {
         let px = -dz / len * GRID_LINE_HALF_WIDTH;
         let pz = dx / len * GRID_LINE_HALF_WIDTH;
 
-        verts.push(Vertex { position: [x0 - px, 0.0, z0 - pz], normal, uv: [0.0, 0.0] });
-        verts.push(Vertex { position: [x0 + px, 0.0, z0 + pz], normal, uv: [1.0, 0.0] });
-        verts.push(Vertex { position: [x1 - px, 0.0, z1 - pz], normal, uv: [0.0, 1.0] });
-        verts.push(Vertex { position: [x1 + px, 0.0, z1 + pz], normal, uv: [1.0, 1.0] });
+        verts.push(Vertex { position: [x0 - px, 0.0, z0 - pz], normal, uv: [0.0, 0.0], tangent: [1.0, 0.0, 0.0], bitangent: [0.0, 0.0, 1.0], _pad: [0.0; 2] });
+        verts.push(Vertex { position: [x0 + px, 0.0, z0 + pz], normal, uv: [1.0, 0.0], tangent: [1.0, 0.0, 0.0], bitangent: [0.0, 0.0, 1.0], _pad: [0.0; 2] });
+        verts.push(Vertex { position: [x1 - px, 0.0, z1 - pz], normal, uv: [0.0, 1.0], tangent: [1.0, 0.0, 0.0], bitangent: [0.0, 0.0, 1.0], _pad: [0.0; 2] });
+        verts.push(Vertex { position: [x1 + px, 0.0, z1 + pz], normal, uv: [1.0, 1.0], tangent: [1.0, 0.0, 0.0], bitangent: [0.0, 0.0, 1.0], _pad: [0.0; 2] });
 
         // Two triangles: 0,2,1 and 1,2,3
         indices.extend_from_slice(&[base, base + 2, base + 1, base + 1, base + 2, base + 3]);
@@ -123,9 +127,10 @@ pub fn show(
     let mut draw_meshes: Vec<DrawMesh> = ecs_commands
         .into_iter()
         .filter_map(|cmd| match cmd {
-            DrawCommand::DrawMesh { mesh_id, texture_id, transform, metallic, roughness, .. } => Some(DrawMesh {
+            DrawCommand::DrawMesh { mesh_id, texture_id, normal_map_id, transform, metallic, roughness, .. } => Some(DrawMesh {
                 mesh_id,
                 texture_id,
+                normal_map_id,
                 transform,
                 z: 0.0,
                 metallic,

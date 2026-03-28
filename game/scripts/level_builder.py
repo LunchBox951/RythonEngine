@@ -16,10 +16,13 @@ def spawn_static_block(
     tags: Optional[List[str]] = None,
     mesh_opts: Optional[Dict[str, Any]] = None,
     texture: Optional[str] = None,
+    normal_map: Optional[str] = None,
 ) -> Entity:
     """Spawn an immovable cube block and register it for cleanup."""
     if texture is not None:
         mesh: Any = {"mesh_id": "cube", "texture_id": texture}
+        if normal_map is not None:
+            mesh["normal_map"] = normal_map
     elif isinstance(mesh_opts, dict):
         mesh = mesh_opts
     else:
@@ -77,6 +80,7 @@ def spawn_enemy(
         mesh={
             "mesh_id": "cube",
             "texture_id": "game/assets/textures/Purple/purple_box.png",
+            "normal_map": "game/assets/textures/Purple/purple_box_n.png",
             "metallic": 0.85,
             "roughness": 0.45,
         },

@@ -150,26 +150,26 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// Mesh shader — Phase 3 3D rendering with MVP matrices, directional lighting, and optional texture.
+/// Mesh shader — §1 normal mapping: TBN matrix, tangent-space normal sampling, optional normal map.
 pub const MESH_WGSL: &str = r#"
 struct CameraUniforms {
     view_proj: mat4x4<f32>,
 };
 
 // ModelUniforms: 96 bytes total
-//   model:       mat4x4<f32>  [0-63]   64 B
-//   color:       vec4<f32>    [64-79]  16 B
-//   has_texture: u32          [80-83]   4 B
-//   metallic:    f32          [84-87]   4 B  (PBR hint: 0=dielectric, 1=metal)
-//   roughness:   f32          [88-91]   4 B  (PBR hint: 0=smooth, 1=rough; default 0.5)
-//   _pad2:       u32          [92-95]   4 B
+//   model:          mat4x4<f32>  [0-63]   64 B
+//   color:          vec4<f32>    [64-79]  16 B
+//   has_texture:    u32          [80-83]   4 B
+//   metallic:       f32          [84-87]   4 B  (PBR hint: 0=dielectric, 1=metal)
+//   roughness:      f32          [88-91]   4 B  (PBR hint: 0=smooth, 1=rough; default 0.5)
+//   has_normal_map: u32          [92-95]   4 B  (1 = sample normal map, 0 = use vertex normal)
 struct ModelUniforms {
-    model:       mat4x4<f32>,
-    color:       vec4<f32>,
-    has_texture: u32,
-    metallic:    f32,
-    roughness:   f32,
-    _pad2:       u32,
+    model:          mat4x4<f32>,
+    color:          vec4<f32>,
+    has_texture:    u32,
+    metallic:       f32,
+    roughness:      f32,
+    has_normal_map: u32,
 };
 
 // DirectionalLightUniform: 32 bytes
@@ -180,41 +180,63 @@ struct DirectionalLightUniform {
     color:     vec4<f32>,
 };
 
-@group(0) @binding(0) var<uniform> camera:    CameraUniforms;
+@group(0) @binding(0) var<uniform> camera:     CameraUniforms;
 @group(1) @binding(0) var<uniform> model_data: ModelUniforms;
-@group(2) @binding(0) var t_diffuse: texture_2d<f32>;
-@group(2) @binding(1) var s_diffuse: sampler;
-@group(3) @binding(0) var<uniform> dir_light: DirectionalLightUniform;
+@group(2) @binding(0) var t_diffuse:    texture_2d<f32>;
+@group(2) @binding(1) var s_diffuse:    sampler;
+@group(3) @binding(0) var t_normal_map: texture_2d<f32>;
+@group(3) @binding(1) var s_normal_map: sampler;
+@group(4) @binding(0) var<uniform> dir_light: DirectionalLightUniform;
 
 struct VertexInput {
-    @location(0) position: vec3<f32>,
-    @location(1) normal:   vec3<f32>,
-    @location(2) uv:       vec2<f32>,
+    @location(0) position:  vec3<f32>,
+    @location(1) normal:    vec3<f32>,
+    @location(2) uv:        vec2<f32>,
+    @location(3) tangent:   vec3<f32>,
+    @location(4) bitangent: vec3<f32>,
 };
 
 struct VertexOutput {
-    @builtin(position) clip_pos:     vec4<f32>,
-    @location(0)       world_normal: vec3<f32>,
-    @location(1)       uv:           vec2<f32>,
+    @builtin(position) clip_pos:       vec4<f32>,
+    @location(0)       world_normal:   vec3<f32>,
+    @location(1)       world_tangent:  vec3<f32>,
+    @location(2)       world_bitangent: vec3<f32>,
+    @location(3)       uv:             vec2<f32>,
 };
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     let world_pos = model_data.model * vec4<f32>(in.position, 1.0);
     var out: VertexOutput;
-    out.clip_pos = camera.view_proj * world_pos;
-    out.world_normal = (model_data.model * vec4<f32>(in.normal, 0.0)).xyz;
+    out.clip_pos        = camera.view_proj * world_pos;
+    out.world_normal    = (model_data.model * vec4<f32>(in.normal,    0.0)).xyz;
+    out.world_tangent   = (model_data.model * vec4<f32>(in.tangent,   0.0)).xyz;
+    out.world_bitangent = (model_data.model * vec4<f32>(in.bitangent, 0.0)).xyz;
     out.uv = in.uv;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let light_dir  = normalize(dir_light.direction.xyz);
-    let light_col  = dir_light.color.xyz;
+    let light_dir       = normalize(dir_light.direction.xyz);
+    let light_col       = dir_light.color.xyz;
     let intensity_scale = dir_light.direction.w;
 
-    let diffuse = max(dot(normalize(in.world_normal), light_dir), 0.0);
+    var N: vec3<f32>;
+    if (model_data.has_normal_map != 0u) {
+        let tbn_sample    = textureSample(t_normal_map, s_normal_map, in.uv).rgb;
+        let tangent_normal = tbn_sample * 2.0 - 1.0;
+        let TBN = mat3x3<f32>(
+            normalize(in.world_tangent),
+            normalize(in.world_bitangent),
+            normalize(in.world_normal),
+        );
+        N = normalize(TBN * tangent_normal);
+    } else {
+        N = normalize(in.world_normal);
+    }
+
+    let diffuse = max(dot(N, light_dir), 0.0);
 
     // Roughness modulates specular contribution: smoother (low roughness) → brighter highlights.
     // At default roughness=0.5 the effective factor equals the original 0.8, preserving prior look.

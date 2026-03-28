@@ -99,6 +99,8 @@ pub struct DrawMesh {
     pub mesh_id: String,
     /// Path to a PNG texture, or empty string for flat-color rendering.
     pub texture_id: String,
+    /// Optional normal map asset key; `None` uses the flat-normal fallback.
+    pub normal_map_id: Option<String>,
     pub transform: Mat4,
     pub z: f32,
     /// PBR metallic hint [0, 1]; 0 = dielectric (default), 1 = metal.
@@ -112,6 +114,7 @@ impl Default for DrawMesh {
         Self {
             mesh_id: String::new(),
             texture_id: String::new(),
+            normal_map_id: None,
             transform: Mat4::IDENTITY,
             z: 0.0,
             metallic: 0.0,

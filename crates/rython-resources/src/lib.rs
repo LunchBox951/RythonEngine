@@ -1,5 +1,7 @@
 #![deny(warnings)]
 
+pub mod tangents;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -19,17 +21,21 @@ pub struct ImageData {
     pub pixels: Vec<u8>,
 }
 
-/// A single mesh vertex.
+/// A single mesh vertex (64 bytes).
 ///
 /// `#[repr(C)]` + bytemuck Pod/Zeroable allow safe casting to `&[u8]` for GPU
-/// buffer upload.  Layout: position (12 B) + normal (12 B) + uv (8 B) = 32 B,
-/// matching the `array_stride: 32` declared in the mesh vertex buffer layout.
+/// buffer upload.  The 64-byte layout (position 12 B, normal 12 B, uv 8 B,
+/// tangent 12 B, bitangent 12 B, _pad 8 B) matches `array_stride: 64` in the
+/// mesh vertex buffer layout.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
     pub uv: [f32; 2],
+    pub tangent: [f32; 3],    // tangent vector (surface u-axis)
+    pub bitangent: [f32; 3],  // bitangent vector (surface v-axis)
+    pub _pad: [f32; 2],       // align to 16-byte stride → 64 bytes total
 }
 
 /// Decoded mesh geometry.
@@ -83,12 +89,20 @@ pub fn generate_cube() -> MeshData {
     for (normal, positions) in &faces {
         let base = vertices.len() as u32;
         for (i, pos) in positions.iter().enumerate() {
-            vertices.push(Vertex { position: *pos, normal: *normal, uv: uvs[i] });
+            vertices.push(Vertex {
+                position: *pos,
+                normal: *normal,
+                uv: uvs[i],
+                tangent: [0.0; 3],
+                bitangent: [0.0; 3],
+                _pad: [0.0; 2],
+            });
         }
         // Two CCW triangles: [0,1,2] and [0,2,3]
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
+    crate::tangents::compute_tangents(&mut vertices, &indices);
     MeshData { vertices, indices }
 }
 
@@ -352,23 +366,60 @@ fn decode_mesh(path: &str) -> Result<AssetData, String> {
                 .map(|tc| tc.into_f32().collect::<Vec<_>>())
                 .unwrap_or_else(|| vec![[0.0, 0.0]; positions.len()]);
 
+            // glTF TANGENT attribute: vec4 where xyz=tangent, w=handedness (-1 or +1)
+            let gltf_tangents: Option<Vec<[f32; 4]>> =
+                reader.read_tangents().map(|t| t.collect());
+
             let base = vertices.len() as u32;
 
             for i in 0..positions.len() {
                 let normal = normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
                 let uv = uvs.get(i).copied().unwrap_or([0.0, 0.0]);
-                vertices.push(Vertex { position: positions[i], normal, uv });
+
+                let (tangent, bitangent) = if let Some(ref tans) = gltf_tangents {
+                    if let Some(&t4) = tans.get(i) {
+                        let t = [t4[0], t4[1], t4[2]];
+                        let h = t4[3];
+                        // bitangent = cross(normal, tangent) * handedness
+                        let bt = [
+                            (normal[1] * t[2] - normal[2] * t[1]) * h,
+                            (normal[2] * t[0] - normal[0] * t[2]) * h,
+                            (normal[0] * t[1] - normal[1] * t[0]) * h,
+                        ];
+                        (t, bt)
+                    } else {
+                        ([0.0; 3], [0.0; 3])
+                    }
+                } else {
+                    ([0.0; 3], [0.0; 3])
+                };
+
+                vertices.push(Vertex {
+                    position: positions[i],
+                    normal,
+                    uv,
+                    tangent,
+                    bitangent,
+                    _pad: [0.0; 2],
+                });
             }
 
-            if let Some(iter) = reader.read_indices() {
-                for idx in iter.into_u32() {
-                    indices.push(base + idx);
-                }
+            let prim_indices: Vec<u32> = if let Some(iter) = reader.read_indices() {
+                iter.into_u32().map(|idx| base + idx).collect()
             } else {
-                for i in 0..positions.len() as u32 {
-                    indices.push(base + i);
-                }
+                (0..positions.len() as u32).map(|i| base + i).collect()
+            };
+
+            // Compute tangents if the glTF asset didn't provide them
+            if gltf_tangents.is_none() {
+                let vert_start = base as usize;
+                let vert_end = vertices.len();
+                // Build local index slice (relative to this primitive's base)
+                let local_indices: Vec<u32> = prim_indices.iter().map(|&i| i - base).collect();
+                crate::tangents::compute_tangents(&mut vertices[vert_start..vert_end], &local_indices);
             }
+
+            indices.extend(prim_indices);
         }
     }
 
@@ -825,16 +876,23 @@ mod tests {
     #[test]
     fn test_vertex_bytemuck_pod() {
         // Verify that Vertex can be safely cast to bytes.
-        let v = Vertex { position: [1.0, 2.0, 3.0], normal: [0.0, 1.0, 0.0], uv: [0.5, 0.5] };
+        let v = Vertex {
+            position: [1.0, 2.0, 3.0],
+            normal: [0.0, 1.0, 0.0],
+            uv: [0.5, 0.5],
+            tangent: [1.0, 0.0, 0.0],
+            bitangent: [0.0, 0.0, 1.0],
+            _pad: [0.0, 0.0],
+        };
         let bytes: &[u8] = bytemuck::bytes_of(&v);
-        assert_eq!(bytes.len(), 32, "Vertex must be exactly 32 bytes");
+        assert_eq!(bytes.len(), 64, "Vertex must be exactly 64 bytes");
     }
 
     #[test]
     fn test_generate_cube_vertex_bytes() {
         let mesh = generate_cube();
         let bytes: &[u8] = bytemuck::cast_slice(&mesh.vertices);
-        assert_eq!(bytes.len(), 24 * 32, "24 vertices × 32 bytes each = 768 bytes");
+        assert_eq!(bytes.len(), 24 * 64, "24 vertices × 64 bytes each = 1536 bytes");
     }
 
     /// Regression test: all 6 faces must have CCW winding when viewed from outside.
@@ -1294,8 +1352,8 @@ mod tests {
     #[test]
     fn test_asset_data_size_bytes_mesh() {
         let d = AssetData::Mesh(generate_cube());
-        // 24 vertices × 32 bytes + 36 indices × 4 bytes = 768 + 144 = 912
-        assert_eq!(d.size_bytes(), 24 * 32 + 36 * 4);
+        // 24 vertices × 64 bytes + 36 indices × 4 bytes = 1536 + 144 = 1680
+        assert_eq!(d.size_bytes(), 24 * 64 + 36 * 4);
     }
 
     #[test]
