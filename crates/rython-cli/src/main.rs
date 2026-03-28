@@ -476,7 +476,7 @@ impl App {
             .into_iter()
             .filter_map(|cmd| {
                 if let rython_ecs::DrawCommand::DrawMesh { mesh_id, texture_id, normal_map_id, specular_map_id, specular_color, shininess, transform, metallic, roughness, .. } = cmd {
-                    Some(rython_renderer::DrawMesh { mesh_id, texture_id, normal_map_id, specular_map_id, specular_color, shininess, transform, z: 0.0, metallic, roughness })
+                    Some(rython_renderer::DrawMesh { mesh_id, texture_id, normal_map_id, specular_map_id, specular_color, shininess, transform, z: 0.0, metallic, roughness, ..Default::default() })
                 } else {
                     None
                 }

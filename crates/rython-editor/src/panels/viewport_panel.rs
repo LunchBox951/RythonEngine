@@ -138,6 +138,7 @@ pub fn show(
                 z: 0.0,
                 metallic,
                 roughness,
+                ..Default::default()
             }),
             _ => None,
         })
