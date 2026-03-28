@@ -127,10 +127,13 @@ pub fn show(
     let mut draw_meshes: Vec<DrawMesh> = ecs_commands
         .into_iter()
         .filter_map(|cmd| match cmd {
-            DrawCommand::DrawMesh { mesh_id, texture_id, normal_map_id, transform, metallic, roughness, .. } => Some(DrawMesh {
+            DrawCommand::DrawMesh { mesh_id, texture_id, normal_map_id, specular_map_id, specular_color, shininess, transform, metallic, roughness, .. } => Some(DrawMesh {
                 mesh_id,
                 texture_id,
                 normal_map_id,
+                specular_map_id,
+                specular_color,
+                shininess,
                 transform,
                 z: 0.0,
                 metallic,
