@@ -17,12 +17,21 @@ def spawn_static_block(
     mesh_opts: Optional[Dict[str, Any]] = None,
     texture: Optional[str] = None,
     normal_map: Optional[str] = None,
+    emissive_color: Optional[tuple] = None,
+    emissive_intensity: Optional[float] = None,
+    emissive_map: Optional[str] = None,
 ) -> Entity:
     """Spawn an immovable cube block and register it for cleanup."""
     if texture is not None:
         mesh: Any = {"mesh_id": "cube", "texture_id": texture}
         if normal_map is not None:
             mesh["normal_map"] = normal_map
+        if emissive_color is not None:
+            mesh["emissive_color"] = emissive_color
+        if emissive_intensity is not None:
+            mesh["emissive_intensity"] = emissive_intensity
+        if emissive_map is not None:
+            mesh["emissive_map"] = emissive_map
     elif isinstance(mesh_opts, dict):
         mesh = mesh_opts
     else:
@@ -57,6 +66,8 @@ def spawn_pickup(
             "shininess": 80.0,
             "metallic": 0.0,
             "roughness": 0.3,
+            "emissive_color": (0.0, 1.0, 0.2),
+            "emissive_intensity": 0.4,
         },
         tags=["pickup", pickup_type] + (tags or []),
         rigid_body={"body_type": "kinematic"},

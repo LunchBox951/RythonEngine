@@ -117,4 +117,5 @@ def _on_level_complete(**kwargs) -> None:
 def _on_enemy_attack(**kwargs) -> None:
     damage = kwargs.get("damage", 10)
     game_state.take_damage(damage)
+    player.on_hit()
     rython.audio.play("game/assets/sounds/sfx/impact_light_01.ogg", "sfx")

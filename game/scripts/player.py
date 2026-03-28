@@ -12,6 +12,16 @@ _jump_sub_id: Optional[int] = None
 _collision_sub_id: Optional[int] = None
 _collision_end_sub_id: Optional[int] = None
 _floor_contacts: set = set()
+_flash_timer: float = 0.0
+
+_FLASH_DURATION: float = 0.15
+_FLASH_PEAK_INTENSITY: float = 3.0
+_PLAYER_MESH = {
+    "mesh_id": "cube",
+    "texture_id": "game/assets/textures/Light/light_box_alt1.png",
+    "emissive_color": (1.0, 0.3, 0.1),
+    "emissive_intensity": 0.0,
+}
 
 
 def _on_jump(**kwargs) -> None:
@@ -48,12 +58,13 @@ def _on_collision_end(**kwargs) -> None:
 
 def spawn(x: float = 0.0, y: float = 2.0, z: float = 0.0) -> Entity:
     """Spawn the player entity at (x, y, z) and store its handle."""
-    global _entity, _spawn_pos, _jump_sub_id, _collision_sub_id, _collision_end_sub_id, _floor_contacts
+    global _entity, _spawn_pos, _jump_sub_id, _collision_sub_id, _collision_end_sub_id, _floor_contacts, _flash_timer
     _spawn_pos = (x, y, z)
     _floor_contacts = set()
+    _flash_timer = 0.0
     _entity = rython.scene.spawn(
         transform=Transform(x=x, y=y, z=z, scale_x=0.8, scale_y=1.8, scale_z=0.8),
-        mesh={"mesh_id": "cube", "texture_id": "game/assets/textures/Light/light_box_alt1.png"},
+        mesh=_PLAYER_MESH,
         tags=["player"],
         rigid_body={"body_type": "dynamic", "mass": 1.0},
         collider={"shape": "box", "size": [0.8, 1.8, 0.8]},
@@ -71,8 +82,16 @@ def spawn(x: float = 0.0, y: float = 2.0, z: float = 0.0) -> Entity:
 
 def update(dt: float) -> None:
     """Called every frame while the game is PLAYING."""
+    global _flash_timer
     if _entity is None:
         return
+
+    if _flash_timer > 0.0:
+        _flash_timer = max(0.0, _flash_timer - dt)
+        intensity = (_flash_timer / _FLASH_DURATION) * _FLASH_PEAK_INTENSITY
+        mesh = _entity.get_component("MeshComponent")
+        if mesh is not None:
+            mesh.emissive_intensity = intensity
 
     move_x = rython.input.axis("move_x")
     move_z = rython.input.axis("move_z")
@@ -91,6 +110,12 @@ def is_grounded() -> bool:
     return len(_floor_contacts) > 0
 
 
+def on_hit() -> None:
+    """Trigger a brief emissive flash on the player cube when damaged."""
+    global _flash_timer
+    _flash_timer = _FLASH_DURATION
+
+
 def get_entity() -> Optional[Entity]:
     return _entity
 
@@ -105,7 +130,7 @@ def get_position() -> Tuple[float, float, float]:
 
 def respawn() -> None:
     """Teleport the player back to the spawn position."""
-    global _entity, _collision_sub_id, _collision_end_sub_id, _floor_contacts
+    global _entity, _collision_sub_id, _collision_end_sub_id, _floor_contacts, _flash_timer
     if _entity is not None:
         if _collision_sub_id is not None:
             rython.scene.unsubscribe(f"collision:{_entity.id}", _collision_sub_id)
@@ -115,10 +140,11 @@ def respawn() -> None:
             _collision_end_sub_id = None
         _entity.despawn()
     _floor_contacts = set()
+    _flash_timer = 0.0
     x, y, z = _spawn_pos
     _entity = rython.scene.spawn(
         transform=Transform(x=x, y=y, z=z, scale_x=0.8, scale_y=1.8, scale_z=0.8),
-        mesh={"mesh_id": "cube", "texture_id": "game/assets/textures/Light/light_box_alt1.png"},
+        mesh=_PLAYER_MESH,
         tags=["player"],
         rigid_body={"body_type": "dynamic", "mass": 1.0},
         collider={"shape": "box", "size": [0.8, 1.8, 0.8]},
