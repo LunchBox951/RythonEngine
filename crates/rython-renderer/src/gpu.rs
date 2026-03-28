@@ -65,7 +65,9 @@ pub struct BindGroupLayouts {
     pub mesh_texture: wgpu::BindGroupLayout,
     /// `mesh` shader: group(3) = normal map texture_2d + sampler
     pub mesh_normal_map: wgpu::BindGroupLayout,
-    /// `mesh` shader: group(4) = directional light uniform
+    /// `mesh` shader: group(4) = specular map texture_2d + sampler
+    pub mesh_specular_map: wgpu::BindGroupLayout,
+    /// `mesh` shader: group(5) = directional light uniform
     pub mesh_dir_light: wgpu::BindGroupLayout,
 }
 
@@ -354,7 +356,7 @@ impl GpuContext {
             true,
             sample_count,
         )?;
-        let (mesh, mesh_camera_bgl, mesh_model_bgl, mesh_texture_bgl, mesh_normal_map_bgl, mesh_dir_light_bgl) =
+        let (mesh, mesh_camera_bgl, mesh_model_bgl, mesh_texture_bgl, mesh_normal_map_bgl, mesh_specular_map_bgl, mesh_dir_light_bgl) =
             Self::build_mesh_pipeline(device, surface_format, sample_count)?;
 
         let pipelines = Pipelines { primitive, image, text, mesh };
@@ -366,6 +368,7 @@ impl GpuContext {
             mesh_model: mesh_model_bgl,
             mesh_texture: mesh_texture_bgl,
             mesh_normal_map: mesh_normal_map_bgl,
+            mesh_specular_map: mesh_specular_map_bgl,
             mesh_dir_light: mesh_dir_light_bgl,
         };
         Ok((pipelines, bind_group_layouts))
@@ -480,18 +483,19 @@ impl GpuContext {
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
         sample_count: u32,
-    ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout), RendererError> {
+    ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout), RendererError> {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh"),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(MESH_WGSL)),
         });
 
-        // group(0): camera uniform (view_proj matrix) — vertex-only
+        // group(0): camera uniform (view_proj + eye_position) — vertex AND fragment
+        // Fragment needs eye_position to compute the specular view direction.
         let camera_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("mesh_camera"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -562,7 +566,30 @@ impl GpuContext {
             ],
         });
 
-        // group(4): directional light uniform — fragment-only
+        // group(4): specular map texture + sampler — fragment-only
+        let specular_map_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("mesh_specular_map"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        // group(5): directional light uniform — fragment-only
         let dir_light_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("mesh_dir_light"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -584,6 +611,7 @@ impl GpuContext {
                 &model_bgl,
                 &texture_bgl,
                 &normal_map_bgl,
+                &specular_map_bgl,
                 &dir_light_bgl,
             ],
             push_constant_ranges: &[],
@@ -642,7 +670,7 @@ impl GpuContext {
             cache: None,
         });
 
-        Ok((pipeline, camera_bgl, model_bgl, texture_bgl, normal_map_bgl, dir_light_bgl))
+        Ok((pipeline, camera_bgl, model_bgl, texture_bgl, normal_map_bgl, specular_map_bgl, dir_light_bgl))
     }
 }
 
@@ -654,22 +682,30 @@ pub struct MeshBuffers {
 }
 
 /// Uniform layouts used internally by the mesh render dispatch.
+// CameraUniform: 80 bytes — must match MESH_WGSL CameraUniforms layout exactly.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct CameraUniform {
-    view_proj: [[f32; 4]; 4],
+    view_proj:    [[f32; 4]; 4],  // 64 B [0-63]
+    eye_position: [f32; 3],       // 12 B [64-75]  world-space camera position
+    _pad:         f32,            //  4 B [76-79]
 }
 
-// ModelUniform: 96 bytes — must match MESH_WGSL ModelUniforms layout exactly.
+// ModelUniform: 128 bytes — must match MESH_WGSL ModelUniforms layout exactly.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct ModelUniform {
-    model: [[f32; 4]; 4],   // 64 B [0-63]
-    color: [f32; 4],         // 16 B [64-79]
-    has_texture: u32,        //  4 B [80-83]
-    metallic: f32,           //  4 B [84-87]
-    roughness: f32,          //  4 B [88-91]
-    has_normal_map: u32,     //  4 B [92-95]
+    model:            [[f32; 4]; 4],  // 64 B [0-63]
+    color:            [f32; 4],       // 16 B [64-79]
+    specular_color:   [f32; 4],       // 16 B [80-95]   xyz=tint, w=unused
+    has_texture:      u32,            //  4 B [96-99]
+    has_normal_map:   u32,            //  4 B [100-103]
+    has_specular_map: u32,            //  4 B [104-107]
+    metallic:         f32,            //  4 B [108-111]
+    roughness:        f32,            //  4 B [112-115]
+    shininess:        f32,            //  4 B [116-119]
+    _pad0:            u32,            //  4 B [120-123]
+    _pad1:            u32,            //  4 B [124-127]
 }
 
 // DirectionalLightUniform: 32 bytes — matches MESH_WGSL DirectionalLightUniform.
@@ -919,6 +955,10 @@ pub struct RendererState {
     normal_map_cache: HashMap<String, wgpu::BindGroup>,
     /// 1×1 flat-normal fallback bind group (RGB=127,127,255) used when normal_map_id=None or missing.
     fallback_normal_map_bg: wgpu::BindGroup,
+    /// Cached specular map bind groups keyed by file path.
+    specular_map_cache: HashMap<String, wgpu::BindGroup>,
+    /// 1×1 fallback specular bind group (R=255 full intensity, G=128 mid-gloss) used when specular_map_id=None or missing.
+    fallback_specular_map_bg: wgpu::BindGroup,
 }
 
 impl RendererState {
@@ -1027,6 +1067,57 @@ impl RendererState {
             ],
         });
 
+        // Create 1×1 fallback specular texture: R=255 (full intensity), G=128 (mid-gloss).
+        let fallback_specular_pixel: [u8; 4] = [255, 128, 0, 255];
+        let fallback_specular_tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("fallback_specular"),
+            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        gpu.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &fallback_specular_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &fallback_specular_pixel,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        );
+        let fallback_specular_view = fallback_specular_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let fallback_specular_sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("fallback_specular_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        let fallback_specular_map_bg = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("fallback_specular_map_bg"),
+            layout: &gpu.bind_group_layouts.mesh_specular_map,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&fallback_specular_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&fallback_specular_sampler),
+                },
+            ],
+        });
+
         Self {
             gpu,
             config,
@@ -1039,6 +1130,8 @@ impl RendererState {
             fallback_texture_bg,
             normal_map_cache: HashMap::new(),
             fallback_normal_map_bg,
+            specular_map_cache: HashMap::new(),
+            fallback_specular_map_bg,
         }
     }
 
@@ -1219,6 +1312,73 @@ impl RendererState {
         }
     }
 
+    /// Load a PNG specular map from disk into the specular_map_cache if not already loaded.
+    /// Falls back to the fallback specular texture on missing files (logs a warning).
+    fn ensure_specular_map_loaded(&mut self, specular_map_id: &str) {
+        if specular_map_id.is_empty() || self.specular_map_cache.contains_key(specular_map_id) {
+            return;
+        }
+        match image::open(specular_map_id) {
+            Ok(img) => {
+                let rgba = img.to_rgba8();
+                let (w, h) = (rgba.width(), rgba.height());
+                let tex = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some(specular_map_id),
+                    size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                self.gpu.queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &tex,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &rgba,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(4 * w),
+                        rows_per_image: Some(h),
+                    },
+                    wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                );
+                let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                let sampler = self.gpu.device.create_sampler(&wgpu::SamplerDescriptor {
+                    label: Some("specular_map_sampler"),
+                    address_mode_u: wgpu::AddressMode::Repeat,
+                    address_mode_v: wgpu::AddressMode::Repeat,
+                    mag_filter: wgpu::FilterMode::Linear,
+                    min_filter: wgpu::FilterMode::Linear,
+                    ..Default::default()
+                });
+                let bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("specular_map_bg"),
+                    layout: &self.gpu.bind_group_layouts.mesh_specular_map,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&sampler),
+                        },
+                    ],
+                });
+                log::debug!("specular map loaded: '{}' ({}x{})", specular_map_id, w, h);
+                self.specular_map_cache.insert(specular_map_id.to_string(), bg);
+            }
+            Err(e) => {
+                log::warn!("failed to load specular map '{}': {} — using fallback specular", specular_map_id, e);
+            }
+        }
+    }
+
     /// Ensure a Depth32Float texture of the given dimensions exists, recreating
     /// it when the surface has been resized.
     pub fn ensure_depth_texture(&mut self, width: u32, height: u32) {
@@ -1305,6 +1465,9 @@ impl RendererState {
             if let Some(ref nm_id) = cmd.normal_map_id {
                 self.ensure_normal_map_loaded(nm_id);
             }
+            if let Some(ref sm_id) = cmd.specular_map_id {
+                self.ensure_specular_map_loaded(sm_id);
+            }
         }
 
         // Access depth texture view (must have been created by ensure_depth_texture).
@@ -1327,6 +1490,8 @@ impl RendererState {
         // Camera uniform — shared across all mesh draws in this batch.
         let cam_uniform = CameraUniform {
             view_proj: camera.view_projection().to_cols_array_2d(),
+            eye_position: [camera.position.x, camera.position.y, camera.position.z],
+            _pad: 0.0,
         };
         let cam_bytes: &[u8] = bytemuck::bytes_of(&cam_uniform);
         let cam_buf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
@@ -1403,7 +1568,7 @@ impl RendererState {
 
             pass.set_pipeline(&self.gpu.pipelines.mesh);
             pass.set_bind_group(0, &cam_bg, &[]);
-            pass.set_bind_group(4, &dir_light_bg, &[]);
+            pass.set_bind_group(5, &dir_light_bg, &[]);
 
             for cmd in commands {
                 let Some(mesh) = self.mesh_cache.get(&cmd.mesh_id) else {
@@ -1413,13 +1578,20 @@ impl RendererState {
 
                 let has_tex = if cmd.texture_id.is_empty() { 0u32 } else { 1u32 };
                 let has_normal_map = if cmd.normal_map_id.is_some() { 1u32 } else { 0u32 };
+                let has_specular_map = if cmd.specular_map_id.is_some() { 1u32 } else { 0u32 };
+                let [sr, sg, sb] = cmd.specular_color;
                 let model_uniform = ModelUniform {
                     model: cmd.transform.to_cols_array_2d(),
                     color: [1.0, 1.0, 1.0, 1.0],
+                    specular_color: [sr, sg, sb, 0.0],
                     has_texture: has_tex,
+                    has_normal_map,
+                    has_specular_map,
                     metallic: cmd.metallic.clamp(0.0, 1.0),
                     roughness: cmd.roughness.clamp(0.0, 1.0),
-                    has_normal_map,
+                    shininess: cmd.shininess,
+                    _pad0: 0,
+                    _pad1: 0,
                 };
                 let model_bytes: &[u8] = bytemuck::bytes_of(&model_uniform);
                 let model_buf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
@@ -1457,9 +1629,19 @@ impl RendererState {
                     None => &self.fallback_normal_map_bg,
                 };
 
+                let specular_map_bg = match &cmd.specular_map_id {
+                    Some(sm_id) => {
+                        self.specular_map_cache
+                            .get(sm_id.as_str())
+                            .unwrap_or(&self.fallback_specular_map_bg)
+                    }
+                    None => &self.fallback_specular_map_bg,
+                };
+
                 pass.set_bind_group(1, &model_bg, &[]);
                 pass.set_bind_group(2, tex_bg, &[]);
                 pass.set_bind_group(3, normal_map_bg, &[]);
+                pass.set_bind_group(4, specular_map_bg, &[]);
                 pass.set_vertex_buffer(0, mesh.vertex_buf.slice(..));
                 pass.set_index_buffer(mesh.index_buf.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, 0..1);

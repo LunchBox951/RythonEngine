@@ -150,26 +150,42 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// Mesh shader — §1 normal mapping: TBN matrix, tangent-space normal sampling, optional normal map.
+/// Mesh shader — §2 specular mapping: Phong specular term, specular map, CameraUniform eye_position.
 pub const MESH_WGSL: &str = r#"
+// CameraUniforms: 80 bytes total
+//   view_proj:    mat4x4<f32>  [0-63]   64 B
+//   eye_position: vec3<f32>    [64-75]  12 B  (world-space camera position for specular)
+//   _pad:         f32          [76-79]   4 B
 struct CameraUniforms {
-    view_proj: mat4x4<f32>,
+    view_proj:    mat4x4<f32>,
+    eye_position: vec3<f32>,
+    _pad:         f32,
 };
 
-// ModelUniforms: 96 bytes total
-//   model:          mat4x4<f32>  [0-63]   64 B
-//   color:          vec4<f32>    [64-79]  16 B
-//   has_texture:    u32          [80-83]   4 B
-//   metallic:       f32          [84-87]   4 B  (PBR hint: 0=dielectric, 1=metal)
-//   roughness:      f32          [88-91]   4 B  (PBR hint: 0=smooth, 1=rough; default 0.5)
-//   has_normal_map: u32          [92-95]   4 B  (1 = sample normal map, 0 = use vertex normal)
+// ModelUniforms: 128 bytes total
+//   model:            mat4x4<f32>  [0-63]    64 B
+//   color:            vec4<f32>    [64-79]   16 B
+//   specular_color:   vec4<f32>    [80-95]   16 B  xyz = tint, w unused
+//   has_texture:      u32          [96-99]    4 B
+//   has_normal_map:   u32          [100-103]  4 B
+//   has_specular_map: u32          [104-107]  4 B
+//   metallic:         f32          [108-111]  4 B
+//   roughness:        f32          [112-115]  4 B
+//   shininess:        f32          [116-119]  4 B  scalar fallback when has_specular_map==0
+//   _pad0:            u32          [120-123]  4 B
+//   _pad1:            u32          [124-127]  4 B
 struct ModelUniforms {
-    model:          mat4x4<f32>,
-    color:          vec4<f32>,
-    has_texture:    u32,
-    metallic:       f32,
-    roughness:      f32,
-    has_normal_map: u32,
+    model:            mat4x4<f32>,
+    color:            vec4<f32>,
+    specular_color:   vec4<f32>,
+    has_texture:      u32,
+    has_normal_map:   u32,
+    has_specular_map: u32,
+    metallic:         f32,
+    roughness:        f32,
+    shininess:        f32,
+    _pad0:            u32,
+    _pad1:            u32,
 };
 
 // DirectionalLightUniform: 32 bytes
@@ -186,7 +202,9 @@ struct DirectionalLightUniform {
 @group(2) @binding(1) var s_diffuse:    sampler;
 @group(3) @binding(0) var t_normal_map: texture_2d<f32>;
 @group(3) @binding(1) var s_normal_map: sampler;
-@group(4) @binding(0) var<uniform> dir_light: DirectionalLightUniform;
+@group(4) @binding(0) var t_specular:   texture_2d<f32>;
+@group(4) @binding(1) var s_specular:   sampler;
+@group(5) @binding(0) var<uniform> dir_light: DirectionalLightUniform;
 
 struct VertexInput {
     @location(0) position:  vec3<f32>,
@@ -197,23 +215,45 @@ struct VertexInput {
 };
 
 struct VertexOutput {
-    @builtin(position) clip_pos:       vec4<f32>,
-    @location(0)       world_normal:   vec3<f32>,
-    @location(1)       world_tangent:  vec3<f32>,
+    @builtin(position) clip_pos:        vec4<f32>,
+    @location(0)       world_normal:    vec3<f32>,
+    @location(1)       world_tangent:   vec3<f32>,
     @location(2)       world_bitangent: vec3<f32>,
-    @location(3)       uv:             vec2<f32>,
+    @location(3)       uv:              vec2<f32>,
+    @location(4)       world_pos:       vec3<f32>,
 };
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
-    let world_pos = model_data.model * vec4<f32>(in.position, 1.0);
+    let world_pos4 = model_data.model * vec4<f32>(in.position, 1.0);
     var out: VertexOutput;
-    out.clip_pos        = camera.view_proj * world_pos;
+    out.clip_pos        = camera.view_proj * world_pos4;
     out.world_normal    = (model_data.model * vec4<f32>(in.normal,    0.0)).xyz;
     out.world_tangent   = (model_data.model * vec4<f32>(in.tangent,   0.0)).xyz;
     out.world_bitangent = (model_data.model * vec4<f32>(in.bitangent, 0.0)).xyz;
-    out.uv = in.uv;
+    out.uv              = in.uv;
+    out.world_pos       = world_pos4.xyz;
     return out;
+}
+
+fn compute_specular(
+    view_dir:  vec3<f32>,
+    N:         vec3<f32>,
+    light_dir: vec3<f32>,
+    uv:        vec2<f32>,
+) -> vec3<f32> {
+    var spec_intensity: f32 = 1.0;
+    var spec_power:     f32 = model_data.shininess;
+
+    if (model_data.has_specular_map != 0u) {
+        let spec_sample = textureSample(t_specular, s_specular, uv).rg;
+        spec_intensity  = spec_sample.r;
+        spec_power      = exp2(spec_sample.g * 7.0);  // [1, 128]
+    }
+
+    let reflect_dir = reflect(-light_dir, N);
+    let spec_factor = pow(max(dot(view_dir, reflect_dir), 0.0), spec_power);
+    return model_data.specular_color.xyz * spec_intensity * spec_factor;
 }
 
 @fragment
@@ -224,7 +264,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     var N: vec3<f32>;
     if (model_data.has_normal_map != 0u) {
-        let tbn_sample    = textureSample(t_normal_map, s_normal_map, in.uv).rgb;
+        let tbn_sample     = textureSample(t_normal_map, s_normal_map, in.uv).rgb;
         let tangent_normal = tbn_sample * 2.0 - 1.0;
         let TBN = mat3x3<f32>(
             normalize(in.world_tangent),
@@ -238,10 +278,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let diffuse = max(dot(N, light_dir), 0.0);
 
-    // Roughness modulates specular contribution: smoother (low roughness) → brighter highlights.
-    // At default roughness=0.5 the effective factor equals the original 0.8, preserving prior look.
-    let shininess_factor = clamp(0.8 * (1.5 - model_data.roughness), 0.0, 1.0);
-    let intensity = (0.2 + diffuse * shininess_factor) * intensity_scale;
+    // Roughness modulates diffuse contribution; smoother → brighter diffuse highlight.
+    let roughness_factor = clamp(0.8 * (1.5 - model_data.roughness), 0.0, 1.0);
+    let diffuse_intensity = (0.2 + diffuse * roughness_factor) * intensity_scale;
+
+    let view_dir = normalize(camera.eye_position - in.world_pos);
+    let spec = compute_specular(view_dir, N, light_dir, in.uv) * intensity_scale;
 
     var base_color: vec4<f32>;
     if (model_data.has_texture != 0u) {
@@ -249,7 +291,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     } else {
         base_color = model_data.color;
     }
-    return vec4<f32>(base_color.rgb * light_col * intensity, base_color.a);
+    return vec4<f32>(base_color.rgb * light_col * diffuse_intensity + spec * light_col, base_color.a);
 }
 "#;
 

@@ -101,6 +101,12 @@ pub struct DrawMesh {
     pub texture_id: String,
     /// Optional normal map asset key; `None` uses the flat-normal fallback.
     pub normal_map_id: Option<String>,
+    /// Optional specular map asset key (R=intensity, G=gloss); `None` uses scalar shininess.
+    pub specular_map_id: Option<String>,
+    /// RGB tint applied to the specular highlight; default [1, 1, 1].
+    pub specular_color: [f32; 3],
+    /// Scalar shininess exponent used when `specular_map_id` is `None`; default 32.0.
+    pub shininess: f32,
     pub transform: Mat4,
     pub z: f32,
     /// PBR metallic hint [0, 1]; 0 = dielectric (default), 1 = metal.
@@ -115,6 +121,9 @@ impl Default for DrawMesh {
             mesh_id: String::new(),
             texture_id: String::new(),
             normal_map_id: None,
+            specular_map_id: None,
+            specular_color: [1.0, 1.0, 1.0],
+            shininess: 32.0,
             transform: Mat4::IDENTITY,
             z: 0.0,
             metallic: 0.0,
@@ -177,4 +186,61 @@ pub fn rect_to_clip_verts(x: f32, y: f32, w: f32, h: f32) -> [[f32; 2]; 4] {
         norm_to_clip(x, y + h),
         norm_to_clip(x + w, y + h),
     ]
+}
+
+#[cfg(test)]
+mod specular_tests {
+    use super::*;
+
+    // §2 Test 4: specular_color default is white
+    #[test]
+    fn s2_t4_specular_color_default_is_white() {
+        let cmd = DrawMesh::default();
+        assert_eq!(cmd.specular_color, [1.0, 1.0, 1.0]);
+    }
+
+    // §2 Test 5: specular_color tint is stored correctly
+    #[test]
+    fn s2_t5_specular_color_tint_roundtrip() {
+        let cmd = DrawMesh { specular_color: [0.5, 0.5, 1.0], ..Default::default() };
+        assert!((cmd.specular_color[0] - 0.5).abs() < 1e-6);
+        assert!((cmd.specular_color[1] - 0.5).abs() < 1e-6);
+        assert!((cmd.specular_color[2] - 1.0).abs() < 1e-6);
+    }
+
+    // §2 Test 6: shininess scalar default is 32.0
+    #[test]
+    fn s2_t6_shininess_default_is_32() {
+        let cmd = DrawMesh::default();
+        assert!((cmd.shininess - 32.0).abs() < 1e-6);
+    }
+
+    // §2 Test 1: default specular_map_id is None (no map path → scalar path)
+    #[test]
+    fn s2_t1_specular_map_id_default_is_none() {
+        let cmd = DrawMesh::default();
+        assert!(cmd.specular_map_id.is_none());
+    }
+
+    // §2 Test 2: specular_map_id can be set
+    #[test]
+    fn s2_t2_specular_map_id_roundtrip() {
+        let cmd = DrawMesh {
+            specular_map_id: Some("textures/sword_s.png".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(cmd.specular_map_id.as_deref(), Some("textures/sword_s.png"));
+    }
+
+    // §2 Test 7: shininess scalar stored with specular map (shader branch decides which to use)
+    #[test]
+    fn s2_t7_shininess_stored_independently_of_specular_map() {
+        let cmd = DrawMesh {
+            shininess: 128.0,
+            specular_map_id: Some("s.png".to_string()),
+            ..Default::default()
+        };
+        assert!((cmd.shininess - 128.0).abs() < 1e-6);
+        assert!(cmd.specular_map_id.is_some());
+    }
 }
