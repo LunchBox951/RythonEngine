@@ -6,6 +6,7 @@ pub mod config;
 pub mod gpu;
 pub mod light;
 pub mod queue;
+pub mod shadow;
 pub mod shaders;
 
 pub use camera::Camera;
@@ -17,6 +18,7 @@ pub use config::{RendererConfig, SceneSettings};
 pub use gpu::{BindGroupLayouts, GpuContext, GpuUploadRequest, MeshBuffers, Pipelines, RendererError, RendererState};
 pub use light::{GpuLight, LightBuffer, MAX_LIGHTS};
 pub use queue::CommandQueue;
+pub use shadow::{LightMatrices, ShadowMap, ShadowSettings};
 pub use shaders::{
-    validate_wgsl, ShaderError, IMAGE_WGSL, MESH_WGSL, PRIMITIVE_WGSL, TEXT_WGSL,
+    validate_wgsl, ShaderError, IMAGE_WGSL, MESH_WGSL, PRIMITIVE_WGSL, SHADOW_WGSL, TEXT_WGSL,
 };

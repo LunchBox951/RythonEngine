@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::shadow::ShadowSettings;
+
 // ── SceneSettings ─────────────────────────────────────────────────────────────
 
 /// Runtime scene rendering settings — configurable from Python via `rython.renderer`.
@@ -21,6 +23,8 @@ pub struct SceneSettings {
     pub ambient_color: [f32; 3],
     /// Scalar multiplier applied to `ambient_color`. Default 1.0.
     pub ambient_intensity: f32,
+    /// Shadow mapping settings (§3).
+    pub shadow: ShadowSettings,
 }
 
 impl Default for SceneSettings {
@@ -32,6 +36,7 @@ impl Default for SceneSettings {
             light_intensity:   1.0,
             ambient_color:     [0.1, 0.1, 0.1],
             ambient_intensity: 1.0,
+            shadow:            ShadowSettings::default(),
         }
     }
 }

@@ -89,6 +89,43 @@ impl RendererBridge {
         s.ambient_intensity = intensity;
     }
 
+    // ── §3 Shadow mapping API ─────────────────────────────────────────────────
+
+    /// Enable or disable shadow casting from the primary directional light.
+    fn set_shadow_enabled(&self, enabled: bool) {
+        scene_settings_store().lock().shadow.enabled = enabled;
+    }
+
+    /// Set the shadow map resolution in pixels (square).
+    ///
+    /// Accepted values: 512, 1024, 2048, 4096.
+    /// Invalid sizes are clamped to the nearest valid value with a warning.
+    fn set_shadow_map_size(&self, size: u32) {
+        let clamped = match size {
+            0..=512  => 512,
+            513..=1024 => 1024,
+            1025..=2048 => 2048,
+            _ => 4096,
+        };
+        if clamped != size {
+            log::warn!(
+                "set_shadow_map_size: {} is not a valid shadow map size — clamped to {}",
+                size, clamped
+            );
+        }
+        scene_settings_store().lock().shadow.map_size = clamped;
+    }
+
+    /// Set the shadow depth bias (prevents shadow acne). Default: 0.005.
+    fn set_shadow_bias(&self, bias: f32) {
+        scene_settings_store().lock().shadow.bias = bias;
+    }
+
+    /// Set the PCF sample count: 1 = no filtering, ≥4 = 3×3 kernel. Default: 4.
+    fn set_shadow_pcf(&self, samples: u32) {
+        scene_settings_store().lock().shadow.pcf_samples = samples;
+    }
+
     fn __repr__(&self) -> String {
         "rython.renderer".to_string()
     }

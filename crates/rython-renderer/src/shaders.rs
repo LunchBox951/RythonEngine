@@ -150,7 +150,39 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
+/// Shadow pass shader — §3: depth-only vertex shader for shadow map generation.
+///
+/// Bind groups:
+///   group(0) binding(0): ShadowUniform — light_view_proj mat4x4<f32>
+///   group(1) binding(0): ModelShadow   — model mat4x4<f32> (prefix of ModelUniforms 144B buf)
+///
+/// Vertex buffer layout: 64B stride, position at location(0) offset 0.
+/// No @fragment entry point — depth-only pipeline.
+pub const SHADOW_WGSL: &str = r#"
+struct ShadowUniform {
+    light_view_proj: mat4x4<f32>,
+};
+
+struct ModelShadow {
+    model: mat4x4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> shadow:       ShadowUniform;
+@group(1) @binding(0) var<uniform> model_shadow: ModelShadow;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+};
+
+@vertex
+fn vs_shadow(in: VertexInput) -> @builtin(position) vec4<f32> {
+    let world_pos = model_shadow.model * vec4<f32>(in.position, 1.0);
+    return shadow.light_view_proj * world_pos;
+}
+"#;
+
 /// Mesh shader — §5 multi-light: LightBuffer at group(5), directional/point/spot up to 16 lights.
+/// §3 shadow: LightShadowUniform + depth texture + comparison sampler at group(7).
 pub const MESH_WGSL: &str = r#"
 // CameraUniforms: 80 bytes total
 //   view_proj:    mat4x4<f32>  [0-63]   64 B
@@ -215,8 +247,22 @@ struct LightBuffer {
     ambient_b:   f32,
 };
 
-@group(0) @binding(0) var<uniform> camera:     CameraUniforms;
-@group(1) @binding(0) var<uniform> model_data: ModelUniforms;
+// LightShadowUniform: 80 bytes
+//   light_view_proj: mat4x4<f32>  [0-63]   64 B
+//   bias:            f32           [64-67]   4 B
+//   pcf_samples:     u32           [68-71]   4 B
+//   shadow_enabled:  u32           [72-75]   4 B  (0=off, 1=on)
+//   _pad:            u32           [76-79]   4 B
+struct LightShadowUniform {
+    light_view_proj: mat4x4<f32>,
+    bias:            f32,
+    pcf_samples:     u32,
+    shadow_enabled:  u32,
+    _pad:            u32,
+};
+
+@group(0) @binding(0) var<uniform> camera:        CameraUniforms;
+@group(1) @binding(0) var<uniform> model_data:    ModelUniforms;
 @group(2) @binding(0) var t_diffuse:    texture_2d<f32>;
 @group(2) @binding(1) var s_diffuse:    sampler;
 @group(3) @binding(0) var t_normal_map: texture_2d<f32>;
@@ -226,6 +272,9 @@ struct LightBuffer {
 @group(5) @binding(0) var<uniform> light_buf: LightBuffer;
 @group(6) @binding(0) var t_emissive:   texture_2d<f32>;
 @group(6) @binding(1) var s_emissive:   sampler;
+@group(7) @binding(0) var<uniform> shadow_params: LightShadowUniform;
+@group(7) @binding(1) var t_shadow_map: texture_depth_2d;
+@group(7) @binding(2) var s_shadow_map: sampler_comparison;
 
 struct VertexInput {
     @location(0) position:  vec3<f32>,
@@ -255,6 +304,33 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.uv              = in.uv;
     out.world_pos       = world_pos4.xyz;
     return out;
+}
+
+/// Sample the shadow map with optional PCF filtering.
+///
+/// Returns 1.0 when the point is lit, 0.0 when fully in shadow.
+/// `light_uv` must be in [0, 1] texture UV space (converted from NDC).
+/// `depth` is the fragment's depth in light-clip space [0, 1].
+fn sample_shadow_pcf(light_uv: vec2<f32>, depth: f32) -> f32 {
+    let compare_depth = depth - shadow_params.bias;
+    if (shadow_params.pcf_samples <= 1u) {
+        // Single sample — no PCF filtering.
+        return textureSampleCompare(t_shadow_map, s_shadow_map, light_uv, compare_depth);
+    }
+    // 3×3 PCF kernel — 9 samples.
+    var shadow_sum: f32 = 0.0;
+    let texel = 1.0 / f32(textureDimensions(t_shadow_map).x);
+    for (var x: i32 = -1; x <= 1; x++) {
+        for (var y: i32 = -1; y <= 1; y++) {
+            let offset = vec2<f32>(f32(x), f32(y)) * texel;
+            shadow_sum += textureSampleCompare(
+                t_shadow_map, s_shadow_map,
+                light_uv + offset,
+                compare_depth,
+            );
+        }
+    }
+    return shadow_sum / 9.0;
 }
 
 fn compute_specular(
@@ -299,6 +375,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var total_diffuse  = ambient;
     var total_spec     = vec3<f32>(0.0, 0.0, 0.0);
 
+    // §3 Shadow factor — computed once from the primary directional light's POV.
+    // 1.0 = fully lit, 0.0 = fully in shadow. Applied to directional lights only.
+    var shadow_factor: f32 = 1.0;
+    if (shadow_params.shadow_enabled != 0u) {
+        // Transform fragment to light clip-space (orthographic → w=1, no divide needed).
+        let light_clip = shadow_params.light_view_proj * vec4<f32>(in.world_pos, 1.0);
+        // NDC → UV: flip Y (NDC +Y = up, texture +V = down).
+        let light_uv = light_clip.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5);
+        shadow_factor = sample_shadow_pcf(light_uv, light_clip.z);
+    }
+
     for (var i = 0u; i < light_buf.light_count; i++) {
         let light = light_buf.lights[i];
         if (light.spot_params.w < 0.5) { continue; }  // disabled
@@ -332,11 +419,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             }
         }
 
-        let light_color = light.color_intensity.xyz;
-        let intensity   = light.color_intensity.w;
+        let light_color   = light.color_intensity.xyz;
+        let intensity     = light.color_intensity.w;
         let diffuse_ndotl = max(dot(N, L), 0.0);
-        total_diffuse += light_color * intensity * diffuse_ndotl * roughness_factor * attenuation;
-        total_spec    += compute_specular(view_dir, N, L, in.uv) * intensity * attenuation * light_color;
+        // §3: attenuate directional lights by shadow_factor; point/spot are unshadowed.
+        let sf = select(1.0, shadow_factor, kind == 0u);
+        total_diffuse += light_color * intensity * diffuse_ndotl * roughness_factor * attenuation * sf;
+        total_spec    += compute_specular(view_dir, N, L, in.uv) * intensity * attenuation * light_color * sf;
     }
 
     var base_color: vec4<f32>;

@@ -16,6 +16,12 @@ def init() -> None:
     rython.physics.set_gravity(0, -20, 0)
     _prev_time = rython.time.elapsed
 
+    # §3 Shadow mapping — enabled globally; per-arena quality tuned in _on_load_level.
+    rython.renderer.set_shadow_enabled(True)
+    rython.renderer.set_shadow_map_size(1024)
+    rython.renderer.set_shadow_bias(0.003)
+    rython.renderer.set_shadow_pcf(4)
+
     rython.scene.subscribe("start_game", _on_start_game)
     rython.scene.subscribe("load_level", _on_load_level)
     rython.scene.subscribe("player_died", _on_player_died)
@@ -80,6 +86,14 @@ def _on_load_level(**kwargs) -> None:
     rython.renderer.set_light_direction(0.5, -1.0, 0.5)
     rython.renderer.set_light_color(1.0, 1.0, 1.0)
     rython.renderer.set_light_intensity(1.0)
+
+    # §3 Per-arena shadow quality: boss arena (level 3) gets higher-res shadows.
+    if level_num == 3:
+        rython.renderer.set_shadow_map_size(2048)
+        rython.renderer.set_shadow_pcf(9)
+    else:
+        rython.renderer.set_shadow_map_size(1024)
+        rython.renderer.set_shadow_pcf(4)
 
     rython.audio.stop_category("music")
     level_builder.clear_level()
