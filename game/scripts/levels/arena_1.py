@@ -51,9 +51,19 @@ def build() -> None:
 
     # Arena visual settings — pale blue-grey sky, warm overhead sun
     rython.renderer.set_clear_color(0.62, 0.65, 0.70, 1.0)
-    rython.renderer.set_light_direction(0.3, -1.0, 0.4)
-    rython.renderer.set_light_color(1.0, 0.96, 0.88)
-    rython.renderer.set_light_intensity(1.1)
+    rython.renderer.set_ambient_light(0.25, 0.25, 0.28)
+
+    # Warm overhead sun — welcoming tutorial light
+    rython.scene.spawn(
+        transform=rython.Transform(0, 0, 0),
+        light={
+            "type":      "directional",
+            "direction": (0.3, -1.0, 0.4),
+            "color":     (1.0, 0.96, 0.88),
+            "intensity": 1.1,
+        },
+        tags={"tags": ["arena1_sun"]},
+    )
 
     # Ground — 20x20
     lb.spawn_static_block(0.0, -0.5, 0.0, 20.0, 1.0, 20.0, texture=_TEX_FLOOR, normal_map=_NRM_FLOOR)

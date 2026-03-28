@@ -49,9 +49,19 @@ def build() -> None:
 
     # Arena visual settings — deep midnight blue void, cold side-light from the left
     rython.renderer.set_clear_color(0.05, 0.06, 0.14, 1.0)
-    rython.renderer.set_light_direction(-0.8, -0.5, 0.2)
-    rython.renderer.set_light_color(0.85, 0.90, 1.0)
-    rython.renderer.set_light_intensity(0.95)
+    rython.renderer.set_ambient_light(0.05, 0.05, 0.12)
+
+    # Cold blue-white directional — overhead, slightly left — exposed and hostile
+    rython.scene.spawn(
+        transform=rython.Transform(0, 0, 0),
+        light={
+            "type":      "directional",
+            "direction": (-0.8, -0.5, 0.2),
+            "color":     (0.85, 0.90, 1.0),
+            "intensity": 0.95,
+        },
+        tags={"tags": ["arena2_sun"]},
+    )
 
     # No ground — void below. Floating platforms form a path.
     # Start platform

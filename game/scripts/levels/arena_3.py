@@ -63,11 +63,33 @@ def build() -> None:
     _lava_damage_timer = 0.0
     _prev_time = rython.time.elapsed
 
-    # Arena visual settings — near-black red-tinted hell sky, low dramatic backlight
+    # Arena visual settings — near-black red-tinted hell sky
     rython.renderer.set_clear_color(0.08, 0.01, 0.01, 1.0)
-    rython.renderer.set_light_direction(0.1, -0.4, 0.9)
-    rython.renderer.set_light_color(0.9, 0.15, 0.05)
-    rython.renderer.set_light_intensity(0.85)
+    rython.renderer.set_ambient_light(0.08, 0.02, 0.02)
+
+    # Deep-red directional — low-angle backlight from behind, dramatic boss mood
+    rython.scene.spawn(
+        transform=rython.Transform(0, 0, 0),
+        light={
+            "type":      "directional",
+            "direction": (0.2, -0.6, 0.8),
+            "color":     (0.8, 0.1, 0.0),
+            "intensity": 0.9,
+        },
+        tags={"tags": ["arena3_sun"]},
+    )
+
+    # Red point light hovering above the lava pit — illuminates the danger zone
+    rython.scene.spawn(
+        transform=rython.Transform(0, 1.5, 0),
+        light={
+            "type":      "point",
+            "color":     (1.0, 0.15, 0.0),
+            "intensity": 4.0,
+            "radius":    7.0,
+        },
+        tags={"tags": ["lava_light"]},
+    )
 
     # Circular ground (approximated with a large square)
     lb.spawn_static_block(0.0, -0.5, 0.0, 22.0, 1.0, 22.0, texture=_TEX_FLOOR, normal_map=_NRM_FLOOR)
