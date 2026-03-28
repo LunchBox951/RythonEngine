@@ -48,8 +48,16 @@ pub struct MeshComponent {
     /// Asset key for normal map texture; `None` means flat normals (vertex normals only).
     #[serde(default)]
     pub normal_map_id: Option<String>,
+    /// Asset key for specular map (R=intensity, G=glossiness); `None` uses scalar shininess.
+    #[serde(default)]
+    pub specular_map_id: Option<String>,
     pub yaw_offset: f32,
+    /// Scalar shininess fallback used when `specular_map_id` is `None`.
+    #[serde(default = "MeshComponent::default_shininess")]
     pub shininess: f32,
+    /// Tint applied to specular highlight; default [1, 1, 1] (white).
+    #[serde(default = "MeshComponent::default_specular_color")]
+    pub specular_color: [f32; 3],
     pub visible: bool,
     /// PBR metallic hint [0, 1]; 0 = dielectric (default), 1 = metal.
     #[serde(default)]
@@ -60,6 +68,8 @@ pub struct MeshComponent {
 }
 
 impl MeshComponent {
+    fn default_shininess() -> f32 { 32.0 }
+    fn default_specular_color() -> [f32; 3] { [1.0, 1.0, 1.0] }
     fn default_roughness() -> f32 { 0.5 }
 }
 
@@ -69,8 +79,10 @@ impl Default for MeshComponent {
             mesh_id: String::new(),
             texture_id: String::new(),
             normal_map_id: None,
+            specular_map_id: None,
             yaw_offset: 0.0,
-            shininess: 0.0,
+            shininess: 32.0,
+            specular_color: [1.0, 1.0, 1.0],
             visible: true,
             metallic: 0.0,
             roughness: 0.5,

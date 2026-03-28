@@ -80,6 +80,19 @@ impl SceneBridge {
                                 .get("normal_map")
                                 .and_then(|v| v.extract::<String>().ok())
                                 .filter(|s| !s.is_empty());
+                            let specular_map_id = map
+                                .get("specular_map")
+                                .and_then(|v| v.extract::<String>().ok())
+                                .filter(|s| !s.is_empty());
+                            let shininess = map
+                                .get("shininess")
+                                .and_then(|v| v.extract::<f32>().ok())
+                                .unwrap_or(32.0);
+                            let specular_color = map
+                                .get("specular_color")
+                                .and_then(|v| v.extract::<(f32, f32, f32)>().ok())
+                                .map(|(r, g, b)| [r, g, b])
+                                .unwrap_or([1.0, 1.0, 1.0]);
                             let metallic = map
                                 .get("metallic")
                                 .and_then(|v| v.extract::<f32>().ok())
@@ -106,6 +119,9 @@ impl SceneBridge {
                                     mesh_id,
                                     texture_id,
                                     normal_map_id,
+                                    specular_map_id,
+                                    shininess,
+                                    specular_color,
                                     visible,
                                     metallic,
                                     roughness,
