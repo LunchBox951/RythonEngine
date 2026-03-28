@@ -4,6 +4,8 @@
 **Priority:** High-Impact, Moderate Effort
 **SPEC.md entry:** §7
 
+**Consistantly breaks when built. SKIP for now**
+
 ---
 
 ## Overview
