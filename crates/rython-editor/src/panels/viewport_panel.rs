@@ -183,7 +183,7 @@ pub fn show(
     // Render meshes into offscreen texture
     renderer.ensure_depth_texture(px_w, px_h);
     if !draw_meshes.is_empty() {
-        renderer.render_meshes(&draw_meshes, camera, &vt.view);
+        renderer.render_meshes(&draw_meshes, camera, &vt.view, None);
     }
 
     // Note: renderer uses its own queue ref (cloned from eframe's device on init).

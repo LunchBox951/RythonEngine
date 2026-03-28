@@ -4,6 +4,7 @@ pub mod camera;
 pub mod command;
 pub mod config;
 pub mod gpu;
+pub mod light;
 pub mod queue;
 pub mod shaders;
 
@@ -14,6 +15,7 @@ pub use command::{
 };
 pub use config::{RendererConfig, SceneSettings};
 pub use gpu::{BindGroupLayouts, GpuContext, GpuUploadRequest, MeshBuffers, Pipelines, RendererError, RendererState};
+pub use light::{GpuLight, LightBuffer, MAX_LIGHTS};
 pub use queue::CommandQueue;
 pub use shaders::{
     validate_wgsl, ShaderError, IMAGE_WGSL, MESH_WGSL, PRIMITIVE_WGSL, TEXT_WGSL,

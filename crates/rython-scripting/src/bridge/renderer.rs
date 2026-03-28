@@ -79,6 +79,16 @@ impl RendererBridge {
         scene_settings_store().lock().light_intensity = intensity;
     }
 
+    /// Set the scene-wide ambient light color and intensity multiplier (linear RGB).
+    ///
+    /// The ambient contributes to all surfaces regardless of light direction.
+    #[pyo3(signature = (r = 0.1, g = 0.1, b = 0.1, intensity = 1.0))]
+    fn set_ambient_light(&self, r: f32, g: f32, b: f32, intensity: f32) {
+        let mut s = scene_settings_store().lock();
+        s.ambient_color     = [r, g, b];
+        s.ambient_intensity = intensity;
+    }
+
     fn __repr__(&self) -> String {
         "rython.renderer".to_string()
     }

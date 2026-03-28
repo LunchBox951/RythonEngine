@@ -12,14 +12,15 @@ pub mod systems;
 mod tests;
 
 pub use component::{
-    BillboardComponent, ColliderComponent, Component, ComponentStorage, MeshComponent,
-    RigidBodyComponent, TagComponent, TransformComponent,
+    BillboardComponent, ColliderComponent, Component, ComponentStorage, LightComponent, LightKind,
+    MeshComponent, RigidBodyComponent, TagComponent, TransformComponent,
 };
 pub use entity::EntityId;
 pub use event_bus::{EventBus, HandlerId};
 pub use hierarchy::{Hierarchy, MAX_HIERARCHY_DEPTH};
 pub use command::{Command, CommandQueue};
 pub use scene::{Scene, SpawnHandle};
-pub use systems::{RenderSystem, TransformSystem};
+pub use systems::{LightSystem, RenderSystem, TransformSystem};
+pub use systems::light::CollectedLight;
 pub use systems::render::DrawCommand;
 pub use systems::transform::WorldTransform;

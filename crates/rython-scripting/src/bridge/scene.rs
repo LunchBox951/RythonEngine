@@ -5,7 +5,8 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use rython_ecs::component::{
-    ColliderComponent, MeshComponent, RigidBodyComponent, TagComponent, TransformComponent,
+    ColliderComponent, LightComponent, LightKind, MeshComponent, RigidBodyComponent, TagComponent,
+    TransformComponent,
 };
 use rython_ecs::EntityId;
 
@@ -212,6 +213,69 @@ impl SceneBridge {
                             components.push((
                                 TypeId::of::<ColliderComponent>(),
                                 Box::new(ColliderComponent { shape, size, is_trigger }),
+                            ));
+                        }
+                    }
+                    "light" => {
+                        if let Ok(map) =
+                            val.extract::<HashMap<String, Bound<'_, PyAny>>>()
+                        {
+                            let light_type = map
+                                .get("type")
+                                .and_then(|v| v.extract::<String>().ok())
+                                .unwrap_or_else(|| "directional".to_string());
+                            let color = map
+                                .get("color")
+                                .and_then(|v| v.extract::<(f32, f32, f32)>().ok())
+                                .map(|(r, g, b)| [r, g, b])
+                                .unwrap_or([1.0, 1.0, 1.0]);
+                            let intensity = map
+                                .get("intensity")
+                                .and_then(|v| v.extract::<f32>().ok())
+                                .unwrap_or(1.0);
+                            let kind = match light_type.as_str() {
+                                "point" => {
+                                    let radius = map
+                                        .get("radius")
+                                        .and_then(|v| v.extract::<f32>().ok())
+                                        .unwrap_or(10.0);
+                                    LightKind::Point { radius }
+                                }
+                                "spot" => {
+                                    let direction = map
+                                        .get("direction")
+                                        .and_then(|v| v.extract::<(f32, f32, f32)>().ok())
+                                        .map(|(x, y, z)| [x, y, z])
+                                        .unwrap_or([0.0, -1.0, 0.0]);
+                                    let inner_angle = map
+                                        .get("inner_angle")
+                                        .and_then(|v| v.extract::<f32>().ok())
+                                        .unwrap_or(15.0);
+                                    let outer_angle = map
+                                        .get("outer_angle")
+                                        .and_then(|v| v.extract::<f32>().ok())
+                                        .unwrap_or(30.0);
+                                    LightKind::Spot { direction, inner_angle, outer_angle }
+                                }
+                                _ => {
+                                    // "directional" and any unknown type
+                                    let direction = map
+                                        .get("direction")
+                                        .and_then(|v| v.extract::<(f32, f32, f32)>().ok())
+                                        .map(|(x, y, z)| [x, y, z])
+                                        .unwrap_or([0.5, 1.0, 0.5]);
+                                    LightKind::Directional { direction }
+                                }
+                            };
+                            components.push((
+                                TypeId::of::<LightComponent>(),
+                                Box::new(LightComponent {
+                                    kind,
+                                    color,
+                                    intensity,
+                                    enabled: true,
+                                    cast_shadows: false,
+                                }),
                             ));
                         }
                     }

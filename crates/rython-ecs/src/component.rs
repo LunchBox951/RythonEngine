@@ -198,6 +198,40 @@ impl Component for ColliderComponent {
     fn serialize_json(&self) -> serde_json::Value { serde_json::to_value(self).unwrap() }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum LightKind {
+    Directional { direction: [f32; 3] },
+    Point { radius: f32 },
+    Spot { direction: [f32; 3], inner_angle: f32, outer_angle: f32 },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LightComponent {
+    pub kind:         LightKind,
+    pub color:        [f32; 3],
+    pub intensity:    f32,
+    pub enabled:      bool,
+    pub cast_shadows: bool,
+}
+
+impl Default for LightComponent {
+    fn default() -> Self {
+        Self {
+            kind:         LightKind::Directional { direction: [0.5, 1.0, 0.5] },
+            color:        [1.0, 1.0, 1.0],
+            intensity:    1.0,
+            enabled:      true,
+            cast_shadows: false,
+        }
+    }
+}
+
+impl Component for LightComponent {
+    fn component_type_name(&self) -> &'static str { "LightComponent" }
+    fn clone_box(&self) -> Box<dyn Component> { Box::new(self.clone()) }
+    fn serialize_json(&self) -> serde_json::Value { serde_json::to_value(self).unwrap() }
+}
+
 // ── Component Storage ────────────────────────────────────────────────────────
 
 /// Per-type storage: entity ID -> boxed component, protected by RwLock.

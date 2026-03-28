@@ -12,7 +12,7 @@ use winit::window::{Window, WindowId};
 
 use rython_audio::AudioManager;
 use rython_core::{EngineConfig, WindowConfig};
-use rython_ecs::{RenderSystem, Scene, TransformSystem};
+use rython_ecs::{LightSystem, RenderSystem, Scene, TransformSystem};
 use rython_engine::{Engine, EngineBuilder};
 use rython_input::{AxisBinding, ButtonBinding, InputActionEvent, InputMap, PlayerController};
 use rython_physics::PhysicsModule;
@@ -370,6 +370,7 @@ impl App {
         // ECS systems
         let world_transforms = TransformSystem::run(&self.scene.components, &self.scene.hierarchy);
         let ecs_cmds = RenderSystem::run(&self.scene.components, &world_transforms);
+        let collected_lights = LightSystem::run(&self.scene.components, &world_transforms);
 
         // Compute UI layout so abs positions are current before drawing
         self.ui_manager.lock().compute_layout();
@@ -485,7 +486,35 @@ impl App {
 
         if !mesh_cmds.is_empty() {
             renderer.ensure_depth_texture(width, height);
-            renderer.render_meshes(&mesh_cmds, &camera, &color_view);
+            // Build LightBuffer from scene LightComponents, or fall back to scene_settings.
+            let light_buffer: Option<rython_renderer::LightBuffer> =
+                if collected_lights.is_empty() {
+                    None
+                } else {
+                    let [ar, ag, ab] = renderer.scene_settings.ambient_color;
+                    let ai = renderer.scene_settings.ambient_intensity;
+                    let mut lb = rython_renderer::LightBuffer::empty();
+                    lb.ambient = [ar * ai, ag * ai, ab * ai];
+                    for cl in &collected_lights {
+                        if lb.light_count as usize >= rython_renderer::MAX_LIGHTS {
+                            break;
+                        }
+                        let idx = lb.light_count as usize;
+                        lb.lights[idx] = rython_renderer::GpuLight {
+                            position_or_dir: if cl.kind == 0 {
+                                [cl.direction[0], cl.direction[1], cl.direction[2], 0.0]
+                            } else {
+                                [cl.position[0], cl.position[1], cl.position[2], cl.kind as f32]
+                            },
+                            color_intensity: [cl.color[0], cl.color[1], cl.color[2], cl.intensity],
+                            spot_params: [cl.inner_cos, cl.outer_cos, cl.radius, 1.0],
+                            spot_dir_pad: [cl.direction[0], cl.direction[1], cl.direction[2], 0.0],
+                        };
+                        lb.light_count += 1;
+                    }
+                    Some(lb)
+                };
+            renderer.render_meshes(&mesh_cmds, &camera, &color_view, light_buffer.as_ref());
         }
 
         // Collect all overlay draw commands from scripts and UI

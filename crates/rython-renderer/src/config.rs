@@ -10,21 +10,28 @@ use serde::{Deserialize, Serialize};
 pub struct SceneSettings {
     /// Framebuffer clear color RGBA in linear [0, 1] space.
     pub clear_color: [f32; 4],
-    /// World-space direction of the directional light (normalized on set).
+    /// World-space direction of the legacy single directional light (normalized on set).
+    /// Used as fallback when no `LightComponent` entities are present.
     pub light_direction: [f32; 3],
-    /// RGB color of the directional light (linear [0, 1]).
+    /// RGB color of the legacy directional light (linear [0, 1]).
     pub light_color: [f32; 3],
-    /// Scalar intensity multiplier for the directional light.
+    /// Scalar intensity multiplier for the legacy directional light.
     pub light_intensity: f32,
+    /// Scene-wide ambient light color (linear RGB [0, 1]). Default [0.1, 0.1, 0.1].
+    pub ambient_color: [f32; 3],
+    /// Scalar multiplier applied to `ambient_color`. Default 1.0.
+    pub ambient_intensity: f32,
 }
 
 impl Default for SceneSettings {
     fn default() -> Self {
         Self {
-            clear_color: [0.15, 0.15, 0.15, 1.0],
-            light_direction: [0.5, 1.0, 0.5],
-            light_color: [1.0, 1.0, 1.0],
-            light_intensity: 1.0,
+            clear_color:       [0.15, 0.15, 0.15, 1.0],
+            light_direction:   [0.5, 1.0, 0.5],
+            light_color:       [1.0, 1.0, 1.0],
+            light_intensity:   1.0,
+            ambient_color:     [0.1, 0.1, 0.1],
+            ambient_intensity: 1.0,
         }
     }
 }

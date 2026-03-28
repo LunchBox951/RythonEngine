@@ -769,7 +769,7 @@ fn t_rend_14_mesh_render_pipeline_with_depth_buffer() {
             mesh_id: "cube".to_string(),
             ..Default::default()
         };
-        state.render_meshes(&[cmd], &camera, &color_view);
+        state.render_meshes(&[cmd], &camera, &color_view, None);
 
         // Reaching here without a wgpu validation error means:
         //   - Depth32Float texture was created successfully.

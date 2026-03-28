@@ -1,5 +1,7 @@
-pub mod transform;
+pub mod light;
 pub mod render;
+pub mod transform;
 
-pub use transform::TransformSystem;
+pub use light::LightSystem;
 pub use render::RenderSystem;
+pub use transform::TransformSystem;
