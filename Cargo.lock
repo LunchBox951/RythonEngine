@@ -3821,7 +3821,11 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
 name = "rython-audio"
+<<<<<<< Updated upstream
 version = "0.1.5"
+=======
+version = "0.1.4"
+>>>>>>> Stashed changes
 dependencies = [
  "kira",
  "rython-core",
@@ -3832,7 +3836,11 @@ dependencies = [
 
 [[package]]
 name = "rython-cli"
+<<<<<<< Updated upstream
 version = "0.1.5"
+=======
+version = "0.1.4"
+>>>>>>> Stashed changes
 dependencies = [
  "bytemuck",
  "env_logger",
@@ -3859,7 +3867,11 @@ dependencies = [
 
 [[package]]
 name = "rython-core"
+<<<<<<< Updated upstream
 version = "0.1.5"
+=======
+version = "0.1.4"
+>>>>>>> Stashed changes
 dependencies = [
  "downcast-rs",
  "glam 0.29.3",
@@ -3870,7 +3882,11 @@ dependencies = [
 
 [[package]]
 name = "rython-ecs"
+<<<<<<< Updated upstream
 version = "0.1.5"
+=======
+version = "0.1.4"
+>>>>>>> Stashed changes
 dependencies = [
  "downcast-rs",
  "glam 0.29.3",
@@ -3882,7 +3898,11 @@ dependencies = [
 
 [[package]]
 name = "rython-editor"
+<<<<<<< Updated upstream
 version = "0.1.5"
+=======
+version = "0.1.4"
+>>>>>>> Stashed changes
 dependencies = [
  "bytemuck",
  "eframe",
@@ -3908,7 +3928,11 @@ dependencies = [
 
 [[package]]
 name = "rython-engine"
+<<<<<<< Updated upstream
 version = "0.1.5"
+=======
+version = "0.1.4"
+>>>>>>> Stashed changes
 dependencies = [
  "log",
  "parking_lot",
@@ -3931,7 +3955,11 @@ dependencies = [
 
 [[package]]
 name = "rython-input"
+<<<<<<< Updated upstream
 version = "0.1.5"
+=======
+version = "0.1.4"
+>>>>>>> Stashed changes
 dependencies = [
  "gilrs",
  "parking_lot",
@@ -3943,7 +3971,11 @@ dependencies = [
 
 [[package]]
 name = "rython-modules"
+<<<<<<< Updated upstream
 version = "0.1.5"
+=======
+version = "0.1.4"
+>>>>>>> Stashed changes
 dependencies = [
  "downcast-rs",
  "parking_lot",
@@ -3953,7 +3985,11 @@ dependencies = [
 
 [[package]]
 name = "rython-physics"
+<<<<<<< Updated upstream
 version = "0.1.5"
+=======
+version = "0.1.4"
+>>>>>>> Stashed changes
 dependencies = [
  "crossbeam-channel",
  "rapier3d",
@@ -3968,7 +4004,11 @@ dependencies = [
 
 [[package]]
 name = "rython-renderer"
+<<<<<<< Updated upstream
 version = "0.1.5"
+=======
+version = "0.1.4"
+>>>>>>> Stashed changes
 dependencies = [
  "bytemuck",
  "env_logger",
@@ -3986,7 +4026,11 @@ dependencies = [
 
 [[package]]
 name = "rython-resources"
+<<<<<<< Updated upstream
 version = "0.1.5"
+=======
+version = "0.1.4"
+>>>>>>> Stashed changes
 dependencies = [
  "bytemuck",
  "crossbeam-channel",
@@ -4003,7 +4047,11 @@ dependencies = [
 
 [[package]]
 name = "rython-scheduler"
+<<<<<<< Updated upstream
 version = "0.1.5"
+=======
+version = "0.1.4"
+>>>>>>> Stashed changes
 dependencies = [
  "crossbeam-channel",
  "parking_lot",
@@ -4013,7 +4061,11 @@ dependencies = [
 
 [[package]]
 name = "rython-scripting"
+<<<<<<< Updated upstream
 version = "0.1.5"
+=======
+version = "0.1.4"
+>>>>>>> Stashed changes
 dependencies = [
  "crossbeam-channel",
  "env_logger",
@@ -4041,7 +4093,11 @@ dependencies = [
 
 [[package]]
 name = "rython-ui"
+<<<<<<< Updated upstream
 version = "0.1.5"
+=======
+version = "0.1.4"
+>>>>>>> Stashed changes
 dependencies = [
  "rython-core",
  "rython-input",
@@ -4053,7 +4109,11 @@ dependencies = [
 
 [[package]]
 name = "rython-window"
+<<<<<<< Updated upstream
 version = "0.1.5"
+=======
+version = "0.1.4"
+>>>>>>> Stashed changes
 dependencies = [
  "rython-core",
  "rython-modules",
