@@ -76,7 +76,14 @@ def build() -> None:
     _build_circular_wall(radius=11.0, y=0.0, segments=18, height=4.0)
 
     # Lava pit — static, visual only (damage handled by proximity in _tick)
-    lb.spawn_static_block(0.0, 0.05, 0.0, 6.0, 0.1, 6.0, tags=["lava"], texture=_TEX_LAVA, normal_map=_NRM_LAVA)
+    lb.spawn_static_block(
+        0.0, 0.05, 0.0, 6.0, 0.1, 6.0,
+        tags=["lava"],
+        texture=_TEX_LAVA,
+        normal_map=_NRM_LAVA,
+        emissive_color=(1.0, 0.3, 0.0),
+        emissive_intensity=1.8,
+    )
 
     # 3 score pickups around the arena — subscribe trigger_enter for each
     p1 = lb.spawn_pickup(7.0,  0.5,  0.0,  pickup_type="score", value=100)
