@@ -150,7 +150,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// Mesh shader — §2 specular mapping: Phong specular term, specular map, CameraUniform eye_position.
+/// Mesh shader — §4 emissive materials: additive emissive term after lighting, emissive map group(6).
 pub const MESH_WGSL: &str = r#"
 // CameraUniforms: 80 bytes total
 //   view_proj:    mat4x4<f32>  [0-63]   64 B
@@ -162,30 +162,32 @@ struct CameraUniforms {
     _pad:         f32,
 };
 
-// ModelUniforms: 128 bytes total
+// ModelUniforms: 144 bytes total
 //   model:            mat4x4<f32>  [0-63]    64 B
 //   color:            vec4<f32>    [64-79]   16 B
 //   specular_color:   vec4<f32>    [80-95]   16 B  xyz = tint, w unused
-//   has_texture:      u32          [96-99]    4 B
-//   has_normal_map:   u32          [100-103]  4 B
-//   has_specular_map: u32          [104-107]  4 B
-//   metallic:         f32          [108-111]  4 B
-//   roughness:        f32          [112-115]  4 B
-//   shininess:        f32          [116-119]  4 B  scalar fallback when has_specular_map==0
-//   _pad0:            u32          [120-123]  4 B
-//   _pad1:            u32          [124-127]  4 B
+//   emissive_color:   vec4<f32>    [96-111]  16 B  xyz = emissive RGB, w = intensity
+//   has_texture:      u32          [112-115]  4 B
+//   has_normal_map:   u32          [116-119]  4 B
+//   has_specular_map: u32          [120-123]  4 B
+//   has_emissive_map: u32          [124-127]  4 B
+//   metallic:         f32          [128-131]  4 B
+//   roughness:        f32          [132-135]  4 B
+//   shininess:        f32          [136-139]  4 B  scalar fallback when has_specular_map==0
+//   _pad0:            u32          [140-143]  4 B
 struct ModelUniforms {
     model:            mat4x4<f32>,
     color:            vec4<f32>,
     specular_color:   vec4<f32>,
+    emissive_color:   vec4<f32>,
     has_texture:      u32,
     has_normal_map:   u32,
     has_specular_map: u32,
+    has_emissive_map: u32,
     metallic:         f32,
     roughness:        f32,
     shininess:        f32,
     _pad0:            u32,
-    _pad1:            u32,
 };
 
 // DirectionalLightUniform: 32 bytes
@@ -205,6 +207,8 @@ struct DirectionalLightUniform {
 @group(4) @binding(0) var t_specular:   texture_2d<f32>;
 @group(4) @binding(1) var s_specular:   sampler;
 @group(5) @binding(0) var<uniform> dir_light: DirectionalLightUniform;
+@group(6) @binding(0) var t_emissive:   texture_2d<f32>;
+@group(6) @binding(1) var s_emissive:   sampler;
 
 struct VertexInput {
     @location(0) position:  vec3<f32>,
@@ -291,7 +295,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     } else {
         base_color = model_data.color;
     }
-    return vec4<f32>(base_color.rgb * light_col * diffuse_intensity + spec * light_col, base_color.a);
+    let lit_color = base_color.rgb * light_col * diffuse_intensity + spec * light_col;
+
+    // Emissive — additive after lighting, unaffected by shadows or light direction.
+    var emissive = model_data.emissive_color.xyz * model_data.emissive_color.w;
+    if (model_data.has_emissive_map != 0u) {
+        let emissive_sample = textureSample(t_emissive, s_emissive, in.uv).rgb;
+        emissive = emissive * emissive_sample;
+    }
+    let final_color = lit_color + emissive;
+    return vec4<f32>(final_color, base_color.a);
 }
 "#;
 

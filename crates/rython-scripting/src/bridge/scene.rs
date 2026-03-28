@@ -113,6 +113,25 @@ impl SceneBridge {
                             {
                                 log::warn!("spawn mesh: roughness out of range — clamped to [0, 1]");
                             }
+                            let emissive_map_id = map
+                                .get("emissive_map")
+                                .and_then(|v| v.extract::<String>().ok())
+                                .filter(|s| !s.is_empty());
+                            let emissive_color = map
+                                .get("emissive_color")
+                                .and_then(|v| v.extract::<(f32, f32, f32)>().ok())
+                                .map(|(r, g, b)| [r, g, b, 0.0])
+                                .unwrap_or([0.0, 0.0, 0.0, 0.0]);
+                            let emissive_intensity = map
+                                .get("emissive_intensity")
+                                .and_then(|v| v.extract::<f32>().ok())
+                                .unwrap_or(1.0)
+                                .max(0.0);
+                            if map.get("emissive_intensity").and_then(|v| v.extract::<f32>().ok())
+                                .is_some_and(|v| v < 0.0)
+                            {
+                                log::warn!("spawn mesh: emissive_intensity < 0 — clamped to 0.0");
+                            }
                             components.push((
                                 TypeId::of::<MeshComponent>(),
                                 Box::new(MeshComponent {
@@ -120,6 +139,9 @@ impl SceneBridge {
                                     texture_id,
                                     normal_map_id,
                                     specular_map_id,
+                                    emissive_map_id,
+                                    emissive_color,
+                                    emissive_intensity,
                                     shininess,
                                     specular_color,
                                     visible,

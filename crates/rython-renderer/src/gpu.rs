@@ -69,6 +69,8 @@ pub struct BindGroupLayouts {
     pub mesh_specular_map: wgpu::BindGroupLayout,
     /// `mesh` shader: group(5) = directional light uniform
     pub mesh_dir_light: wgpu::BindGroupLayout,
+    /// `mesh` shader: group(6) = emissive map texture_2d + sampler
+    pub mesh_emissive_map: wgpu::BindGroupLayout,
 }
 
 /// GPU context: wgpu instance, adapter, device, queue, surface, and pipelines.
@@ -356,7 +358,7 @@ impl GpuContext {
             true,
             sample_count,
         )?;
-        let (mesh, mesh_camera_bgl, mesh_model_bgl, mesh_texture_bgl, mesh_normal_map_bgl, mesh_specular_map_bgl, mesh_dir_light_bgl) =
+        let (mesh, mesh_camera_bgl, mesh_model_bgl, mesh_texture_bgl, mesh_normal_map_bgl, mesh_specular_map_bgl, mesh_dir_light_bgl, mesh_emissive_map_bgl) =
             Self::build_mesh_pipeline(device, surface_format, sample_count)?;
 
         let pipelines = Pipelines { primitive, image, text, mesh };
@@ -370,6 +372,7 @@ impl GpuContext {
             mesh_normal_map: mesh_normal_map_bgl,
             mesh_specular_map: mesh_specular_map_bgl,
             mesh_dir_light: mesh_dir_light_bgl,
+            mesh_emissive_map: mesh_emissive_map_bgl,
         };
         Ok((pipelines, bind_group_layouts))
     }
@@ -483,7 +486,7 @@ impl GpuContext {
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
         sample_count: u32,
-    ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout), RendererError> {
+    ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout), RendererError> {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh"),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(MESH_WGSL)),
@@ -604,6 +607,29 @@ impl GpuContext {
             }],
         });
 
+        // group(6): emissive map texture + sampler — fragment-only
+        let emissive_map_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("mesh_emissive_map"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh"),
             bind_group_layouts: &[
@@ -613,6 +639,7 @@ impl GpuContext {
                 &normal_map_bgl,
                 &specular_map_bgl,
                 &dir_light_bgl,
+                &emissive_map_bgl,
             ],
             push_constant_ranges: &[],
         });
@@ -670,7 +697,7 @@ impl GpuContext {
             cache: None,
         });
 
-        Ok((pipeline, camera_bgl, model_bgl, texture_bgl, normal_map_bgl, specular_map_bgl, dir_light_bgl))
+        Ok((pipeline, camera_bgl, model_bgl, texture_bgl, normal_map_bgl, specular_map_bgl, dir_light_bgl, emissive_map_bgl))
     }
 }
 
@@ -691,21 +718,22 @@ struct CameraUniform {
     _pad:         f32,            //  4 B [76-79]
 }
 
-// ModelUniform: 128 bytes — must match MESH_WGSL ModelUniforms layout exactly.
+// ModelUniform: 144 bytes — must match MESH_WGSL ModelUniforms layout exactly.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct ModelUniform {
     model:            [[f32; 4]; 4],  // 64 B [0-63]
     color:            [f32; 4],       // 16 B [64-79]
     specular_color:   [f32; 4],       // 16 B [80-95]   xyz=tint, w=unused
-    has_texture:      u32,            //  4 B [96-99]
-    has_normal_map:   u32,            //  4 B [100-103]
-    has_specular_map: u32,            //  4 B [104-107]
-    metallic:         f32,            //  4 B [108-111]
-    roughness:        f32,            //  4 B [112-115]
-    shininess:        f32,            //  4 B [116-119]
-    _pad0:            u32,            //  4 B [120-123]
-    _pad1:            u32,            //  4 B [124-127]
+    emissive_color:   [f32; 4],       // 16 B [96-111]  xyz=emissive RGB, w=intensity
+    has_texture:      u32,            //  4 B [112-115]
+    has_normal_map:   u32,            //  4 B [116-119]
+    has_specular_map: u32,            //  4 B [120-123]
+    has_emissive_map: u32,            //  4 B [124-127]
+    metallic:         f32,            //  4 B [128-131]
+    roughness:        f32,            //  4 B [132-135]
+    shininess:        f32,            //  4 B [136-139]
+    _pad0:            u32,            //  4 B [140-143]
 }
 
 // DirectionalLightUniform: 32 bytes — matches MESH_WGSL DirectionalLightUniform.
@@ -959,6 +987,10 @@ pub struct RendererState {
     specular_map_cache: HashMap<String, wgpu::BindGroup>,
     /// 1×1 fallback specular bind group (R=255 full intensity, G=128 mid-gloss) used when specular_map_id=None or missing.
     fallback_specular_map_bg: wgpu::BindGroup,
+    /// Cached emissive map bind groups keyed by file path.
+    emissive_map_cache: HashMap<String, wgpu::BindGroup>,
+    /// 1×1 black fallback emissive bind group used when emissive_map_id=None or missing.
+    fallback_emissive_map_bg: wgpu::BindGroup,
 }
 
 impl RendererState {
@@ -1118,6 +1150,57 @@ impl RendererState {
             ],
         });
 
+        // Create 1×1 black fallback emissive texture (0, 0, 0, 255) used when emissive_map_id=None.
+        let fallback_emissive_pixel: [u8; 4] = [0, 0, 0, 255];
+        let fallback_emissive_tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("fallback_emissive"),
+            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        gpu.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &fallback_emissive_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &fallback_emissive_pixel,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        );
+        let fallback_emissive_view = fallback_emissive_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let fallback_emissive_sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("fallback_emissive_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        let fallback_emissive_map_bg = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("fallback_emissive_map_bg"),
+            layout: &gpu.bind_group_layouts.mesh_emissive_map,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&fallback_emissive_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&fallback_emissive_sampler),
+                },
+            ],
+        });
+
         Self {
             gpu,
             config,
@@ -1132,6 +1215,8 @@ impl RendererState {
             fallback_normal_map_bg,
             specular_map_cache: HashMap::new(),
             fallback_specular_map_bg,
+            emissive_map_cache: HashMap::new(),
+            fallback_emissive_map_bg,
         }
     }
 
@@ -1379,6 +1464,73 @@ impl RendererState {
         }
     }
 
+    /// Load a PNG emissive map from disk into the emissive_map_cache if not already loaded.
+    /// Falls back to the black fallback texture on missing files (logs a warning).
+    fn ensure_emissive_map_loaded(&mut self, emissive_map_id: &str) {
+        if emissive_map_id.is_empty() || self.emissive_map_cache.contains_key(emissive_map_id) {
+            return;
+        }
+        match image::open(emissive_map_id) {
+            Ok(img) => {
+                let rgba = img.to_rgba8();
+                let (w, h) = (rgba.width(), rgba.height());
+                let tex = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some(emissive_map_id),
+                    size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                self.gpu.queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &tex,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &rgba,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(4 * w),
+                        rows_per_image: Some(h),
+                    },
+                    wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                );
+                let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                let sampler = self.gpu.device.create_sampler(&wgpu::SamplerDescriptor {
+                    label: Some("emissive_map_sampler"),
+                    address_mode_u: wgpu::AddressMode::Repeat,
+                    address_mode_v: wgpu::AddressMode::Repeat,
+                    mag_filter: wgpu::FilterMode::Linear,
+                    min_filter: wgpu::FilterMode::Linear,
+                    ..Default::default()
+                });
+                let bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("emissive_map_bg"),
+                    layout: &self.gpu.bind_group_layouts.mesh_emissive_map,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&sampler),
+                        },
+                    ],
+                });
+                log::debug!("emissive map loaded: '{}' ({}x{})", emissive_map_id, w, h);
+                self.emissive_map_cache.insert(emissive_map_id.to_string(), bg);
+            }
+            Err(e) => {
+                log::warn!("failed to load emissive map '{}': {} — using black fallback", emissive_map_id, e);
+            }
+        }
+    }
+
     /// Ensure a Depth32Float texture of the given dimensions exists, recreating
     /// it when the surface has been resized.
     pub fn ensure_depth_texture(&mut self, width: u32, height: u32) {
@@ -1467,6 +1619,9 @@ impl RendererState {
             }
             if let Some(ref sm_id) = cmd.specular_map_id {
                 self.ensure_specular_map_loaded(sm_id);
+            }
+            if let Some(ref em_id) = cmd.emissive_map_id {
+                self.ensure_emissive_map_loaded(em_id);
             }
         }
 
@@ -1579,19 +1734,22 @@ impl RendererState {
                 let has_tex = if cmd.texture_id.is_empty() { 0u32 } else { 1u32 };
                 let has_normal_map = if cmd.normal_map_id.is_some() { 1u32 } else { 0u32 };
                 let has_specular_map = if cmd.specular_map_id.is_some() { 1u32 } else { 0u32 };
+                let has_emissive_map = if cmd.emissive_map_id.is_some() { 1u32 } else { 0u32 };
                 let [sr, sg, sb] = cmd.specular_color;
+                let [er, eg, eb, _] = cmd.emissive_color;
                 let model_uniform = ModelUniform {
                     model: cmd.transform.to_cols_array_2d(),
                     color: [1.0, 1.0, 1.0, 1.0],
                     specular_color: [sr, sg, sb, 0.0],
+                    emissive_color: [er, eg, eb, cmd.emissive_intensity],
                     has_texture: has_tex,
                     has_normal_map,
                     has_specular_map,
+                    has_emissive_map,
                     metallic: cmd.metallic.clamp(0.0, 1.0),
                     roughness: cmd.roughness.clamp(0.0, 1.0),
                     shininess: cmd.shininess,
                     _pad0: 0,
-                    _pad1: 0,
                 };
                 let model_bytes: &[u8] = bytemuck::bytes_of(&model_uniform);
                 let model_buf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
@@ -1638,10 +1796,20 @@ impl RendererState {
                     None => &self.fallback_specular_map_bg,
                 };
 
+                let emissive_map_bg = match &cmd.emissive_map_id {
+                    Some(em_id) => {
+                        self.emissive_map_cache
+                            .get(em_id.as_str())
+                            .unwrap_or(&self.fallback_emissive_map_bg)
+                    }
+                    None => &self.fallback_emissive_map_bg,
+                };
+
                 pass.set_bind_group(1, &model_bg, &[]);
                 pass.set_bind_group(2, tex_bg, &[]);
                 pass.set_bind_group(3, normal_map_bg, &[]);
                 pass.set_bind_group(4, specular_map_bg, &[]);
+                pass.set_bind_group(6, emissive_map_bg, &[]);
                 pass.set_vertex_buffer(0, mesh.vertex_buf.slice(..));
                 pass.set_index_buffer(mesh.index_buf.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, 0..1);

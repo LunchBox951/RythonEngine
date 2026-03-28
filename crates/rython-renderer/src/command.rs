@@ -103,10 +103,16 @@ pub struct DrawMesh {
     pub normal_map_id: Option<String>,
     /// Optional specular map asset key (R=intensity, G=gloss); `None` uses scalar shininess.
     pub specular_map_id: Option<String>,
+    /// Optional emissive map asset key (RGB); `None` uses black fallback.
+    pub emissive_map_id: Option<String>,
     /// RGB tint applied to the specular highlight; default [1, 1, 1].
     pub specular_color: [f32; 3],
     /// Scalar shininess exponent used when `specular_map_id` is `None`; default 32.0.
     pub shininess: f32,
+    /// RGBA emissive color; xyz = linear RGB, w = reserved (bloom threshold). Default [0,0,0,0].
+    pub emissive_color: [f32; 4],
+    /// Scalar emissive intensity multiplier; default 1.0.
+    pub emissive_intensity: f32,
     pub transform: Mat4,
     pub z: f32,
     /// PBR metallic hint [0, 1]; 0 = dielectric (default), 1 = metal.
@@ -122,8 +128,11 @@ impl Default for DrawMesh {
             texture_id: String::new(),
             normal_map_id: None,
             specular_map_id: None,
+            emissive_map_id: None,
             specular_color: [1.0, 1.0, 1.0],
             shininess: 32.0,
+            emissive_color: [0.0, 0.0, 0.0, 0.0],
+            emissive_intensity: 1.0,
             transform: Mat4::IDENTITY,
             z: 0.0,
             metallic: 0.0,
@@ -186,6 +195,41 @@ pub fn rect_to_clip_verts(x: f32, y: f32, w: f32, h: f32) -> [[f32; 2]; 4] {
         norm_to_clip(x, y + h),
         norm_to_clip(x + w, y + h),
     ]
+}
+
+#[cfg(test)]
+mod emissive_tests {
+    use super::*;
+
+    // §4 Test 1: default emissive is off
+    #[test]
+    fn s4_t1_emissive_default_is_off() {
+        let cmd = DrawMesh::default();
+        assert_eq!(cmd.emissive_color, [0.0, 0.0, 0.0, 0.0]);
+        assert!((cmd.emissive_intensity - 1.0).abs() < 1e-6);
+        assert!(cmd.emissive_map_id.is_none());
+    }
+
+    // §4 Test 3: emissive_map_id can be set
+    #[test]
+    fn s4_t3_emissive_map_id_roundtrip() {
+        let cmd = DrawMesh {
+            emissive_map_id: Some("textures/lantern_e.png".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(cmd.emissive_map_id.as_deref(), Some("textures/lantern_e.png"));
+    }
+
+    // §4 Test 7: emissive_intensity = 0 → w=0 in packed vec4
+    #[test]
+    fn s4_t7_emissive_intensity_zero_produces_no_glow() {
+        let cmd = DrawMesh {
+            emissive_color: [1.0, 1.0, 1.0, 0.0],
+            emissive_intensity: 0.0,
+            ..Default::default()
+        };
+        assert!((cmd.emissive_intensity).abs() < 1e-6);
+    }
 }
 
 #[cfg(test)]

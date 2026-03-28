@@ -51,6 +51,15 @@ pub struct MeshComponent {
     /// Asset key for specular map (R=intensity, G=glossiness); `None` uses scalar shininess.
     #[serde(default)]
     pub specular_map_id: Option<String>,
+    /// Asset key for emissive map (RGB); `None` means no emissive texture.
+    #[serde(default)]
+    pub emissive_map_id: Option<String>,
+    /// RGBA linear emissive color; default [0,0,0,0] (off). Alpha reserved for bloom threshold.
+    #[serde(default = "MeshComponent::default_emissive_color")]
+    pub emissive_color: [f32; 4],
+    /// Scalar multiplier for emissive; clamped to ≥ 0 at render time. Default 1.0.
+    #[serde(default = "MeshComponent::default_emissive_intensity")]
+    pub emissive_intensity: f32,
     pub yaw_offset: f32,
     /// Scalar shininess fallback used when `specular_map_id` is `None`.
     #[serde(default = "MeshComponent::default_shininess")]
@@ -71,6 +80,8 @@ impl MeshComponent {
     fn default_shininess() -> f32 { 32.0 }
     fn default_specular_color() -> [f32; 3] { [1.0, 1.0, 1.0] }
     fn default_roughness() -> f32 { 0.5 }
+    fn default_emissive_color() -> [f32; 4] { [0.0, 0.0, 0.0, 0.0] }
+    fn default_emissive_intensity() -> f32 { 1.0 }
 }
 
 impl Default for MeshComponent {
@@ -80,6 +91,9 @@ impl Default for MeshComponent {
             texture_id: String::new(),
             normal_map_id: None,
             specular_map_id: None,
+            emissive_map_id: None,
+            emissive_color: [0.0, 0.0, 0.0, 0.0],
+            emissive_intensity: 1.0,
             yaw_offset: 0.0,
             shininess: 32.0,
             specular_color: [1.0, 1.0, 1.0],
