@@ -21,8 +21,9 @@ use rython_resources::ResourceManager;
 use rython_scripting::{
     drain_draw_commands, drain_ui_draw_commands, flush_python_bg_completions, flush_python_bg_tasks,
     flush_python_par_tasks, flush_python_seq_tasks, flush_recurring_callbacks, flush_timers,
-    reset_quit_requested, set_active_audio, set_active_input, set_active_physics, set_active_ui,
-    set_elapsed_secs, ScriptingConfig, ScriptingModule, was_quit_requested,
+    get_scene_settings, reset_quit_requested, set_active_audio, set_active_input,
+    set_active_physics, set_active_ui, set_elapsed_secs, ScriptingConfig, ScriptingModule,
+    was_quit_requested,
 };
 use rython_ui::{Theme, UIManager};
 use rython_window::{KeyCode, MouseButton, RawInputEvent, WindowModule};
@@ -436,15 +437,13 @@ impl App {
             renderer.ensure_msaa_texture(width, height, fmt);
         }
 
+        // Apply scene settings from Python (clear color, light direction, etc.)
+        renderer.scene_settings = get_scene_settings();
+
         // MSAA-aware clear pass (inline to support resolve target)
         {
-            let [r, g, b, a] = renderer.config.clear_color;
-            let clear_color = wgpu::Color {
-                r: r as f64 / 255.0,
-                g: g as f64 / 255.0,
-                b: b as f64 / 255.0,
-                a: a as f64 / 255.0,
-            };
+            let [r, g, b, a] = renderer.scene_settings.clear_color;
+            let clear_color = wgpu::Color { r: r as f64, g: g as f64, b: b as f64, a: a as f64 };
             let (att_view, att_resolve): (&wgpu::TextureView, Option<&wgpu::TextureView>) =
                 match (sample_count > 1, renderer.msaa_view()) {
                     (true, Some(mv)) => (mv, Some(&color_view)),
@@ -476,8 +475,8 @@ impl App {
         let mesh_cmds: Vec<rython_renderer::DrawMesh> = ecs_cmds
             .into_iter()
             .filter_map(|cmd| {
-                if let rython_ecs::DrawCommand::DrawMesh { mesh_id, texture_id, transform, .. } = cmd {
-                    Some(rython_renderer::DrawMesh { mesh_id, texture_id, transform, z: 0.0 })
+                if let rython_ecs::DrawCommand::DrawMesh { mesh_id, texture_id, transform, metallic, roughness, .. } = cmd {
+                    Some(rython_renderer::DrawMesh { mesh_id, texture_id, transform, z: 0.0, metallic, roughness })
                 } else {
                     None
                 }

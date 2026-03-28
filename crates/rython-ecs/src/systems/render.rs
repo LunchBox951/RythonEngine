@@ -14,6 +14,8 @@ pub enum DrawCommand {
         texture_id: String,
         yaw_offset: f32,
         shininess: f32,
+        metallic: f32,
+        roughness: f32,
         transform: Mat4,
     },
     DrawBillboard {
@@ -52,6 +54,8 @@ impl RenderSystem {
                 texture_id: mesh.texture_id.clone(),
                 yaw_offset: mesh.yaw_offset,
                 shininess: mesh.shininess,
+                metallic: mesh.metallic.clamp(0.0, 1.0),
+                roughness: mesh.roughness.clamp(0.0, 1.0),
                 transform,
             });
         });

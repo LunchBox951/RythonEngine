@@ -1,5 +1,36 @@
 use serde::{Deserialize, Serialize};
 
+// ── SceneSettings ─────────────────────────────────────────────────────────────
+
+/// Runtime scene rendering settings — configurable from Python via `rython.renderer`.
+///
+/// These values override defaults on a per-frame basis and are separate from
+/// [`RendererConfig`] (which is read from engine.json at startup).
+#[derive(Debug, Clone)]
+pub struct SceneSettings {
+    /// Framebuffer clear color RGBA in linear [0, 1] space.
+    pub clear_color: [f32; 4],
+    /// World-space direction of the directional light (normalized on set).
+    pub light_direction: [f32; 3],
+    /// RGB color of the directional light (linear [0, 1]).
+    pub light_color: [f32; 3],
+    /// Scalar intensity multiplier for the directional light.
+    pub light_intensity: f32,
+}
+
+impl Default for SceneSettings {
+    fn default() -> Self {
+        Self {
+            clear_color: [0.15, 0.15, 0.15, 1.0],
+            light_direction: [0.5, 1.0, 0.5],
+            light_color: [1.0, 1.0, 1.0],
+            light_intensity: 1.0,
+        }
+    }
+}
+
+// ── RendererConfig ────────────────────────────────────────────────────────────
+
 fn default_clear_color() -> [u8; 4] {
     [0, 0, 0, 255]
 }

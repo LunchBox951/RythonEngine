@@ -156,19 +156,35 @@ struct CameraUniforms {
     view_proj: mat4x4<f32>,
 };
 
+// ModelUniforms: 96 bytes total
+//   model:       mat4x4<f32>  [0-63]   64 B
+//   color:       vec4<f32>    [64-79]  16 B
+//   has_texture: u32          [80-83]   4 B
+//   metallic:    f32          [84-87]   4 B  (PBR hint: 0=dielectric, 1=metal)
+//   roughness:   f32          [88-91]   4 B  (PBR hint: 0=smooth, 1=rough; default 0.5)
+//   _pad2:       u32          [92-95]   4 B
 struct ModelUniforms {
-    model: mat4x4<f32>,
-    color: vec4<f32>,
+    model:       mat4x4<f32>,
+    color:       vec4<f32>,
     has_texture: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
+    metallic:    f32,
+    roughness:   f32,
+    _pad2:       u32,
 };
 
-@group(0) @binding(0) var<uniform> camera: CameraUniforms;
+// DirectionalLightUniform: 32 bytes
+//   direction: vec4<f32>  xyz = normalized direction, w = intensity
+//   color:     vec4<f32>  xyz = RGB color, w = unused
+struct DirectionalLightUniform {
+    direction: vec4<f32>,
+    color:     vec4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> camera:    CameraUniforms;
 @group(1) @binding(0) var<uniform> model_data: ModelUniforms;
 @group(2) @binding(0) var t_diffuse: texture_2d<f32>;
 @group(2) @binding(1) var s_diffuse: sampler;
+@group(3) @binding(0) var<uniform> dir_light: DirectionalLightUniform;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -194,16 +210,24 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let light_dir = normalize(vec3<f32>(0.5, 1.0, 0.5));
-    let diffuse   = max(dot(normalize(in.world_normal), light_dir), 0.0);
-    let intensity  = 0.2 + diffuse * 0.8;
+    let light_dir  = normalize(dir_light.direction.xyz);
+    let light_col  = dir_light.color.xyz;
+    let intensity_scale = dir_light.direction.w;
+
+    let diffuse = max(dot(normalize(in.world_normal), light_dir), 0.0);
+
+    // Roughness modulates specular contribution: smoother (low roughness) → brighter highlights.
+    // At default roughness=0.5 the effective factor equals the original 0.8, preserving prior look.
+    let shininess_factor = clamp(0.8 * (1.5 - model_data.roughness), 0.0, 1.0);
+    let intensity = (0.2 + diffuse * shininess_factor) * intensity_scale;
+
     var base_color: vec4<f32>;
     if (model_data.has_texture != 0u) {
         base_color = textureSample(t_diffuse, s_diffuse, in.uv);
     } else {
         base_color = model_data.color;
     }
-    return vec4<f32>(base_color.rgb * intensity, base_color.a);
+    return vec4<f32>(base_color.rgb * light_col * intensity, base_color.a);
 }
 "#;
 

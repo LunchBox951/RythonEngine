@@ -48,6 +48,16 @@ pub struct MeshComponent {
     pub yaw_offset: f32,
     pub shininess: f32,
     pub visible: bool,
+    /// PBR metallic hint [0, 1]; 0 = dielectric (default), 1 = metal.
+    #[serde(default)]
+    pub metallic: f32,
+    /// PBR roughness hint [0, 1]; 0 = mirror-smooth, 1 = fully rough (default 0.5).
+    #[serde(default = "MeshComponent::default_roughness")]
+    pub roughness: f32,
+}
+
+impl MeshComponent {
+    fn default_roughness() -> f32 { 0.5 }
 }
 
 impl Default for MeshComponent {
@@ -58,6 +68,8 @@ impl Default for MeshComponent {
             yaw_offset: 0.0,
             shininess: 0.0,
             visible: true,
+            metallic: 0.0,
+            roughness: 0.5,
         }
     }
 }

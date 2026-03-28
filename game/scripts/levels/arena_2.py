@@ -44,6 +44,12 @@ def build() -> None:
     global _collected
     _collected = 0
 
+    # Arena visual settings — deep midnight blue void, cold side-light from the left
+    rython.renderer.set_clear_color(0.05, 0.06, 0.14, 1.0)
+    rython.renderer.set_light_direction(-0.8, -0.5, 0.2)
+    rython.renderer.set_light_color(0.85, 0.90, 1.0)
+    rython.renderer.set_light_intensity(0.95)
+
     # No ground — void below. Floating platforms form a path.
     # Start platform
     lb.spawn_static_block(0.0, 0.0, 0.0, 6.0, 0.5, 6.0, texture=_TEX_PLATFORM)

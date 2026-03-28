@@ -76,12 +76,34 @@ impl SceneBridge {
                                 .get("visible")
                                 .and_then(|v| v.extract::<bool>().ok())
                                 .unwrap_or(true);
+                            let metallic = map
+                                .get("metallic")
+                                .and_then(|v| v.extract::<f32>().ok())
+                                .unwrap_or(0.0)
+                                .clamp(0.0, 1.0);
+                            let roughness = map
+                                .get("roughness")
+                                .and_then(|v| v.extract::<f32>().ok())
+                                .unwrap_or(0.5)
+                                .clamp(0.0, 1.0);
+                            if map.get("metallic").and_then(|v| v.extract::<f32>().ok())
+                                .is_some_and(|v| v < 0.0 || v > 1.0)
+                            {
+                                log::warn!("spawn mesh: metallic out of range — clamped to [0, 1]");
+                            }
+                            if map.get("roughness").and_then(|v| v.extract::<f32>().ok())
+                                .is_some_and(|v| v < 0.0 || v > 1.0)
+                            {
+                                log::warn!("spawn mesh: roughness out of range — clamped to [0, 1]");
+                            }
                             components.push((
                                 TypeId::of::<MeshComponent>(),
                                 Box::new(MeshComponent {
                                     mesh_id,
                                     texture_id,
                                     visible,
+                                    metallic,
+                                    roughness,
                                     ..Default::default()
                                 }),
                             ));

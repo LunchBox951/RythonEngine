@@ -101,6 +101,23 @@ pub struct DrawMesh {
     pub texture_id: String,
     pub transform: Mat4,
     pub z: f32,
+    /// PBR metallic hint [0, 1]; 0 = dielectric (default), 1 = metal.
+    pub metallic: f32,
+    /// PBR roughness hint [0, 1]; 0 = mirror-smooth, 1 = fully rough (default 0.5).
+    pub roughness: f32,
+}
+
+impl Default for DrawMesh {
+    fn default() -> Self {
+        Self {
+            mesh_id: String::new(),
+            texture_id: String::new(),
+            transform: Mat4::IDENTITY,
+            z: 0.0,
+            metallic: 0.0,
+            roughness: 0.5,
+        }
+    }
 }
 
 /// Camera-facing sprite in 3D space (Phase 3).

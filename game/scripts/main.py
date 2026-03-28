@@ -75,6 +75,12 @@ def _on_load_level(**kwargs) -> None:
     game_state.set_level(level_num)
     game_state.reset_for_level()
 
+    # Reset renderer to neutral defaults before each arena applies its own settings
+    rython.renderer.set_clear_color(0.15, 0.15, 0.15, 1.0)
+    rython.renderer.set_light_direction(0.5, -1.0, 0.5)
+    rython.renderer.set_light_color(1.0, 1.0, 1.0)
+    rython.renderer.set_light_intensity(1.0)
+
     rython.audio.stop_category("music")
     level_builder.clear_level()
     enemies.clear()

@@ -45,6 +45,12 @@ def build() -> None:
     global _collected
     _collected = 0
 
+    # Arena visual settings — pale blue-grey sky, warm overhead sun
+    rython.renderer.set_clear_color(0.62, 0.65, 0.70, 1.0)
+    rython.renderer.set_light_direction(0.3, -1.0, 0.4)
+    rython.renderer.set_light_color(1.0, 0.96, 0.88)
+    rython.renderer.set_light_intensity(1.1)
+
     # Ground — 20x20
     lb.spawn_static_block(0.0, -0.5, 0.0, 20.0, 1.0, 20.0, texture=_TEX_FLOOR)
 

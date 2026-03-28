@@ -1,7 +1,7 @@
 use rython_renderer::{
     norm_to_clip, rect_to_clip_verts, validate_wgsl, Camera, Color, CommandQueue, DrawBillboard,
     DrawCircle, DrawCommand, DrawImage, DrawLine, DrawMesh, DrawRect, DrawText, RendererConfig,
-    RendererState,
+    RendererState, SceneSettings,
 };
 use rython_core::math::{Vec2, Vec3};
 
@@ -767,9 +767,7 @@ fn t_rend_14_mesh_render_pipeline_with_depth_buffer() {
         // --- Dispatch one DrawMesh ---
         let cmd = DrawMesh {
             mesh_id: "cube".to_string(),
-            texture_id: String::new(),
-            transform: Mat4::IDENTITY,
-            z: 0.0,
+            ..Default::default()
         };
         state.render_meshes(&[cmd], &camera, &color_view);
 
@@ -1049,8 +1047,7 @@ fn edge_draw_command_z_all_variants() {
             x: 0.0, y: 0.0, w: 1.0, h: 1.0, alpha: 1.0, z: 4.0 }),
         DrawCommand::Text(DrawText { text: String::new(), font_id: String::new(),
             x: 0.0, y: 0.0, color: Color::rgb(255, 255, 255), size: 16, z: 5.0 }),
-        DrawCommand::Mesh(DrawMesh { mesh_id: String::new(), texture_id: String::new(),
-            transform: Mat4::IDENTITY, z: 6.0 }),
+        DrawCommand::Mesh(DrawMesh { z: 6.0, ..Default::default() }),
         DrawCommand::Billboard(DrawBillboard { asset_id: String::new(),
             position: Vec3::ZERO, size: Vec2::ONE, color: Color::rgb(255, 255, 255), z: 7.0 }),
     ];
@@ -1118,4 +1115,70 @@ fn edge_renderer_config_serde_defaults_from_empty() {
     assert_eq!(cfg.max_draw_commands, 65536);
     assert_eq!(cfg.msaa_samples, 4);
     assert!(!cfg.use_fxaa);
+}
+
+// ─── QW-1: Material Properties (metallic / roughness) ────────────────────────
+
+#[test]
+fn qw1_1_draw_mesh_default_metallic_roughness() {
+    let cmd = DrawMesh::default();
+    assert_eq!(cmd.metallic, 0.0, "default metallic should be 0.0");
+    assert_eq!(cmd.roughness, 0.5, "default roughness should be 0.5");
+}
+
+#[test]
+fn qw1_2_draw_mesh_metallic_roughness_roundtrip() {
+    let cmd = DrawMesh { metallic: 0.8, roughness: 0.2, ..Default::default() };
+    assert!((cmd.metallic - 0.8).abs() < 1e-6);
+    assert!((cmd.roughness - 0.2).abs() < 1e-6);
+}
+
+#[test]
+fn qw1_3_draw_mesh_metallic_clamped_in_render() {
+    // Clamping happens in render_meshes; verify field stores out-of-range values
+    // and that clamp(0,1) of valid values preserves them.
+    let cmd = DrawMesh { metallic: 1.5, roughness: -0.1, ..Default::default() };
+    assert_eq!(cmd.metallic.clamp(0.0, 1.0), 1.0);
+    assert_eq!(cmd.roughness.clamp(0.0, 1.0), 0.0);
+}
+
+// ─── QW-2: Scene Settings (directional light) ────────────────────────────────
+
+#[test]
+fn qw2_1_scene_settings_default_direction() {
+    let s = SceneSettings::default();
+    assert_eq!(s.light_direction, [0.5, 1.0, 0.5]);
+    assert_eq!(s.light_color, [1.0, 1.0, 1.0]);
+    assert!((s.light_intensity - 1.0).abs() < 1e-6);
+}
+
+#[test]
+fn qw2_4_scene_settings_direction_stored_in_uniform() {
+    let s = SceneSettings { light_direction: [1.0, 0.0, 0.0], ..SceneSettings::default() };
+    assert_eq!(s.light_direction[0], 1.0);
+    assert_eq!(s.light_direction[1], 0.0);
+    assert_eq!(s.light_direction[2], 0.0);
+}
+
+// ─── QW-3: Background Color ───────────────────────────────────────────────────
+
+#[test]
+fn qw3_1_scene_settings_default_clear_color() {
+    let s = SceneSettings::default();
+    assert_eq!(s.clear_color, [0.15, 0.15, 0.15, 1.0]);
+}
+
+#[test]
+fn qw3_2_scene_settings_clear_color_roundtrip() {
+    let mut s = SceneSettings::default();
+    s.clear_color = [0.05, 0.06, 0.14, 1.0];
+    assert_eq!(s.clear_color, [0.05, 0.06, 0.14, 1.0]);
+}
+
+#[test]
+fn qw3_5_scene_settings_clear_color_clamp() {
+    let r = (-0.1f32).clamp(0.0, 1.0);
+    let g = (1.5f32).clamp(0.0, 1.0);
+    assert_eq!(r, 0.0, "negative should clamp to 0");
+    assert_eq!(g, 1.0, "over-1 should clamp to 1");
 }

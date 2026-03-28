@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::camera::Camera;
 use crate::command::{DrawMesh, DrawRect, DrawText};
-use crate::config::RendererConfig;
+use crate::config::{RendererConfig, SceneSettings};
 use crate::shaders::{IMAGE_WGSL, MESH_WGSL, PRIMITIVE_WGSL, TEXT_WGSL};
 use thiserror::Error;
 
@@ -63,6 +63,8 @@ pub struct BindGroupLayouts {
     pub mesh_model: wgpu::BindGroupLayout,
     /// `mesh` shader: group(2) = texture_2d + sampler
     pub mesh_texture: wgpu::BindGroupLayout,
+    /// `mesh` shader: group(3) = directional light uniform
+    pub mesh_dir_light: wgpu::BindGroupLayout,
 }
 
 /// GPU context: wgpu instance, adapter, device, queue, surface, and pipelines.
@@ -332,7 +334,7 @@ impl GpuContext {
             true,
             sample_count,
         )?;
-        let (mesh, mesh_camera_bgl, mesh_model_bgl, mesh_texture_bgl) =
+        let (mesh, mesh_camera_bgl, mesh_model_bgl, mesh_texture_bgl, mesh_dir_light_bgl) =
             Self::build_mesh_pipeline(device, surface_format, sample_count)?;
 
         let pipelines = Pipelines { primitive, image, text, mesh };
@@ -343,6 +345,7 @@ impl GpuContext {
             mesh_camera: mesh_camera_bgl,
             mesh_model: mesh_model_bgl,
             mesh_texture: mesh_texture_bgl,
+            mesh_dir_light: mesh_dir_light_bgl,
         };
         Ok((pipelines, bind_group_layouts))
     }
@@ -456,7 +459,7 @@ impl GpuContext {
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
         sample_count: u32,
-    ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout), RendererError> {
+    ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout), RendererError> {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh"),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(MESH_WGSL)),
@@ -515,9 +518,24 @@ impl GpuContext {
             ],
         });
 
+        // group(3): directional light uniform — fragment-only
+        let dir_light_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("mesh_dir_light"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh"),
-            bind_group_layouts: &[&camera_bgl, &model_bgl, &texture_bgl],
+            bind_group_layouts: &[&camera_bgl, &model_bgl, &texture_bgl, &dir_light_bgl],
             push_constant_ranges: &[],
         });
 
@@ -571,7 +589,7 @@ impl GpuContext {
             cache: None,
         });
 
-        Ok((pipeline, camera_bgl, model_bgl, texture_bgl))
+        Ok((pipeline, camera_bgl, model_bgl, texture_bgl, dir_light_bgl))
     }
 }
 
@@ -589,15 +607,24 @@ struct CameraUniform {
     view_proj: [[f32; 4]; 4],
 }
 
+// ModelUniform: 96 bytes — must match MESH_WGSL ModelUniforms layout exactly.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct ModelUniform {
-    model: [[f32; 4]; 4],
-    color: [f32; 4],
-    has_texture: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
+    model: [[f32; 4]; 4],  // 64 B
+    color: [f32; 4],        // 16 B
+    has_texture: u32,       //  4 B
+    metallic: f32,          //  4 B
+    roughness: f32,         //  4 B
+    _pad2: u32,             //  4 B
+}
+
+// DirectionalLightUniform: 32 bytes — matches MESH_WGSL DirectionalLightUniform.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct DirectionalLightUniform {
+    direction: [f32; 4],   // xyz = normalized direction, w = intensity
+    color: [f32; 4],       // xyz = RGB color, w = unused
 }
 
 /// Primitive (rect/circle/line) uniform — matches PRIMITIVE_WGSL layout (48 bytes).
@@ -821,6 +848,8 @@ impl GlyphAtlas {
 pub struct RendererState {
     pub gpu: GpuContext,
     pub config: RendererConfig,
+    /// Runtime scene settings (clear color, directional light) — updated from Python each frame.
+    pub scene_settings: SceneSettings,
     /// Cached GPU mesh buffers keyed by mesh_id.
     pub mesh_cache: HashMap<String, MeshBuffers>,
     /// Cached depth texture (Depth32Float) and its current dimensions.
@@ -892,6 +921,7 @@ impl RendererState {
         Self {
             gpu,
             config,
+            scene_settings: SceneSettings::default(),
             mesh_cache: HashMap::new(),
             depth_texture: None,
             msaa_texture: None,
@@ -901,13 +931,14 @@ impl RendererState {
         }
     }
 
+    /// Clear color from `scene_settings` as a wgpu::Color (linear f32 → f64).
     pub fn clear_color_wgpu(&self) -> wgpu::Color {
-        let [r, g, b, a] = self.config.clear_color;
+        let [r, g, b, a] = self.scene_settings.clear_color;
         wgpu::Color {
-            r: r as f64 / 255.0,
-            g: g as f64 / 255.0,
-            b: b as f64 / 255.0,
-            a: a as f64 / 255.0,
+            r: r as f64,
+            g: g as f64,
+            b: b as f64,
+            a: a as f64,
         }
     }
 
@@ -1135,6 +1166,33 @@ impl RendererState {
             }],
         });
 
+        // Directional light uniform — shared across all mesh draws in this batch.
+        let [lx, ly, lz] = self.scene_settings.light_direction;
+        let len = (lx * lx + ly * ly + lz * lz).sqrt();
+        let (nx, ny, nz) = if len > 1e-6 { (lx / len, ly / len, lz / len) } else { (0.0, 1.0, 0.0) };
+        let [cr, cg, cb] = self.scene_settings.light_color;
+        let dir_light_uniform = DirectionalLightUniform {
+            direction: [nx, ny, nz, self.scene_settings.light_intensity],
+            color: [cr, cg, cb, 0.0],
+        };
+        let dl_bytes: &[u8] = bytemuck::bytes_of(&dir_light_uniform);
+        let dl_buf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("dir_light_uniform"),
+            size: dl_bytes.len() as u64,
+            usage: wgpu::BufferUsages::UNIFORM,
+            mapped_at_creation: true,
+        });
+        dl_buf.slice(..).get_mapped_range_mut().copy_from_slice(dl_bytes);
+        dl_buf.unmap();
+        let dir_light_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("dir_light_bg"),
+            layout: &self.gpu.bind_group_layouts.mesh_dir_light,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: dl_buf.as_entire_binding(),
+            }],
+        });
+
         let mut encoder = self.gpu.device.create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("mesh encoder") },
         );
@@ -1164,6 +1222,7 @@ impl RendererState {
 
             pass.set_pipeline(&self.gpu.pipelines.mesh);
             pass.set_bind_group(0, &cam_bg, &[]);
+            pass.set_bind_group(3, &dir_light_bg, &[]);
 
             for cmd in commands {
                 let Some(mesh) = self.mesh_cache.get(&cmd.mesh_id) else {
@@ -1176,8 +1235,8 @@ impl RendererState {
                     model: cmd.transform.to_cols_array_2d(),
                     color: [1.0, 1.0, 1.0, 1.0],
                     has_texture: has_tex,
-                    _pad0: 0,
-                    _pad1: 0,
+                    metallic: cmd.metallic.clamp(0.0, 1.0),
+                    roughness: cmd.roughness.clamp(0.0, 1.0),
                     _pad2: 0,
                 };
                 let model_bytes: &[u8] = bytemuck::bytes_of(&model_uniform);

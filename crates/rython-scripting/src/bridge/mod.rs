@@ -44,6 +44,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule, PyString};
 use rython_ecs::Scene;
 use rython_renderer::command::DrawCommand;
+use rython_renderer::SceneSettings;
 
 // ─── Active scene ─────────────────────────────────────────────────────────────
 
@@ -83,6 +84,19 @@ pub(crate) fn draw_commands_store() -> &'static Arc<Mutex<Vec<DrawCommand>>> {
 
 pub fn drain_draw_commands() -> Vec<DrawCommand> {
     std::mem::take(&mut draw_commands_store().lock())
+}
+
+// ─── Scene settings (clear color, light direction/color/intensity) ────────────
+
+static SCENE_SETTINGS: OnceLock<Arc<Mutex<SceneSettings>>> = OnceLock::new();
+
+pub(crate) fn scene_settings_store() -> &'static Arc<Mutex<SceneSettings>> {
+    SCENE_SETTINGS.get_or_init(|| Arc::new(Mutex::new(SceneSettings::default())))
+}
+
+/// Snapshot the current scene settings for the renderer to consume.
+pub fn get_scene_settings() -> SceneSettings {
+    scene_settings_store().lock().clone()
 }
 
 // ─── Recurring callbacks ──────────────────────────────────────────────────────

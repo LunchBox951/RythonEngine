@@ -123,11 +123,13 @@ pub fn show(
     let mut draw_meshes: Vec<DrawMesh> = ecs_commands
         .into_iter()
         .filter_map(|cmd| match cmd {
-            DrawCommand::DrawMesh { mesh_id, texture_id, transform, .. } => Some(DrawMesh {
+            DrawCommand::DrawMesh { mesh_id, texture_id, transform, metallic, roughness, .. } => Some(DrawMesh {
                 mesh_id,
                 texture_id,
                 transform,
                 z: 0.0,
+                metallic,
+                roughness,
             }),
             _ => None,
         })
@@ -136,9 +138,7 @@ pub fn show(
     // Add grid
     draw_meshes.push(DrawMesh {
         mesh_id: GRID_MESH_ID.to_string(),
-        texture_id: String::new(),
-        transform: glam::Mat4::IDENTITY,
-        z: 0.0,
+        ..DrawMesh::default()
     });
 
     // Clear the offscreen texture

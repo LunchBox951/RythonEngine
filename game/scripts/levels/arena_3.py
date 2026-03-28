@@ -59,6 +59,12 @@ def build() -> None:
     _lava_damage_timer = 0.0
     _prev_time = rython.time.elapsed
 
+    # Arena visual settings — near-black red-tinted hell sky, low dramatic backlight
+    rython.renderer.set_clear_color(0.08, 0.01, 0.01, 1.0)
+    rython.renderer.set_light_direction(0.1, -0.4, 0.9)
+    rython.renderer.set_light_color(0.9, 0.15, 0.05)
+    rython.renderer.set_light_intensity(0.85)
+
     # Circular ground (approximated with a large square)
     lb.spawn_static_block(0.0, -0.5, 0.0, 22.0, 1.0, 22.0, texture=_TEX_FLOOR)
 
