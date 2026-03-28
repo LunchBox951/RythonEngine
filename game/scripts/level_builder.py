@@ -52,6 +52,9 @@ def spawn_pickup(
         mesh={
             "mesh_id": "cube",
             "texture_id": "game/assets/textures/Green/green_box.png",
+            "specular_map": "game/assets/textures/Green/green_box_s.png",
+            "specular_color": (0.9, 1.0, 0.9),
+            "shininess": 80.0,
             "metallic": 0.0,
             "roughness": 0.3,
         },
@@ -69,21 +72,28 @@ def spawn_enemy(
     z: float,
     enemy_type: str = "skeleton",
     is_boss: bool = False,
+    specular_map: Optional[str] = None,
+    specular_color: Optional[tuple] = None,
     tags: Optional[List[str]] = None,
 ) -> Entity:
     """Spawn an enemy entity and register it for cleanup."""
     entity_tags = ["enemy", enemy_type] + (["boss"] if is_boss else []) + (tags or [])
     mass = 5.0 if is_boss else 2.0
     collider_size = [1.5, 2.5, 1.5] if is_boss else [1.0, 2.0, 1.0]
+    mesh: Dict[str, Any] = {
+        "mesh_id": "cube",
+        "texture_id": "game/assets/textures/Purple/purple_box.png",
+        "normal_map": "game/assets/textures/Purple/purple_box_n.png",
+        "metallic": 0.85,
+        "roughness": 0.45,
+    }
+    if is_boss:
+        mesh["specular_map"] = specular_map or "game/assets/textures/Purple/purple_box_s.png"
+        mesh["specular_color"] = specular_color or (1.0, 0.8, 0.6)
+        mesh["shininess"] = 96.0
     entity = rython.scene.spawn(
         transform=Transform(x=x, y=y, z=z, scale_x=collider_size[0], scale_y=collider_size[1], scale_z=collider_size[2]),
-        mesh={
-            "mesh_id": "cube",
-            "texture_id": "game/assets/textures/Purple/purple_box.png",
-            "normal_map": "game/assets/textures/Purple/purple_box_n.png",
-            "metallic": 0.85,
-            "roughness": 0.45,
-        },
+        mesh=mesh,
         tags=entity_tags,
         rigid_body={"body_type": "dynamic", "mass": mass},
         collider={"shape": "box", "size": collider_size},

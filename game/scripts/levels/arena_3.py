@@ -133,8 +133,14 @@ def _spawn_wave2() -> None:
         entity = lb.spawn_enemy(sx, sy, sz, enemy_type="skeleton", is_boss=False)
         enemies.register(entity, enemy_type="skeleton", is_boss=False)
 
-    # Boss
-    boss = lb.spawn_enemy(0.0, 1.0, -8.0, enemy_type="skeleton", is_boss=True)
+    # Boss — hard bright specular for a menacing look
+    boss = lb.spawn_enemy(
+        0.0, 1.0, -8.0,
+        enemy_type="skeleton",
+        is_boss=True,
+        specular_map="game/assets/textures/Purple/purple_box_s.png",
+        specular_color=(1.0, 0.8, 0.6),
+    )
     enemies.register(boss, enemy_type="skeleton", is_boss=True)
     rython.audio.play("game/assets/music/jingle_levelup.ogg", "sfx", False)
 
