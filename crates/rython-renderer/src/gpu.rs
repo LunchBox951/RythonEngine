@@ -102,7 +102,16 @@ impl GpuContext {
             .ok_or(RendererError::NoAdapter)?;
 
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default(), None)
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    required_limits: wgpu::Limits {
+                        max_bind_groups: 8,
+                        ..wgpu::Limits::default()
+                    },
+                    ..wgpu::DeviceDescriptor::default()
+                },
+                None,
+            )
             .await
             .map_err(|e| RendererError::DeviceCreation(e.to_string()))?;
 
@@ -152,7 +161,16 @@ impl GpuContext {
             .ok_or(RendererError::NoAdapter)?;
 
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default(), None)
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    required_limits: wgpu::Limits {
+                        max_bind_groups: 8,
+                        ..wgpu::Limits::default()
+                    },
+                    ..wgpu::DeviceDescriptor::default()
+                },
+                None,
+            )
             .await
             .map_err(|e| RendererError::DeviceCreation(e.to_string()))?;
 
