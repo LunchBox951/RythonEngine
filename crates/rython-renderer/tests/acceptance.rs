@@ -643,13 +643,16 @@ fn t_rend_13_shader_hot_reload_resilience() {
 
     // Spec: the error does not cause a panic — already proven by reaching here.
 
-    // Verify that the built-in shaders all pass validation
-    use rython_renderer::{IMAGE_WGSL, MESH_WGSL, PRIMITIVE_WGSL, TEXT_WGSL};
+    // Verify that the built-in shaders all pass validation.
+    // SHADOW_WGSL is vertex-only (depth-only shadow pass) — validate_wgsl accepts
+    // shaders with @vertex but no @fragment.
+    use rython_renderer::{IMAGE_WGSL, MESH_WGSL, PRIMITIVE_WGSL, SHADOW_WGSL, TEXT_WGSL};
     for (name, src) in [
         ("primitive", PRIMITIVE_WGSL),
         ("image", IMAGE_WGSL),
         ("text", TEXT_WGSL),
         ("mesh", MESH_WGSL),
+        ("shadow", SHADOW_WGSL),
     ] {
         let r = validate_wgsl(src);
         assert!(r.is_ok(), "built-in shader '{name}' should pass validation: {r:?}");

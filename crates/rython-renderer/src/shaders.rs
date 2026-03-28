@@ -469,8 +469,8 @@ impl std::error::Error for ShaderError {}
 /// Lightweight offline WGSL validator.
 ///
 /// Checks for structural requirements without a GPU device:
-/// - Must contain a `@vertex` entry point annotation.
-/// - Must contain a `@fragment` entry point annotation.
+/// - Must contain at least one entry point: `@vertex` or `@fragment`.
+/// - Depth-only (shadow pass) shaders with only `@vertex` are valid.
 /// - Must not be empty.
 ///
 /// For full validation (type checking, binding compatibility, etc.) a
@@ -484,17 +484,12 @@ pub fn validate_wgsl(source: &str) -> Result<(), ShaderError> {
             location: "<empty>".to_string(),
         });
     }
-    if !src.contains("@vertex") {
+    let has_vertex   = src.contains("@vertex");
+    let has_fragment = src.contains("@fragment");
+    if !has_vertex && !has_fragment {
         return Err(ShaderError {
             source: source.to_string(),
-            message: "missing @vertex entry point annotation".to_string(),
-            location: "global scope".to_string(),
-        });
-    }
-    if !src.contains("@fragment") {
-        return Err(ShaderError {
-            source: source.to_string(),
-            message: "missing @fragment entry point annotation".to_string(),
+            message: "missing entry point: shader must contain @vertex or @fragment".to_string(),
             location: "global scope".to_string(),
         });
     }
