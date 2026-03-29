@@ -33,5 +33,49 @@ class RendererBridge:
         """
         raise NotImplementedError
 
+    def set_clear_color(
+        self, r: float, g: float, b: float, a: float = 1.0
+    ) -> None:
+        """Set the framebuffer clear color (linear RGBA, each component [0, 1])."""
+        raise NotImplementedError
+
+    def set_light_direction(self, x: float, y: float, z: float) -> None:
+        """Set the directional light world-space direction (auto-normalized)."""
+        raise NotImplementedError
+
+    def set_light_color(self, r: float, g: float, b: float) -> None:
+        """Set the directional light RGB color (linear [0, 1])."""
+        raise NotImplementedError
+
+    def set_light_intensity(self, intensity: float) -> None:
+        """Set the directional light intensity multiplier."""
+        raise NotImplementedError
+
+    def set_ambient_light(
+        self,
+        r: float = 0.1,
+        g: float = 0.1,
+        b: float = 0.1,
+        intensity: float = 1.0,
+    ) -> None:
+        """Set the scene-wide ambient light color and intensity (linear RGB)."""
+        raise NotImplementedError
+
+    def set_shadow_enabled(self, enabled: bool) -> None:
+        """Enable or disable shadow casting from the primary directional light."""
+        raise NotImplementedError
+
+    def set_shadow_map_size(self, size: int) -> None:
+        """Set the shadow map resolution in pixels (512, 1024, 2048, or 4096)."""
+        raise NotImplementedError
+
+    def set_shadow_bias(self, bias: float) -> None:
+        """Set the shadow depth bias (prevents shadow acne). Default: 0.005."""
+        raise NotImplementedError
+
+    def set_shadow_pcf(self, samples: int) -> None:
+        """Set PCF sample count: 1 = no filtering, >= 4 = 3x3 kernel. Default: 4."""
+        raise NotImplementedError
+
     def __repr__(self) -> str:
         raise NotImplementedError
