@@ -1,6 +1,6 @@
 # RythonEngine — Game Scripting Guide
 
-Game logic in RythonEngine is written in Python. The engine exposes a `rython` module through PyO3 bindings that gives scripts full access to the scene, camera, renderer, scheduler, and engine lifecycle.
+Game logic in RythonEngine is written in Python. The engine exposes a `rython` module through PyO3 bindings that gives scripts full access to the scene, camera, renderer, scheduler, input, audio, physics, UI, resources, and engine lifecycle.
 
 **See also:** [`docs/engine/`](../engine/README.md) for Rust implementation details.
 
@@ -8,22 +8,66 @@ Game logic in RythonEngine is written in Python. The engine exposes a `rython` m
 
 ## Contents
 
-1. [Entry Point Convention](#entry-point-convention)
-2. [The `rython` Module](#the-rython-module)
-3. [Type Wrappers](#type-wrappers)
-4. [Spawning Entities](#spawning-entities)
-5. [Entity API](#entity-api)
-6. [Camera Control](#camera-control)
-7. [Per-Frame Updates](#per-frame-updates)
-8. [Custom Events](#custom-events)
-9. [Drawing Text](#drawing-text)
-10. [Time](#time)
-11. [Quitting](#quitting)
-12. [Script Classes](#script-classes)
-13. [Hot-Reload (Dev Mode)](#hot-reload-dev-mode)
-14. [Complete Example: Spinning Cubes](#complete-example-spinning-cubes)
-15. [@throttle Decorator](#throttle-decorator)
-16. [Parallel & Background Tasks](#parallel--background-tasks)
+1. [Quick Start](#quick-start)
+2. [Entry Point Convention](#entry-point-convention)
+3. [The `rython` Module](#the-rython-module)
+4. [IDE Support (Stubs)](#ide-support-stubs)
+5. [Type Wrappers](#type-wrappers)
+6. [Spawning Entities](#spawning-entities)
+7. [Entity API](#entity-api)
+8. [Camera Control](#camera-control)
+9. [Per-Frame Updates](#per-frame-updates)
+10. [Custom Events](#custom-events)
+11. [Input](#input)
+12. [Renderer](#renderer)
+13. [Audio](#audio)
+14. [Physics](#physics)
+15. [UI](#ui)
+16. [Resources](#resources)
+17. [Time](#time)
+18. [Quitting](#quitting)
+19. [Script Classes](#script-classes)
+20. [@throttle Decorator](#throttle-decorator)
+21. [Parallel & Background Tasks](#parallel--background-tasks)
+22. [Hot-Reload (Dev Mode)](#hot-reload-dev-mode)
+23. [Complete Example: Spinning Cubes](#complete-example-spinning-cubes)
+
+---
+
+## Quick Start
+
+```bash
+# Build the engine
+make build
+
+# Install Python stubs for IDE autocompletion
+make stubs
+
+# Run your game
+make run SCRIPT_DIR=game SCRIPT=game.scripts.main
+```
+
+Create a file at `game/scripts/main.py`:
+
+```python
+import rython
+
+def init():
+    rython.camera.set_position(0.0, 5.0, -10.0)
+    rython.camera.set_look_at(0.0, 0.0, 0.0)
+
+    cube = rython.scene.spawn(
+        transform=rython.Transform(x=0.0, y=0.0, z=0.0),
+        mesh="cube",
+        tags=["spinning"],
+    )
+
+    def on_tick():
+        cube.transform.rot_y += 0.02
+        rython.renderer.draw_text(f"t={rython.time.elapsed:.2f}s", x=0.02, y=0.02)
+
+    rython.scheduler.register_recurring(on_tick)
+```
 
 ---
 
@@ -34,7 +78,7 @@ The engine loads scripts from the directory specified by `--script-dir` (default
 The engine imports the module and calls `init()` once on load:
 
 ```python
-# scripts/main.py
+# game/scripts/main.py
 import rython
 
 def init():
@@ -53,21 +97,33 @@ The `rython` module is injected into `sys.modules` by the engine. It has the fol
 
 | Sub-module | Purpose |
 |---|---|
-| `rython.scene` | Spawn/despawn entities, emit and subscribe to events |
+| `rython.scene` | Spawn/despawn entities, emit and subscribe to events, attach scripts |
 | `rython.camera` | Control the camera position and orientation |
 | `rython.scheduler` | Register per-frame callbacks; one-shot timers and events; parallel/background task submission |
-| `rython.renderer` | Queue draw commands (text overlays) |
+| `rython.renderer` | Draw text overlays, control lighting, shadows, and clear color |
 | `rython.time` | Read elapsed engine time |
 | `rython.engine` | Engine lifecycle control |
-| `rython.physics` | Physics world control (gravity, impulses) |
-| `rython.audio` | Audio playback |
-| `rython.input` | Input state queries |
-| `rython.ui` | UI widget management |
-| `rython.resources` | Asset/resource loading |
+| `rython.physics` | Physics world control (gravity) |
+| `rython.audio` | Audio playback and volume control |
+| `rython.input` | Per-frame input state queries (axis, pressed, held, released) |
+| `rython.ui` | UI widget creation, layout, theming |
+| `rython.resources` | Asset loading (images, meshes, sounds, fonts, spritesheets) |
 | `rython.Vec3` | 3D vector type |
 | `rython.Transform` | Entity transform type |
 
 `rython.modules` is a stub and will raise `ValueError` if accessed. All other sub-modules listed above are fully implemented bridges.
+
+---
+
+## IDE Support (Stubs)
+
+The `rython/` directory in the project root contains pure-Python stub files that provide type annotations for IDE autocompletion (Pylance, pyright, etc.). Install them with:
+
+```bash
+make stubs
+```
+
+This creates a virtual environment at `.venv/` and installs the stub package in editable mode. Your IDE should then provide full autocompletion and type-checking for all `rython.*` APIs.
 
 ---
 
@@ -131,7 +187,7 @@ Use `rython.scene.spawn()` to create a new entity. All parameters are keyword ar
 ```python
 entity = rython.scene.spawn(
     transform=rython.Transform(x=1.0, y=0.0, z=0.0, scale=1.0),
-    mesh="cube",            # built-in mesh ID, or registered asset ID
+    mesh="cube",
     tags=["player", "solid"],
 )
 ```
@@ -139,30 +195,106 @@ entity = rython.scene.spawn(
 | kwarg | Type | Description |
 |---|---|---|
 | `transform` | `rython.Transform` | Initial position/rotation/scale |
-| `mesh` | `str` or `dict` | Mesh to render. String = mesh ID shorthand. Dict keys: `mesh_id`, `texture_id`, `visible` |
+| `mesh` | `str` or `dict` | Mesh to render (see below) |
 | `tags` | `list[str]` | Tag strings attached to the entity |
-| `rigid_body` | `dict` | Attach a physics body. Keys: `body_type` (`"dynamic"`, `"static"`, `"kinematic"`), `mass` (`float`, default `1.0`), `gravity_factor` (`float`, default `1.0`) |
-| `collider` | `dict` | Attach a collision shape. Keys: `shape` (`"box"`, `"sphere"`, `"capsule"`), `size` (`[f32, f32, f32]`), `is_trigger` (`bool`, default `false`) |
+| `rigid_body` | `dict` | Attach a physics body (see below) |
+| `collider` | `dict` | Attach a collision shape (see below) |
+| `light` | `dict` | Attach a light source (see below) |
 
 `spawn()` returns an `Entity` object. The entity is immediately live in the scene.
 
-**Mesh dict form:**
+### Mesh
+
+The `mesh` parameter accepts either a simple string or a dict for full control:
 
 ```python
-entity = rython.scene.spawn(
-    transform=rython.Transform(x=0.0, y=0.0, z=0.0),
-    mesh={"mesh_id": "cube", "texture_id": "stone", "visible": True},
-)
+# Simple form — just a mesh ID:
+mesh="cube"
+
+# Dict form — full material control:
+mesh={
+    "mesh_id": "cube",           # required — mesh asset ID
+    "texture_id": "stone",       # diffuse texture asset ID (default: "")
+    "visible": True,             # render visibility (default: True)
+
+    # PBR material properties
+    "normal_map": "stone_n",     # normal map asset ID
+    "specular_map": "stone_s",   # specular map asset ID
+    "shininess": 32.0,           # specular exponent (default: 32.0)
+    "specular_color": (1.0, 1.0, 1.0),  # RGB tuple [0, 1]
+    "metallic": 0.0,             # metalness [0, 1] (default: 0.0)
+    "roughness": 0.5,            # roughness [0, 1] (default: 0.5)
+
+    # Emissive properties
+    "emissive_map": "lava_e",    # emissive map asset ID
+    "emissive_color": (1.0, 0.3, 0.1),  # RGB tuple [0, 1]
+    "emissive_intensity": 1.0,   # emission strength (default: 1.0, min: 0.0)
+}
 ```
 
-**Physics body + collider:**
+### Rigid Body
+
+```python
+rigid_body={
+    "body_type": "dynamic",    # "dynamic", "static", or "kinematic" (default: "dynamic")
+    "mass": 1.0,               # float (default: 1.0)
+    "gravity_factor": 1.0,     # float (default: 1.0)
+}
+```
+
+### Collider
+
+```python
+collider={
+    "shape": "box",            # "box", "sphere", or "capsule" (default: "box")
+    "size": [1.0, 1.0, 1.0],  # [x, y, z] dimensions
+    "is_trigger": False,       # trigger mode — no physics response, only events (default: False)
+}
+```
+
+### Light
+
+```python
+# Directional light (default)
+light={
+    "type": "directional",             # default if omitted
+    "color": (1.0, 1.0, 1.0),         # RGB tuple [0, 1] (default: white)
+    "intensity": 1.0,                  # brightness multiplier (default: 1.0)
+    "direction": (0.5, 1.0, 0.5),     # world-space direction (default: (0.5, 1.0, 0.5))
+}
+
+# Point light
+light={
+    "type": "point",
+    "color": (1.0, 0.9, 0.7),
+    "intensity": 2.0,
+    "radius": 10.0,                    # falloff radius (default: 10.0)
+}
+
+# Spot light
+light={
+    "type": "spot",
+    "color": (1.0, 1.0, 1.0),
+    "intensity": 3.0,
+    "direction": (0.0, -1.0, 0.0),    # aim direction (default: straight down)
+    "inner_angle": 15.0,              # inner cone angle in degrees (default: 15.0)
+    "outer_angle": 30.0,              # outer cone angle in degrees (default: 30.0)
+}
+```
+
+### Full spawn example
 
 ```python
 ball = rython.scene.spawn(
     transform=rython.Transform(x=0.0, y=5.0, z=0.0),
-    mesh="sphere",
-    rigid_body={"body_type": "dynamic", "mass": 2.0, "gravity_factor": 1.0},
-    collider={"shape": "sphere", "size": [0.5, 0.5, 0.5], "is_trigger": False},
+    mesh={"mesh_id": "sphere", "metallic": 0.8, "roughness": 0.2},
+    rigid_body={"body_type": "dynamic", "mass": 2.0},
+    collider={"shape": "sphere", "size": [0.5, 0.5, 0.5]},
+    tags=["ball", "physics"],
+)
+
+sun = rython.scene.spawn(
+    light={"type": "directional", "direction": (0.5, -1.0, 0.3), "intensity": 1.5},
 )
 ```
 
@@ -183,7 +315,7 @@ entity.add_tag("flying")    # add a tag at runtime
 
 entity.despawn()            # queue the entity for removal
 
-# Physics (requires a RigidBodyComponent on the entity)
+# Physics (requires a rigid_body on the entity)
 entity.apply_force(x, y, z)    # apply a continuous force (world space)
 entity.apply_impulse(x, y, z)  # apply an instantaneous impulse (world space)
 entity.set_velocity(x, y, z)   # set linear velocity directly
@@ -281,7 +413,40 @@ Event payloads support `None`, `bool`, `int`, `float`, and `str` values.
 
 ---
 
-## Drawing Text
+## Input
+
+`rython.input` provides per-frame input state for bound actions.
+
+```python
+# Axis value — returns a float from -1.0 to 1.0 (0.0 if unbound)
+move_x = rython.input.axis("move_x")
+move_z = rython.input.axis("move_z")
+
+# Button state queries
+if rython.input.pressed("jump"):     # True on the first frame the action is pressed
+    player.apply_impulse(0.0, 10.0, 0.0)
+
+if rython.input.held("sprint"):      # True every frame the action is held
+    speed *= 2.0
+
+if rython.input.released("fire"):    # True on the first frame the action is released
+    stop_charging()
+```
+
+| Method | Returns | Description |
+|---|---|---|
+| `axis(action)` | `float` | Axis value (-1.0 to 1.0), 0.0 if unbound |
+| `pressed(action)` | `bool` | True on the first frame the action is pressed |
+| `held(action)` | `bool` | True every frame the action is held down |
+| `released(action)` | `bool` | True on the first frame the action is released |
+
+---
+
+## Renderer
+
+`rython.renderer` manages text overlays, scene lighting, and shadow configuration.
+
+### Drawing Text
 
 Queue a text overlay draw command for the current frame:
 
@@ -292,7 +457,7 @@ rython.renderer.draw_text(
     x=0.5,               # normalized screen X (0.0 = left, 1.0 = right)
     y=0.1,               # normalized screen Y (0.0 = top, 1.0 = bottom)
     size=16,             # font size in pixels
-    r=255,               # red channel (0–255)
+    r=255,               # red channel (0-255)
     g=255,               # green channel
     b=255,               # blue channel
     z=0.0,               # depth sort order (higher = on top)
@@ -301,12 +466,206 @@ rython.renderer.draw_text(
 
 All parameters except `text` are optional and use the defaults shown above.
 
+### Clear Color
+
+Set the framebuffer clear color (linear RGBA, each component [0, 1]):
+
+```python
+rython.renderer.set_clear_color(0.1, 0.1, 0.15, 1.0)
+```
+
+### Directional Light
+
+Configure the primary directional light:
+
+```python
+rython.renderer.set_light_direction(0.5, -1.0, 0.5)  # world-space direction (auto-normalized)
+rython.renderer.set_light_color(1.0, 1.0, 0.9)       # linear RGB [0, 1]
+rython.renderer.set_light_intensity(1.2)               # brightness multiplier
+```
+
+### Ambient Light
+
+Set scene-wide ambient light (linear RGB [0, 1]):
+
+```python
+rython.renderer.set_ambient_light(r=0.15, g=0.15, b=0.2, intensity=1.0)
+```
+
+### Shadow Mapping
+
+Configure shadow casting from the primary directional light:
+
+```python
+rython.renderer.set_shadow_enabled(True)
+rython.renderer.set_shadow_map_size(1024)    # 512, 1024, 2048, or 4096
+rython.renderer.set_shadow_bias(0.005)       # prevents shadow acne (default: 0.005)
+rython.renderer.set_shadow_pcf(4)            # 1 = no filtering, >= 4 = 3x3 kernel
+```
+
+---
+
+## Audio
+
+`rython.audio` manages sound playback with categories and volume control.
+
+```python
+# Play a sound — returns an integer handle
+handle = rython.audio.play("game/assets/sounds/impact.ogg", category="sfx", looping=False)
+
+# Play looping background music
+music = rython.audio.play("game/assets/music/theme.ogg", category="music", looping=True)
+
+# Stop a specific sound by handle (idempotent)
+rython.audio.stop(handle)
+
+# Stop all sounds in a category
+rython.audio.stop_category("music")
+
+# Set volume per category (0.0 to 1.0)
+rython.audio.set_volume("sfx", 0.8)
+rython.audio.set_volume("music", 0.5)
+
+# Set master volume (0.0 to 1.0)
+rython.audio.set_master_volume(0.9)
+```
+
+| Method | Returns | Description |
+|---|---|---|
+| `play(path, category="sfx", looping=False)` | `int` | Play sound, return handle |
+| `stop(handle)` | — | Stop sound by handle (idempotent) |
+| `stop_category(category)` | — | Stop all sounds in a category |
+| `set_volume(category, volume)` | — | Set category volume [0.0, 1.0] |
+| `set_master_volume(volume)` | — | Set master volume [0.0, 1.0] |
+
+---
+
+## Physics
+
+`rython.physics` controls the physics simulation. Individual entity physics are managed through the [Entity API](#entity-api).
+
+```python
+# Set the gravity vector (default: 0.0, -9.81, 0.0)
+rython.physics.set_gravity(0.0, -20.0, 0.0)
+
+# Zero gravity
+rython.physics.set_gravity(0.0, 0.0, 0.0)
+```
+
+Per-entity physics operations (`apply_force`, `apply_impulse`, `set_velocity`, `velocity`) are on the `Entity` object — see [Entity API](#entity-api).
+
+---
+
+## UI
+
+`rython.ui` provides a widget system for in-game UI. All coordinates are normalized screen space [0, 1].
+
+### Creating Widgets
+
+```python
+# Create widgets — all return an integer widget ID
+label  = rython.ui.create_label("Score: 0", x=0.3, y=0.3, w=0.4, h=0.1)
+button = rython.ui.create_button("Play", x=0.35, y=0.5, w=0.3, h=0.1)
+panel  = rython.ui.create_panel(x=0.2, y=0.2, w=0.6, h=0.6)
+text_input = rython.ui.create_text_input("Enter name...", x=0.3, y=0.4, w=0.4, h=0.08)
+```
+
+### Widget Hierarchy
+
+```python
+rython.ui.add_child(panel, label)
+rython.ui.add_child(panel, button)
+```
+
+### Layout
+
+```python
+# direction: "none", "vertical", or "horizontal"
+rython.ui.set_layout(panel, direction="vertical", spacing=10.0, padding=8.0)
+```
+
+### Visibility
+
+```python
+rython.ui.show(panel)               # make visible (children inherit)
+rython.ui.hide(panel)               # hide
+visible = rython.ui.is_visible(panel)  # True if widget and all ancestors are visible
+```
+
+### Content and Events
+
+```python
+rython.ui.set_text(label, "Score: 1500")
+rython.ui.on_click(button, lambda: rython.scene.emit("start_game"))
+```
+
+### Theming
+
+```python
+rython.ui.set_theme(
+    button_color=(60, 60, 80),      # RGB 0-255
+    text_color=(220, 220, 220),
+    panel_color=(30, 30, 40),
+    border_color=(100, 100, 120),
+    font_size=18,
+)
+```
+
+All parameters are optional — unspecified fields keep their current value.
+
+### Loading Layouts from JSON
+
+Load UI layouts exported from the editor:
+
+```python
+widgets = rython.ui.load_layout("game/ui/main_menu.json")
+# widgets is a dict mapping widget name → runtime widget ID
+rython.ui.on_click(widgets["play_button"], start_game)
+rython.ui.on_click(widgets["quit_button"], rython.engine.request_quit)
+```
+
+---
+
+## Resources
+
+`rython.resources` provides streaming asset loading with status tracking.
+
+### Loading Assets
+
+All load methods return an `AssetHandle`:
+
+```python
+img    = rython.resources.load_image("game/assets/textures/player.png")
+mesh   = rython.resources.load_mesh("game/assets/models/tree.gltf")
+sound  = rython.resources.load_sound("game/assets/sounds/hit.wav")
+font   = rython.resources.load_font("game/assets/fonts/mono.ttf", size=20.0)
+sheet  = rython.resources.load_spritesheet("game/assets/sprites/walk.png", cols=4, rows=2)
+```
+
+### AssetHandle
+
+```python
+handle = rython.resources.load_image("game/assets/textures/player.png")
+
+handle.is_ready    # bool — loaded successfully
+handle.is_pending  # bool — still loading
+handle.is_failed   # bool — load failed
+handle.error       # str | None — error message if failed
+```
+
+### Memory
+
+```python
+used   = rython.resources.memory_used_mb()    # current asset memory usage (MB)
+budget = rython.resources.memory_budget_mb()   # configured LRU eviction budget (MB)
+```
+
 ---
 
 ## Time
 
 ```python
-t = rython.time.elapsed   # float — seconds since engine start
+t = rython.time.elapsed   # float — seconds since engine start (monotonically increasing)
 ```
 
 Use this in `register_recurring` callbacks to drive time-based animation.
@@ -343,7 +702,7 @@ class Player:
         pass
 
     def on_collision(self, other_entity, normal_vec):
-        """Called when this entity collides with another (requires RigidBodyComponent).
+        """Called when this entity collides with another (requires rigid_body + collider).
         other_entity: Entity — the colliding entity
         normal_vec:   Vec3  — contact normal pointing away from other_entity
         """
@@ -372,6 +731,152 @@ The engine instantiates the class with the entity as the first argument. All lif
 
 ---
 
+## @throttle Decorator
+
+`rython.throttle(hz)` is a decorator factory that limits how often a function executes:
+
+```python
+import rython
+
+@rython.throttle(hz=30)
+def update():
+    # runs at most 30 times per second
+    ...
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `hz` | `float` | Maximum invocations per second. Must be > 0. |
+
+**Behaviour:**
+
+- The first call always executes.
+- Subsequent calls that arrive before `1/hz` seconds have elapsed are silently skipped (returns `None`).
+- Uses `rython.time.elapsed` as the clock (engine time, not wall-clock time).
+- If the engine clock resets (e.g. scene reload), tracking state is cleared and the next call executes immediately.
+
+**When to use:** on per-frame callbacks that don't need to run at full frame rate — AI ticks, camera smoothing, UI refreshes:
+
+```python
+@rython.throttle(hz=30)
+def camera_follow():
+    px = player.transform.x
+    py = player.transform.y
+    pz = player.transform.z
+    rython.camera.set_position(px, py + 8.0, pz - 12.0)
+    rython.camera.set_look_at(px, py + 1.0, pz)
+
+rython.scheduler.register_recurring(camera_follow)
+```
+
+Prefer `rython.scheduler.on_timer` for logic that fires once after a delay. For CPU-intensive work, use `submit_parallel` or `submit_background` (see below).
+
+---
+
+## Parallel & Background Tasks
+
+`rython.scheduler` exposes three methods for pushing work outside the normal per-frame callback:
+
+| Method | Executes on | Returns | When done |
+|---|---|---|---|
+| `submit_background(fn)` | rayon thread pool (off main thread) | `JobHandle` | Future frame, after `flush_python_bg_completions` |
+| `submit_parallel(fn)` | Main thread, current tick (GIL held) | `JobHandle` | End of current tick's parallel flush |
+| `run_sequential(fn)` | Main thread, next tick | *(nothing)* | Next sequential phase |
+
+### `submit_background`
+
+Submits a zero-argument callable to run on the rayon thread pool. The callable acquires the GIL
+independently when it runs, so it can call Python freely. The returned `JobHandle` transitions
+from pending to done in a future frame when the completion channel is drained.
+
+```python
+def heavy_work():
+    result = compute_something_expensive()
+    rython.scene.emit("heavy_done", value=result)
+
+handle = rython.scheduler.submit_background(heavy_work)
+```
+
+### `submit_parallel`
+
+Submits a zero-argument callable to run on the main thread during the current tick's parallel
+flush phase (GIL is already held). The `JobHandle` is done by the end of the same tick — useful
+for CPU-intensive Python work that must stay in-frame but should be scheduled explicitly.
+
+```python
+handle = rython.scheduler.submit_parallel(my_cpu_work)
+# handle.is_done is True by the next register_recurring callback
+```
+
+### `run_sequential`
+
+Queues a zero-argument callable to run on the main thread during the *next* tick's sequential
+phase. No `JobHandle` is returned. Use `on_timer` or events for continuation logic.
+
+```python
+rython.scheduler.run_sequential(lambda: rython.scene.emit("setup_done"))
+```
+
+### `JobHandle`
+
+`submit_background` and `submit_parallel` both return a `JobHandle` object:
+
+| Attribute / Method | Type | Description |
+|---|---|---|
+| `handle.is_done` | `bool` | `True` once the task has finished (success or failure) |
+| `handle.is_pending` | `bool` | `True` while the task is still queued or running |
+| `handle.is_failed` | `bool` | `True` if the callable raised an exception |
+| `handle.error` | `str \| None` | Error message when `is_failed`, otherwise `None` |
+| `handle.on_complete(cb)` | — | Register a zero-argument callback. If the task is already done, `cb` fires immediately. |
+
+**Checking completion in a recurring callback:**
+
+```python
+handle = None
+
+def init():
+    global handle
+    handle = rython.scheduler.submit_background(load_assets)
+    rython.scheduler.register_recurring(on_tick)
+
+def load_assets():
+    pass  # runs off-thread
+
+def on_tick():
+    if handle and handle.is_done:
+        if handle.is_failed:
+            print(f"asset load failed: {handle.error}")
+        else:
+            print("assets ready")
+```
+
+**Using `on_complete` for a one-shot reaction:**
+
+```python
+def init():
+    handle = rython.scheduler.submit_background(load_assets)
+    handle.on_complete(lambda: rython.scene.emit("assets_ready"))
+```
+
+**Error handling:**
+
+If the callable raises an exception, `is_failed` is `True` and `error` contains the exception
+string. `on_complete` callbacks fire regardless of success or failure, so check `is_failed` inside
+the callback if the outcome matters.
+
+```python
+def on_done():
+    if handle.is_failed:
+        print(f"Task failed: {handle.error}")
+    else:
+        apply_result()
+
+handle = rython.scheduler.submit_background(risky_work)
+handle.on_complete(on_done)
+```
+
+---
+
 ## Hot-Reload (Dev Mode)
 
 In development builds (`--features dev-reload`), the engine watches `--script-dir` for file changes. When a `.py` file is modified, the engine re-imports it without restarting. The `init()` function is called again on reload.
@@ -382,7 +887,7 @@ Hot-reload is not available in release builds. Scripts are bundled into the bina
 
 ## Complete Example: Spinning Cubes
 
-This example demonstrates the core scripting API: spawning entities, per-frame updates, camera setup, and HUD text.
+This example demonstrates the core scripting API: spawning entities, per-frame updates, camera setup, lighting, and HUD text.
 
 ```python
 """Spinning Cubes — full API example.
@@ -403,9 +908,19 @@ frame = 0
 
 def init():
     """Called once by the engine when the script module is loaded."""
+    # Configure rendering
+    rython.renderer.set_clear_color(0.1, 0.1, 0.15, 1.0)
+    rython.renderer.set_ambient_light(r=0.15, g=0.15, b=0.2, intensity=1.0)
+    rython.renderer.set_shadow_enabled(True)
+
     # Position camera above and behind the ring
     rython.camera.set_position(0.0, 6.0, -14.0)
     rython.camera.set_look_at(0.0, 0.0, 0.0)
+
+    # Add a directional light
+    rython.scene.spawn(
+        light={"type": "directional", "direction": (0.5, -1.0, 0.3), "intensity": 1.2},
+    )
 
     # Spawn nine cubes in a ring
     for i in range(CUBE_COUNT):
@@ -454,179 +969,5 @@ def on_tick():
 Run it with:
 
 ```bash
-cargo run --bin rython -- \
-    --script-dir scripts \
-    --entry-point main
-```
-
----
-
-## @throttle Decorator
-
-`rython.throttle(hz)` is a decorator factory that limits how often a function executes. It is imported directly from the `rython` module:
-
-```python
-import rython
-
-@rython.throttle(hz=30)
-def update(dt: float) -> None:
-    # runs at most 30 times per second
-    ...
-```
-
-**Parameters:**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `hz` | `float` | Maximum invocations per second. Must be greater than zero. |
-
-**Behaviour:**
-
-- The first call always executes.
-- Subsequent calls that arrive before the minimum interval (`1/hz` seconds) has elapsed are silently skipped — the wrapper returns `None`.
-- Uses `rython.time.elapsed` as the clock, so timing is relative to engine time, not wall-clock time.
-- If the engine clock resets (e.g. a scene reload causes `rython.time.elapsed` to return a value lower than the last recorded call time), the tracking state is cleared and the next call executes immediately.
-
-**When to use:**
-
-Use `@throttle` on per-frame callbacks registered with `rython.scheduler.register_recurring` when the update does not need to run at full frame rate. This is especially useful for AI ticks, camera smoothing, and UI refreshes:
-
-```python
-import rython
-from game.scripts import player
-
-OFFSET = (0.0, 8.0, -12.0)
-
-@rython.throttle(hz=30)
-def camera_update(dt: float) -> None:
-    """Camera follow — capped at 30 Hz, no need to run every frame."""
-    px, py, pz = player.get_position()
-    rython.camera.set_position(px + OFFSET[0], py + OFFSET[1], pz + OFFSET[2])
-    rython.camera.set_look_at(px, py + 1.0, pz)
-
-
-@rython.throttle(hz=15)
-def enemy_update(dt: float) -> None:
-    """AI tick — 15 Hz is sufficient for pathfinding updates."""
-    ...
-```
-
-**Note:** Prefer `rython.scheduler.on_timer` for logic that fires once after a delay. `@throttle` is for functions that are called every frame but should only *run* at a reduced rate. For CPU-intensive work that must not block the main thread, prefer `rython.scheduler.submit_parallel` (same-frame, GIL-held) or `rython.scheduler.submit_background` (off-thread, fire-and-forget) — see [Parallel & Background Tasks](#parallel--background-tasks).
-
----
-
-## Parallel & Background Tasks
-
-`rython.scheduler` exposes three methods for pushing work outside the normal per-frame callback:
-
-| Method | Executes on | Returns | When done |
-|---|---|---|---|
-| `submit_background(fn)` | rayon thread pool (off main thread) | `JobHandle` | Future frame, after `flush_python_bg_completions` |
-| `submit_parallel(fn)` | Main thread, current tick (GIL held) | `JobHandle` | End of current tick's parallel flush |
-| `run_sequential(fn)` | Main thread, next tick | *(nothing)* | Next sequential phase |
-
-### `submit_background`
-
-Submits a zero-argument callable to run on the rayon thread pool. The callable acquires the GIL
-independently when it runs, so it can call Python freely. The returned `JobHandle` transitions
-from pending to done in a future frame when the completion channel is drained.
-
-```python
-import rython
-
-def heavy_work():
-    # runs on a rayon thread; can call Python via the GIL
-    result = compute_something_expensive()
-    rython.scene.emit("heavy_done", value=result)
-
-handle = rython.scheduler.submit_background(heavy_work)
-
-# Poll later if needed (e.g. inside register_recurring)
-if handle.is_done and not handle.is_failed:
-    print("background task complete")
-```
-
-### `submit_parallel`
-
-Submits a zero-argument callable to run on the main thread during the current tick's parallel
-flush phase (GIL is already held). The `JobHandle` is done by the end of the same tick — useful
-for CPU-intensive Python work that must stay in-frame but should be scheduled explicitly.
-
-```python
-handle = rython.scheduler.submit_parallel(my_cpu_work)
-# handle.is_done is True by the next register_recurring callback
-```
-
-### `run_sequential`
-
-Queues a zero-argument callable to run on the main thread during the *next* tick's sequential
-phase. No `JobHandle` is returned. Use `on_timer` or events for continuation logic.
-
-```python
-rython.scheduler.run_sequential(lambda: rython.scene.emit("setup_done"))
-```
-
-### `JobHandle`
-
-`submit_background` and `submit_parallel` both return a `JobHandle` object:
-
-```python
-handle = rython.scheduler.submit_background(my_fn)
-```
-
-| Attribute / Method | Type | Description |
-|---|---|---|
-| `handle.is_done` | `bool` | `True` once the task has finished (success or failure) |
-| `handle.is_pending` | `bool` | `True` while the task is still queued or running |
-| `handle.is_failed` | `bool` | `True` if the callable raised an exception |
-| `handle.error` | `str \| None` | Error message when `is_failed`, otherwise `None` |
-| `handle.on_complete(cb)` | — | Register a zero-argument callback. If the task is already done, `cb` fires immediately. |
-
-**Checking completion in a recurring callback:**
-
-```python
-import rython
-
-handle = None
-
-def init():
-    global handle
-    handle = rython.scheduler.submit_background(load_assets)
-    rython.scheduler.register_recurring(on_tick)
-
-def load_assets():
-    # runs off-thread
-    pass
-
-def on_tick():
-    if handle and handle.is_done:
-        if handle.is_failed:
-            print(f"asset load failed: {handle.error}")
-        else:
-            print("assets ready")
-```
-
-**Using `on_complete` for a one-shot reaction:**
-
-```python
-def init():
-    handle = rython.scheduler.submit_background(load_assets)
-    handle.on_complete(lambda: rython.scene.emit("assets_ready"))
-```
-
-**Error handling:**
-
-If the callable raises an exception, `is_failed` is `True` and `error` contains the exception
-string. `on_complete` callbacks fire regardless of success or failure, so check `is_failed` inside
-the callback if the outcome matters.
-
-```python
-def on_done():
-    if handle.is_failed:
-        print(f"Task failed: {handle.error}")
-    else:
-        apply_result()
-
-handle = rython.scheduler.submit_background(risky_work)
-handle.on_complete(on_done)
+make run SCRIPT_DIR=game SCRIPT=game.scripts.main
 ```
