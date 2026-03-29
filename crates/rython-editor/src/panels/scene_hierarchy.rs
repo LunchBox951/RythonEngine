@@ -99,24 +99,18 @@ impl SceneHierarchyPanel {
     ) {
         let label = entity_label(entity, scene);
         let is_selected = selection.selected_entity() == Some(entity);
-        let children = scene.hierarchy.get_children(entity);
+        let mut children = scene.hierarchy.get_children(entity);
         let has_children = !children.is_empty();
+        // Sort in-place once; no second clone needed.
+        children.sort_unstable_by_key(|e| e.0);
 
         let id = ui.make_persistent_id(entity.0);
 
-        let header = if has_children {
-            egui::collapsing_header::CollapsingState::load_with_default_open(
-                ui.ctx(),
-                id,
-                true,
-            )
-        } else {
-            egui::collapsing_header::CollapsingState::load_with_default_open(
-                ui.ctx(),
-                id,
-                false,
-            )
-        };
+        let header = egui::collapsing_header::CollapsingState::load_with_default_open(
+            ui.ctx(),
+            id,
+            has_children,
+        );
 
         let (_, header_response, _) = header
             .show_header(ui, |ui| {
@@ -127,12 +121,10 @@ impl SceneHierarchyPanel {
                 r
             })
             .body(|ui| {
-                let mut sorted_children = children.clone();
-                sorted_children.sort_by_key(|e| e.0);
-                for child in sorted_children {
+                for child in &children {
                     self.show_entity_node(
                         ui,
-                        child,
+                        *child,
                         scene,
                         selection,
                         undo,

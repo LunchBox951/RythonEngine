@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use pyo3::prelude::*;
 use rython_ecs::component::{TagComponent, TransformComponent};
-use rython_ecs::EntityId;
+use rython_ecs::{EntityId, Scene};
 
 use super::{physics::physics_store, scene_store, types::{TransformPy, Vec3Py}};
 
@@ -10,6 +12,24 @@ use super::{physics::physics_store, scene_store, types::{TransformPy, Vec3Py}};
 pub struct EntityPy {
     #[pyo3(get, set)]
     pub id: u64,
+    /// Cached scene reference — avoids acquiring the global Mutex on every
+    /// property access.  Populated at construction time; falls back to the
+    /// global store when `None` (e.g. entities built from Python with the
+    /// default constructor).
+    pub scene: Option<Arc<Scene>>,
+}
+
+impl EntityPy {
+    /// Resolve scene: use cached reference if available, otherwise fall back
+    /// to the global store (single lock acquisition).
+    #[inline]
+    fn resolve_scene(&self) -> Option<Arc<Scene>> {
+        if let Some(ref s) = self.scene {
+            Some(Arc::clone(s))
+        } else {
+            scene_store().lock().as_ref().cloned()
+        }
+    }
 }
 
 #[pymethods]
@@ -17,24 +37,22 @@ impl EntityPy {
     #[new]
     #[pyo3(signature = (id = 0))]
     pub fn new(id: u64) -> Self {
-        Self { id }
+        Self { id, scene: None }
     }
 
     #[getter]
     fn transform(&self) -> TransformPy {
-        let scene = { let guard = scene_store().lock(); guard.as_ref().cloned() };
-        if let Some(scene) = scene {
+        if let Some(scene) = self.resolve_scene() {
             let entity = EntityId(self.id);
             if let Some(t) = scene.components.get::<TransformComponent>(entity) {
-                return TransformPy::from_component(&t, entity);
+                return TransformPy::from_component(&t, entity, Arc::clone(&scene));
             }
         }
         TransformPy::new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, None, None, None)
     }
 
     fn has_tag(&self, tag: &str) -> bool {
-        let scene = { let guard = scene_store().lock(); guard.as_ref().cloned() };
-        if let Some(scene) = scene {
+        if let Some(scene) = self.resolve_scene() {
             let entity = EntityId(self.id);
             return scene
                 .components
@@ -46,8 +64,7 @@ impl EntityPy {
 
     fn add_tag(&self, tag: &str) {
         let tag_owned = tag.to_string();
-        let scene = { let guard = scene_store().lock(); guard.as_ref().cloned() };
-        if let Some(scene) = scene {
+        if let Some(scene) = self.resolve_scene() {
             let entity = EntityId(self.id);
             let tag_clone = tag_owned.clone();
             let existed = scene.components.get_mut(entity, |t: &mut TagComponent| {
@@ -62,8 +79,7 @@ impl EntityPy {
     }
 
     fn despawn(&self) {
-        let scene = { let guard = scene_store().lock(); guard.as_ref().cloned() };
-        if let Some(scene) = scene {
+        if let Some(scene) = self.resolve_scene() {
             scene.queue_despawn(EntityId(self.id));
         }
     }

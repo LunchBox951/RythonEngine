@@ -19,8 +19,8 @@ use crate::project::io::{create_project, list_scenes, load_scene, open_project, 
 use crate::state::undo::{DespawnEntity, EntitySnapshot, ModifyComponent, SpawnEntity};
 use crate::state::{ProjectState, SelectionState, UndoStack, ViewportState};
 use crate::viewport::gizmo::{
-    apply_rotate_drag, apply_scale_drag, apply_translate_drag, draw_gizmo, hit_test_gizmo,
-    GizmoDrag, GizmoMode,
+    apply_rotate_drag, apply_scale_drag, apply_translate_drag, draw_gizmo,
+    hit_test_gizmo_with_vp, GizmoDrag, GizmoMode,
 };
 use crate::viewport::ViewportTexture;
 
@@ -342,6 +342,8 @@ pub struct EditorApp {
     recent_projects: Vec<PathBuf>,
     log_filter: Option<LogLevel>,
     last_autosave: Instant,
+    /// Tracks the last theme applied to egui so we skip redundant set_visuals calls.
+    last_applied_theme: Option<EditorTheme>,
 }
 
 impl EditorApp {
@@ -411,6 +413,7 @@ impl EditorApp {
             recent_projects,
             log_filter: None,
             last_autosave: Instant::now(),
+            last_applied_theme: None,
         }
     }
 
@@ -649,21 +652,21 @@ impl EditorApp {
                 ui.label(egui::RichText::new("Recent Projects").size(14.0));
                 ui.add_space(6.0);
 
-                let recent = self.recent_projects.clone();
-                let mut to_open: Option<PathBuf> = None;
-                for path in &recent {
-                    let name = path
+                let mut to_open: Option<usize> = None;
+                for i in 0..self.recent_projects.len() {
+                    let name = self.recent_projects[i]
                         .file_name()
                         .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| path.to_string_lossy().to_string());
+                        .unwrap_or_else(|| self.recent_projects[i].to_string_lossy().to_string());
                     if ui
-                        .link(format!("{name}  ({})", path.display()))
+                        .link(format!("{name}  ({})", self.recent_projects[i].display()))
                         .clicked()
                     {
-                        to_open = Some(path.clone());
+                        to_open = Some(i);
                     }
                 }
-                if let Some(dir) = to_open {
+                if let Some(idx) = to_open {
+                    let dir = self.recent_projects[idx].clone();
                     self.open_project_at(&dir);
                 }
             }
@@ -829,8 +832,11 @@ impl EditorApp {
 
 impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        // ── Apply preferences ─────────────────────────────────────────────────
-        self.preferences.apply_theme(ctx);
+        // ── Apply preferences (only when theme actually changes) ─────────────
+        if self.last_applied_theme != Some(self.preferences.theme) {
+            self.preferences.apply_theme(ctx);
+            self.last_applied_theme = Some(self.preferences.theme);
+        }
 
         // ── Poll play session ─────────────────────────────────────────────────
         if let Some(session) = &mut self.play_session {
@@ -1064,19 +1070,19 @@ impl eframe::App for EditorApp {
                     // Recent Projects submenu
                     if !self.recent_projects.is_empty() {
                         ui.menu_button("Recent Projects", |ui| {
-                            let recent = self.recent_projects.clone();
-                            let mut to_open: Option<PathBuf> = None;
-                            for path in &recent {
-                                let label = path
+                            let mut to_open: Option<usize> = None;
+                            for i in 0..self.recent_projects.len() {
+                                let label = self.recent_projects[i]
                                     .file_name()
                                     .map(|n| n.to_string_lossy().to_string())
-                                    .unwrap_or_else(|| path.to_string_lossy().to_string());
+                                    .unwrap_or_else(|| self.recent_projects[i].to_string_lossy().to_string());
                                 if ui.button(label).clicked() {
-                                    to_open = Some(path.clone());
+                                    to_open = Some(i);
                                     ui.close_menu();
                                 }
                             }
-                            if let Some(dir) = to_open {
+                            if let Some(idx) = to_open {
+                                let dir = self.recent_projects[idx].clone();
                                 self.open_project_at(&dir);
                             }
                         });
@@ -1379,6 +1385,10 @@ impl eframe::App for EditorApp {
                         ui.label("Renderer unavailable")
                     };
 
+                    // Compute the view-projection matrix once per frame for all
+                    // gizmo hit-tests (drag start, click picking, hover overlay).
+                    let gizmo_vp = self.viewport_state.camera.view_projection();
+
                     // ── Gizmo drag start ──────────────────────────────────────
                     if viewport_response.drag_started() {
                         if let Some(mouse_pos) = viewport_response.interact_pointer_pos() {
@@ -1386,10 +1396,10 @@ impl eframe::App for EditorApp {
                                 if let Some(transform) =
                                     self.scene.components.get::<TransformComponent>(entity)
                                 {
-                                    let hit = hit_test_gizmo(
+                                    let hit = hit_test_gizmo_with_vp(
                                         self.viewport_state.gizmo_mode,
                                         &transform,
-                                        &self.viewport_state.camera,
+                                        gizmo_vp,
                                         viewport_rect,
                                         mouse_pos,
                                     );
@@ -1520,10 +1530,10 @@ impl eframe::App for EditorApp {
                                         self.scene.components.get::<TransformComponent>(e)
                                     })
                                     .and_then(|t| {
-                                        hit_test_gizmo(
+                                        hit_test_gizmo_with_vp(
                                             self.viewport_state.gizmo_mode,
                                             &t,
-                                            &self.viewport_state.camera,
+                                            gizmo_vp,
                                             viewport_rect,
                                             click_pos,
                                         )
@@ -1546,10 +1556,10 @@ impl eframe::App for EditorApp {
 
                             let hovered_axis = if self.viewport_state.active_drag.is_none() {
                                 viewport_response.hover_pos().and_then(|pos| {
-                                    hit_test_gizmo(
+                                    hit_test_gizmo_with_vp(
                                         self.viewport_state.gizmo_mode,
                                         &transform,
-                                        &self.viewport_state.camera,
+                                        gizmo_vp,
                                         viewport_rect,
                                         pos,
                                     )
@@ -1580,6 +1590,13 @@ impl eframe::App for EditorApp {
             }
         });
 
-        ctx.request_repaint();
+        // Only request continuous repaints when something is actively animating.
+        // When the editor is idle, egui will still repaint on user input events.
+        if self.play_session.is_some()
+            || self.viewport_state.active_drag.is_some()
+            || self.viewport_state.camera_controller.is_moving()
+        {
+            ctx.request_repaint();
+        }
     }
 }

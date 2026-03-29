@@ -9,7 +9,7 @@ use pyo3::prelude::*;
 
 use rython_ecs::{EntityId, Scene};
 
-use crate::bridge::{EntityPy, Vec3Py, get_script_class, set_active_scene};
+use crate::bridge::{EntityPy, Vec3Py, get_script_class_with_gil, set_active_scene};
 use crate::component::ScriptComponent;
 
 // ─── GIL batch counter (for T-SCRIPT-19) ─────────────────────────────────────
@@ -51,9 +51,34 @@ pub enum ScriptEvent {
 
 // ─── Per-entity script state ──────────────────────────────────────────────────
 
+/// Cached boolean flags for which event handlers are defined on a script class.
+/// Inspected once at instantiation time so we never call `hasattr` per-frame.
+struct HandlerFlags {
+    on_spawn: bool,
+    on_despawn: bool,
+    on_collision: bool,
+    on_trigger_enter: bool,
+    on_trigger_exit: bool,
+    on_input_action: bool,
+}
+
+impl HandlerFlags {
+    fn inspect(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> Self {
+        Self {
+            on_spawn: obj.hasattr("on_spawn").unwrap_or(false),
+            on_despawn: obj.hasattr("on_despawn").unwrap_or(false),
+            on_collision: obj.hasattr("on_collision").unwrap_or(false),
+            on_trigger_enter: obj.hasattr("on_trigger_enter").unwrap_or(false),
+            on_trigger_exit: obj.hasattr("on_trigger_exit").unwrap_or(false),
+            on_input_action: obj.hasattr("on_input_action").unwrap_or(false),
+        }
+    }
+}
+
 struct ScriptInstance {
     object: Py<PyAny>,
     class_name: String,
+    handlers: HandlerFlags,
 }
 
 // ─── ScriptSystem ─────────────────────────────────────────────────────────────
@@ -152,7 +177,7 @@ impl ScriptSystem {
     }
 
     fn instantiate_script(&self, py: Python<'_>, entity: EntityId, class_name: &str) {
-        let class = match get_script_class(class_name) {
+        let class = match get_script_class_with_gil(py, class_name) {
             Some(c) => c,
             None => {
                 self.log_error(format!("Script class not registered: {class_name}"));
@@ -160,7 +185,10 @@ impl ScriptSystem {
             }
         };
 
-        let entity_wrapper = match Py::new(py, EntityPy { id: entity.0 }) {
+        let entity_wrapper = match Py::new(py, EntityPy {
+            id: entity.0,
+            scene: Some(Arc::clone(&self.scene)),
+        }) {
             Ok(w) => w,
             Err(e) => {
                 self.log_error(format!("Failed to create entity wrapper: {e}"));
@@ -176,8 +204,11 @@ impl ScriptSystem {
             }
         };
 
+        // Cache which handlers are defined on this script class (once).
+        let handlers = HandlerFlags::inspect(py, instance.bind(py));
+
         // Call on_spawn if defined
-        if instance.bind(py).hasattr("on_spawn").unwrap_or(false) {
+        if handlers.on_spawn {
             if let Err(e) = instance.bind(py).call_method0("on_spawn") {
                 self.log_python_error(py, &e, class_name, "on_spawn");
             }
@@ -186,13 +217,14 @@ impl ScriptSystem {
         self.instances.lock().insert(entity, ScriptInstance {
             object: instance,
             class_name: class_name.to_string(),
+            handlers,
         });
     }
 
     fn teardown_script(&self, py: Python<'_>, entity: EntityId) {
         let inst_opt = self.instances.lock().remove(&entity);
         if let Some(inst) = inst_opt {
-            if inst.object.bind(py).hasattr("on_despawn").unwrap_or(false) {
+            if inst.handlers.on_despawn {
                 if let Err(e) = inst.object.bind(py).call_method0("on_despawn") {
                     self.log_python_error(py, &e, &inst.class_name, "on_despawn");
                 }
@@ -204,40 +236,31 @@ impl ScriptSystem {
         let events: Vec<ScriptEvent> = std::mem::take(&mut self.event_queue.lock());
         for event in events {
             match event {
+                // Fix #3: Lazily construct EntityPy / Vec3Py only when a handler
+                // exists — avoids 4 Py::new heap allocations per collision when
+                // the script has no on_collision handler.
                 ScriptEvent::Collision { entity_a, entity_b, normal } => {
-                    let bw: Option<Py<PyAny>> =
-                        Py::new(py, EntityPy { id: entity_b.0 }).ok().map(Into::into);
-                    let aw: Option<Py<PyAny>> =
-                        Py::new(py, EntityPy { id: entity_a.0 }).ok().map(Into::into);
-                    let nv: Option<Py<PyAny>> =
-                        Py::new(py, Vec3Py::new(normal[0], normal[1], normal[2]))
-                            .ok()
-                            .map(Into::into);
-                    let nnv: Option<Py<PyAny>> =
-                        Py::new(py, Vec3Py::new(-normal[0], -normal[1], -normal[2]))
-                            .ok()
-                            .map(Into::into);
-
-                    if let (Some(bw), Some(nv)) = (bw, nv) {
-                        self.call_handler_pair(py, entity_a, "on_collision", bw, nv);
-                    }
-                    if let (Some(aw), Some(nnv)) = (aw, nnv) {
-                        self.call_handler_pair(py, entity_b, "on_collision", aw, nnv);
-                    }
+                    let scene = &self.scene;
+                    self.call_handler_pair_inline(
+                        py, entity_a, "on_collision",
+                        |py| Py::new(py, EntityPy { id: entity_b.0, scene: Some(Arc::clone(scene)) }).ok().map(Into::into),
+                        |py| Py::new(py, Vec3Py::new(normal[0], normal[1], normal[2])).ok().map(Into::into),
+                    );
+                    self.call_handler_pair_inline(
+                        py, entity_b, "on_collision",
+                        |py| Py::new(py, EntityPy { id: entity_a.0, scene: Some(Arc::clone(scene)) }).ok().map(Into::into),
+                        |py| Py::new(py, Vec3Py::new(-normal[0], -normal[1], -normal[2])).ok().map(Into::into),
+                    );
                 }
                 ScriptEvent::TriggerEnter { entity, other } => {
-                    let ow: Option<Py<PyAny>> =
-                        Py::new(py, EntityPy { id: other.0 }).ok().map(Into::into);
-                    if let Some(ow) = ow {
-                        self.call_handler_one(py, entity, "on_trigger_enter", ow);
-                    }
+                    let scene = &self.scene;
+                    self.call_handler_one_lazy(py, entity, "on_trigger_enter",
+                        |py| Py::new(py, EntityPy { id: other.0, scene: Some(Arc::clone(scene)) }).ok().map(Into::into));
                 }
                 ScriptEvent::TriggerExit { entity, other } => {
-                    let ow: Option<Py<PyAny>> =
-                        Py::new(py, EntityPy { id: other.0 }).ok().map(Into::into);
-                    if let Some(ow) = ow {
-                        self.call_handler_one(py, entity, "on_trigger_exit", ow);
-                    }
+                    let scene = &self.scene;
+                    self.call_handler_one_lazy(py, entity, "on_trigger_exit",
+                        |py| Py::new(py, EntityPy { id: other.0, scene: Some(Arc::clone(scene)) }).ok().map(Into::into));
                 }
                 ScriptEvent::InputAction { entity, action, value } => {
                     let ao: Option<Py<PyAny>> = action.into_pyobject(py).ok().map(|b| b.unbind().into());
@@ -250,18 +273,44 @@ impl ScriptSystem {
         }
     }
 
-    fn call_handler_one(&self, py: Python<'_>, entity: EntityId, method: &str, arg: Py<PyAny>) {
+    /// Check the cached handler flag for the given method name.
+    #[inline]
+    fn has_handler(inst: &ScriptInstance, method: &str) -> bool {
+        match method {
+            "on_collision" => inst.handlers.on_collision,
+            "on_trigger_enter" => inst.handlers.on_trigger_enter,
+            "on_trigger_exit" => inst.handlers.on_trigger_exit,
+            "on_input_action" => inst.handlers.on_input_action,
+            "on_spawn" => inst.handlers.on_spawn,
+            "on_despawn" => inst.handlers.on_despawn,
+            _ => false,
+        }
+    }
+
+    /// Lazily construct the argument only when the handler exists — avoids
+    /// heap allocations for entities without the handler.
+    fn call_handler_one_lazy<F>(
+        &self,
+        py: Python<'_>,
+        entity: EntityId,
+        method: &str,
+        make_arg: F,
+    )
+    where
+        F: FnOnce(Python<'_>) -> Option<Py<PyAny>>,
+    {
         let (obj, class_name) = {
             let guard = self.instances.lock();
             let inst = match guard.get(&entity) {
                 Some(i) => i,
                 None => return,
             };
-            if !inst.object.bind(py).hasattr(method).unwrap_or(false) {
+            if !Self::has_handler(inst, method) {
                 return;
             }
             (inst.object.clone_ref(py), inst.class_name.clone())
         };
+        let Some(arg) = make_arg(py) else { return };
         if let Err(e) = obj.bind(py).call_method1(method, (arg,)) {
             self.log_python_error(py, &e, &class_name, method);
         }
@@ -281,12 +330,43 @@ impl ScriptSystem {
                 Some(i) => i,
                 None => return,
             };
-            if !inst.object.bind(py).hasattr(method).unwrap_or(false) {
+            if !Self::has_handler(inst, method) {
                 return;
             }
             (inst.object.clone_ref(py), inst.class_name.clone())
         };
         if let Err(e) = obj.bind(py).call_method1(method, (arg1, arg2)) {
+            self.log_python_error(py, &e, &class_name, method);
+        }
+    }
+
+    /// Like `call_handler_pair` but lazily constructs arguments only when the
+    /// handler exists — avoids heap allocations when no handler is registered.
+    fn call_handler_pair_inline<F1, F2>(
+        &self,
+        py: Python<'_>,
+        entity: EntityId,
+        method: &str,
+        make_arg1: F1,
+        make_arg2: F2,
+    )
+    where
+        F1: FnOnce(Python<'_>) -> Option<Py<PyAny>>,
+        F2: FnOnce(Python<'_>) -> Option<Py<PyAny>>,
+    {
+        let (obj, class_name) = {
+            let guard = self.instances.lock();
+            let inst = match guard.get(&entity) {
+                Some(i) => i,
+                None => return,
+            };
+            if !Self::has_handler(inst, method) {
+                return;
+            }
+            (inst.object.clone_ref(py), inst.class_name.clone())
+        };
+        let (Some(a1), Some(a2)) = (make_arg1(py), make_arg2(py)) else { return };
+        if let Err(e) = obj.bind(py).call_method1(method, (a1, a2)) {
             self.log_python_error(py, &e, &class_name, method);
         }
     }

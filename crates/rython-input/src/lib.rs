@@ -1,5 +1,6 @@
 #![deny(warnings)]
 
+pub mod bitset;
 pub mod controller;
 pub mod events;
 pub mod input_map;

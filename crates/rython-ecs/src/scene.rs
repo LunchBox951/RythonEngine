@@ -204,10 +204,16 @@ impl Scene {
         let Some(entities) = data["entities"].as_array() else { return };
 
         // First pass: spawn all entities with components
+        {
+            let mut entity_set = self.entities.write();
+            for record in entities {
+                let id = EntityId(record["id"].as_u64().unwrap_or(0));
+                entity_set.insert(id);
+            }
+        }
+        // Second: load components (separate pass so entity lock is released)
         for record in entities {
             let id = EntityId(record["id"].as_u64().unwrap_or(0));
-            self.entities.write().insert(id);
-
             if let Some(comps) = record["components"].as_array() {
                 for comp_record in comps {
                     let type_name = comp_record["type"].as_str().unwrap_or("");

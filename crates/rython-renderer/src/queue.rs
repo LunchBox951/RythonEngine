@@ -83,14 +83,17 @@ impl CommandQueue {
     ///
     /// Lower z values are drawn first (painter's algorithm / back-to-front).
     /// Caller should invoke this once per frame after [`swap`].
+    ///
+    /// The front buffer's heap allocation is preserved (via `drain` instead of
+    /// `std::mem::take`) so that the next frame reuses the same capacity without
+    /// a fresh allocation.
     pub fn take_sorted_front(&self) -> Vec<DrawCommand> {
         let mut front = self.front.lock().unwrap();
-        let mut cmds: Vec<DrawCommand> = std::mem::take(&mut *front);
-        cmds.sort_by(|a, b| {
+        front.sort_by(|a, b| {
             a.z()
                 .partial_cmp(&b.z())
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        cmds
+        front.drain(..).collect()
     }
 }

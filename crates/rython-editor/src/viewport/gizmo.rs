@@ -303,6 +303,9 @@ fn perpendicular_axes(n: Vec3) -> (Vec3, Vec3) {
 /// Hit-test the gizmo axes against a mouse position.
 ///
 /// Returns the closest axis within `HIT_RADIUS` pixels, or `None`.
+///
+/// Accepts a precomputed view-projection matrix to avoid recomputing it
+/// when this function is called multiple times per frame.
 pub fn hit_test_gizmo(
     mode: GizmoMode,
     transform: &TransformComponent,
@@ -311,6 +314,18 @@ pub fn hit_test_gizmo(
     mouse: egui::Pos2,
 ) -> Option<GizmoAxis> {
     let vp = camera.view_projection();
+    hit_test_gizmo_with_vp(mode, transform, vp, viewport_rect, mouse)
+}
+
+/// Like [`hit_test_gizmo`] but takes a precomputed VP matrix, avoiding
+/// redundant matrix multiplications when called several times per frame.
+pub fn hit_test_gizmo_with_vp(
+    mode: GizmoMode,
+    transform: &TransformComponent,
+    vp: Mat4,
+    viewport_rect: egui::Rect,
+    mouse: egui::Pos2,
+) -> Option<GizmoAxis> {
     let entity_pos = Vec3::new(transform.x, transform.y, transform.z);
     let Some(origin) = world_to_screen(entity_pos, vp, viewport_rect) else {
         return None;

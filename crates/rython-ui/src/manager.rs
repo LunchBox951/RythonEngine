@@ -228,8 +228,9 @@ impl UIManager {
 
     /// Recompute absolute positions for all widgets in the tree.
     pub fn compute_layout(&mut self) {
-        let roots = self.root_order.clone();
-        for id in roots {
+        // Iterate by index to avoid cloning root_order Vec.
+        for i in 0..self.root_order.len() {
+            let id = self.root_order[i];
             // Root widgets: abs position = their own x/y
             {
                 let w = self.widgets.get_mut(&id).unwrap();
@@ -404,9 +405,18 @@ impl UIManager {
     /// Process mouse movement, updating hover states. Returns true if over any widget.
     pub fn on_mouse_move(&mut self, x: f32, y: f32) -> bool {
         let mut hit = false;
-        let ids: Vec<WidgetId> = self.widgets.keys().copied().collect();
-        for id in ids {
-            let over = self.is_visible(id) && self.widgets[&id].contains_point(x, y);
+        // Two-pass approach: first gather (id, is_over) from immutable iteration,
+        // then apply state changes. This avoids the intermediate Vec<WidgetId>
+        // allocation that previously collected all keys before doing any work.
+        let updates: Vec<(WidgetId, bool)> = self
+            .widgets
+            .iter()
+            .map(|(&id, _w)| {
+                let over = self.is_visible(id) && self.widgets[&id].contains_point(x, y);
+                (id, over)
+            })
+            .collect();
+        for (id, over) in updates {
             let w = self.widgets.get_mut(&id).unwrap();
             if over {
                 if w.state == WidgetState::Normal {
@@ -504,10 +514,10 @@ impl UIManager {
     /// render above typical game-world draw commands.
     pub fn build_draw_commands(&self) -> Vec<DrawCommand> {
         let mut cmds = Vec::new();
-        // Iterate roots in order; DFS to preserve hierarchy
-        let roots = self.root_order.clone();
-        for id in roots {
-            self.collect_draw_commands(id, &mut cmds);
+        // Iterate roots in order; DFS to preserve hierarchy.
+        // Use index iteration to avoid cloning root_order Vec.
+        for i in 0..self.root_order.len() {
+            self.collect_draw_commands(self.root_order[i], &mut cmds);
         }
         cmds
     }

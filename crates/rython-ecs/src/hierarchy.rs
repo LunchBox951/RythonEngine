@@ -4,16 +4,23 @@ use crate::entity::EntityId;
 
 pub const MAX_HIERARCHY_DEPTH: usize = 64;
 
+/// Internal maps bundled under a single lock to eliminate multi-lock overhead.
+struct HierarchyMaps {
+    parent_map: HashMap<EntityId, EntityId>,
+    children_map: HashMap<EntityId, Vec<EntityId>>,
+}
+
 pub struct Hierarchy {
-    parent_map: RwLock<HashMap<EntityId, EntityId>>,
-    children_map: RwLock<HashMap<EntityId, Vec<EntityId>>>,
+    maps: RwLock<HierarchyMaps>,
 }
 
 impl Default for Hierarchy {
     fn default() -> Self {
         Self {
-            parent_map: RwLock::new(HashMap::new()),
-            children_map: RwLock::new(HashMap::new()),
+            maps: RwLock::new(HierarchyMaps {
+                parent_map: HashMap::new(),
+                children_map: HashMap::new(),
+            }),
         }
     }
 }
@@ -22,42 +29,42 @@ impl Hierarchy {
     pub fn new() -> Self { Self::default() }
 
     pub fn set_parent(&self, child: EntityId, parent: EntityId) {
+        let mut m = self.maps.write();
         // Remove from old parent's children list
-        if let Some(old_parent) = self.parent_map.read().get(&child).copied() {
-            let mut cm = self.children_map.write();
-            if let Some(siblings) = cm.get_mut(&old_parent) {
+        if let Some(old_parent) = m.parent_map.get(&child).copied() {
+            if let Some(siblings) = m.children_map.get_mut(&old_parent) {
                 siblings.retain(|e| *e != child);
             }
         }
-        self.parent_map.write().insert(child, parent);
-        self.children_map.write().entry(parent).or_default().push(child);
+        m.parent_map.insert(child, parent);
+        m.children_map.entry(parent).or_default().push(child);
     }
 
     pub fn clear_parent(&self, child: EntityId) {
-        if let Some(old_parent) = self.parent_map.write().remove(&child) {
-            let mut cm = self.children_map.write();
-            if let Some(siblings) = cm.get_mut(&old_parent) {
+        let mut m = self.maps.write();
+        if let Some(old_parent) = m.parent_map.remove(&child) {
+            if let Some(siblings) = m.children_map.get_mut(&old_parent) {
                 siblings.retain(|e| *e != child);
             }
         }
     }
 
     pub fn get_parent(&self, child: EntityId) -> Option<EntityId> {
-        self.parent_map.read().get(&child).copied()
+        self.maps.read().parent_map.get(&child).copied()
     }
 
     pub fn get_children(&self, parent: EntityId) -> Vec<EntityId> {
-        self.children_map.read().get(&parent).cloned().unwrap_or_default()
+        self.maps.read().children_map.get(&parent).cloned().unwrap_or_default()
     }
 
     /// Walk the ancestor chain from `entity` up. Returns ordered chain [entity, parent, grandparent, ...].
     /// Stops at root or MAX_HIERARCHY_DEPTH. Returns (chain, depth_exceeded).
     pub fn ancestor_chain(&self, entity: EntityId) -> (Vec<EntityId>, bool) {
         let mut chain = vec![entity];
-        let pm = self.parent_map.read();
+        let m = self.maps.read();
         let mut current = entity;
         for _ in 0..MAX_HIERARCHY_DEPTH {
-            match pm.get(&current).copied() {
+            match m.parent_map.get(&current).copied() {
                 Some(p) => {
                     chain.push(p);
                     current = p;
@@ -70,24 +77,33 @@ impl Hierarchy {
 
     /// Orphan all children of `entity` (remove their parent pointer without cascade-despawn).
     pub fn orphan_children(&self, parent: EntityId) {
-        let children: Vec<EntityId> = {
-            let mut cm = self.children_map.write();
-            cm.remove(&parent).unwrap_or_default()
-        };
-        let mut pm = self.parent_map.write();
+        let mut m = self.maps.write();
+        let children = m.children_map.remove(&parent).unwrap_or_default();
         for child in children {
-            pm.remove(&child);
+            m.parent_map.remove(&child);
         }
     }
 
     /// Remove entity from all hierarchy references.
     pub fn remove_entity(&self, entity: EntityId) {
-        self.orphan_children(entity);
-        self.clear_parent(entity);
+        // Single write lock for the entire operation
+        let mut m = self.maps.write();
+        // Orphan children
+        let children = m.children_map.remove(&entity).unwrap_or_default();
+        for child in children {
+            m.parent_map.remove(&child);
+        }
+        // Clear parent
+        if let Some(old_parent) = m.parent_map.remove(&entity) {
+            if let Some(siblings) = m.children_map.get_mut(&old_parent) {
+                siblings.retain(|e| *e != entity);
+            }
+        }
     }
 
     pub fn clear(&self) {
-        self.parent_map.write().clear();
-        self.children_map.write().clear();
+        let mut m = self.maps.write();
+        m.parent_map.clear();
+        m.children_map.clear();
     }
 }

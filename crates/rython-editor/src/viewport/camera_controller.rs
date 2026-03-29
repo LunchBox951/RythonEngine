@@ -15,6 +15,8 @@ pub struct CameraController {
     pub yaw: f32,
     /// Vertical angle in radians, clamped to avoid gimbal flip.
     pub pitch: f32,
+    /// True if the camera moved during the last `update()` call (orbit, pan, or zoom).
+    moving: bool,
 }
 
 impl CameraController {
@@ -24,16 +26,25 @@ impl CameraController {
             distance: 12.0,
             yaw: 0.0,
             pitch: 0.3, // slightly above horizon
+            moving: false,
         }
+    }
+
+    /// Returns true if the camera was actively moving during the last `update()`.
+    pub fn is_moving(&self) -> bool {
+        self.moving
     }
 
     /// Update camera from egui response (drag, scroll) and write into `camera`.
     pub fn update(&mut self, response: &egui::Response, camera: &mut Camera) {
+        let mut moved = false;
+
         // Scroll wheel → zoom
         if response.hovered() {
             let scroll = response.ctx.input(|i| i.smooth_scroll_delta.y);
             if scroll != 0.0 {
                 self.distance = (self.distance - scroll * 0.05).clamp(0.5, 500.0);
+                moved = true;
             }
         }
 
@@ -47,6 +58,7 @@ impl CameraController {
             self.yaw -= delta.x * 0.005;
             self.pitch = (self.pitch - delta.y * 0.005)
                 .clamp(-89.0_f32.to_radians(), 89.0_f32.to_radians());
+            moved = true;
         }
 
         // Right mouse drag OR Shift + Middle drag → pan
@@ -60,7 +72,10 @@ impl CameraController {
             // Camera right vector in XZ plane
             let right = Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin());
             self.target += right * (-delta.x * pan_scale) + Vec3::Y * (delta.y * pan_scale);
+            moved = true;
         }
+
+        self.moving = moved;
 
         // Compute camera position from spherical coordinates
         let cos_pitch = self.pitch.cos();

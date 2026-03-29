@@ -70,8 +70,17 @@ pub fn register_script_class(name: impl Into<String>, class: Py<PyAny>) {
     class_registry().lock().insert(name.into(), class);
 }
 
+/// Look up a registered script class by name.
+///
+/// Public API: acquires GIL via `Python::attach` for callers that don't hold it.
 pub fn get_script_class(name: &str) -> Option<Py<PyAny>> {
-    Python::attach(|py| class_registry().lock().get(name).map(|p| p.clone_ref(py)))
+    Python::attach(|py| get_script_class_with_gil(py, name))
+}
+
+/// Internal variant for code that already holds the GIL — avoids the
+/// redundant `Python::attach` call.
+pub(crate) fn get_script_class_with_gil(py: Python<'_>, name: &str) -> Option<Py<PyAny>> {
+    class_registry().lock().get(name).map(|p| p.clone_ref(py))
 }
 
 // ─── Draw command buffer ──────────────────────────────────────────────────────
@@ -108,11 +117,10 @@ pub(crate) fn recurring_callbacks_store() -> &'static Arc<Mutex<Vec<Py<PyAny>>>>
 }
 
 pub fn flush_recurring_callbacks(py: Python<'_>) {
-    let callbacks: Vec<Py<PyAny>> = {
-        let guard = recurring_callbacks_store().lock();
-        guard.iter().map(|cb| cb.clone_ref(py)).collect()
-    };
-    for cb in &callbacks {
+    // Iterate with the lock held — callbacks do not re-enter this lock,
+    // so this is safe and avoids clone_ref on every callback every frame.
+    let guard = recurring_callbacks_store().lock();
+    for cb in guard.iter() {
         if let Err(e) = cb.bind(py).call0() {
             e.print_and_set_sys_last_vars(py);
         }
@@ -164,19 +172,21 @@ pub(crate) fn timer_store() -> &'static Arc<Mutex<Vec<PendingTimer>>> {
 /// updating elapsed time.
 pub fn flush_timers(py: Python<'_>) {
     let now = get_elapsed_secs();
-    let expired: Vec<Py<PyAny>> = {
-        let mut timers = timer_store().lock();
-        let mut expired = Vec::new();
-        timers.retain(|t| {
-            if now >= t.fire_at {
-                expired.push(t.callback.clone_ref(py));
-                false
-            } else {
-                true
-            }
-        });
-        expired
-    };
+    // Take ownership of the entire vec, partition into expired/remaining,
+    // and put the remaining ones back — avoids clone_ref on expired callbacks.
+    let all_timers: Vec<PendingTimer> = std::mem::take(&mut timer_store().lock());
+    let mut remaining = Vec::new();
+    let mut expired = Vec::new();
+    for t in all_timers {
+        if now >= t.fire_at {
+            expired.push(t.callback);
+        } else {
+            remaining.push(t);
+        }
+    }
+    if !remaining.is_empty() {
+        *timer_store().lock() = remaining;
+    }
     for cb in &expired {
         if let Err(e) = cb.bind(py).call0() {
             e.print_and_set_sys_last_vars(py);
@@ -451,10 +461,10 @@ def _throttle(hz):
         raise ValueError(f'throttle hz must be > 0, got {hz!r}')
     _interval = 1.0 / hz
     def _decorator(fn):
+        import rython as _r
         _last = [-_interval]
         @_ft.wraps(fn)
         def _wrapper(*args, **kwargs):
-            import rython as _r
             _now = _r.time.elapsed
             if _now < _last[0]:
                 _last[0] = _now - _interval

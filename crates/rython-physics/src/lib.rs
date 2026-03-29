@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crossbeam_channel::unbounded;
+use crossbeam_channel::{unbounded, Receiver, Sender};
 use rapier3d::prelude::*;
 use rython_core::{EngineError, SchedulerHandle};
 use rython_ecs::{ColliderComponent, EntityId, RigidBodyComponent, Scene, TransformComponent};
@@ -68,12 +68,19 @@ pub struct PhysicsWorld {
     ccd_solver: CCDSolver,
     entity_to_body: HashMap<EntityId, BodyEntry>,
     collider_to_entity: HashMap<ColliderHandle, EntityId>,
+    // Reused channel pairs — avoids re-creating them every physics step.
+    collision_send: Sender<CollisionEvent>,
+    collision_recv: Receiver<CollisionEvent>,
+    contact_force_send: Sender<ContactForceEvent>,
 }
 
 impl PhysicsWorld {
     pub fn new(config: PhysicsConfig) -> Self {
         let mut integration_parameters = IntegrationParameters::default();
         integration_parameters.dt = config.fixed_timestep;
+
+        let (collision_send, collision_recv) = unbounded();
+        let (contact_force_send, _contact_force_recv) = unbounded();
 
         Self {
             config,
@@ -89,6 +96,9 @@ impl PhysicsWorld {
             ccd_solver: CCDSolver::new(),
             entity_to_body: HashMap::new(),
             collider_to_entity: HashMap::new(),
+            collision_send,
+            collision_recv,
+            contact_force_send,
         }
     }
 
@@ -265,9 +275,14 @@ impl PhysicsWorld {
         let gravity =
             vector![self.config.gravity[0], self.config.gravity[1], self.config.gravity[2]];
 
-        let (collision_send, collision_recv) = unbounded();
-        let (contact_force_send, _) = unbounded();
-        let event_handler = ChannelEventCollector::new(collision_send, contact_force_send);
+        // Drain any stale events from the reused channels before stepping.
+        while self.collision_recv.try_recv().is_ok() {}
+
+        // Clone the senders (cheap ref-count bump) for the event collector.
+        let event_handler = ChannelEventCollector::new(
+            self.collision_send.clone(),
+            self.contact_force_send.clone(),
+        );
 
         // Destructure to allow simultaneous mutable borrows of distinct fields.
         let Self {
@@ -282,8 +297,11 @@ impl PhysicsWorld {
             multibody_joint_set,
             ccd_solver,
             collider_to_entity,
+            collision_recv,
             entity_to_body: _,
             config: _,
+            collision_send: _,
+            contact_force_send: _,
         } = self;
 
         physics_pipeline.step(

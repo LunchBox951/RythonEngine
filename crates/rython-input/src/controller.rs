@@ -1,15 +1,16 @@
+use crate::bitset::{GamepadButtonSet, KeyCodeSet, MouseButtonSet};
 use crate::{AxisBinding, ButtonBinding, InputActionEvent, InputMap, InputSnapshot};
 use rython_core::{EngineError, OwnerId, SchedulerHandle};
 use rython_modules::Module;
-use rython_window::{GamepadAxisType, GamepadButton, KeyCode, MouseAxisType, MouseButton, RawInputEvent};
-use std::collections::{HashMap, HashSet};
+use rython_window::{GamepadAxisType, MouseAxisType, RawInputEvent};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 // ─── Free functions (avoid borrow-checker conflicts inside tick) ─────────────
 
 fn eval_axis(
     binding: &AxisBinding,
-    keys: &HashSet<KeyCode>,
+    keys: &KeyCodeSet,
     mouse_delta: &(f64, f64),
     gpad_axes: &HashMap<GamepadAxisType, f32>,
 ) -> f32 {
@@ -29,9 +30,9 @@ fn eval_axis(
 
 fn is_btn_active(
     binding: &ButtonBinding,
-    keys: &HashSet<KeyCode>,
-    mouse_buttons: &HashSet<MouseButton>,
-    gpad_buttons: &HashSet<GamepadButton>,
+    keys: &KeyCodeSet,
+    mouse_buttons: &MouseButtonSet,
+    gpad_buttons: &GamepadButtonSet,
 ) -> bool {
     match binding {
         ButtonBinding::Keyboard(key) => keys.contains(key),
@@ -52,14 +53,14 @@ pub struct PlayerController {
     locked: bool,
     owner: OwnerId,
 
-    // Per-frame hardware state
-    current_keys: HashSet<KeyCode>,
-    previous_keys: HashSet<KeyCode>,
-    current_mouse_buttons: HashSet<MouseButton>,
-    previous_mouse_buttons: HashSet<MouseButton>,
+    // Per-frame hardware state (bitsets: Copy instead of HashSet::clone)
+    current_keys: KeyCodeSet,
+    previous_keys: KeyCodeSet,
+    current_mouse_buttons: MouseButtonSet,
+    previous_mouse_buttons: MouseButtonSet,
     mouse_delta: (f64, f64),
-    current_gamepad_buttons: HashSet<GamepadButton>,
-    previous_gamepad_buttons: HashSet<GamepadButton>,
+    current_gamepad_buttons: GamepadButtonSet,
+    previous_gamepad_buttons: GamepadButtonSet,
     gamepad_axes: HashMap<GamepadAxisType, f32>,
     gamepad_connected: bool,
     gamepad_name: Option<String>,
@@ -79,13 +80,13 @@ impl PlayerController {
             active_map: None,
             locked: false,
             owner,
-            current_keys: HashSet::new(),
-            previous_keys: HashSet::new(),
-            current_mouse_buttons: HashSet::new(),
-            previous_mouse_buttons: HashSet::new(),
+            current_keys: KeyCodeSet::new(),
+            previous_keys: KeyCodeSet::new(),
+            current_mouse_buttons: MouseButtonSet::new(),
+            previous_mouse_buttons: MouseButtonSet::new(),
             mouse_delta: (0.0, 0.0),
-            current_gamepad_buttons: HashSet::new(),
-            previous_gamepad_buttons: HashSet::new(),
+            current_gamepad_buttons: GamepadButtonSet::new(),
+            previous_gamepad_buttons: GamepadButtonSet::new(),
             gamepad_axes: HashMap::new(),
             gamepad_connected: false,
             gamepad_name: None,
@@ -172,25 +173,25 @@ impl PlayerController {
     ///
     /// Call this once per frame (or directly in tests) before reading the snapshot.
     pub fn tick(&mut self, events: &[RawInputEvent]) {
-        // ── Step 1: save previous state ──────────────────────────────────────
-        self.previous_keys = self.current_keys.clone();
-        self.previous_mouse_buttons = self.current_mouse_buttons.clone();
-        self.previous_gamepad_buttons = self.current_gamepad_buttons.clone();
+        // ── Step 1: save previous state (bitset Copy, no heap allocation) ───
+        self.previous_keys = self.current_keys;
+        self.previous_mouse_buttons = self.current_mouse_buttons;
+        self.previous_gamepad_buttons = self.current_gamepad_buttons;
         self.mouse_delta = (0.0, 0.0);
 
         // ── Step 2: apply raw events ──────────────────────────────────────────
         for event in events {
             match event {
                 RawInputEvent::KeyPressed(key) => { self.current_keys.insert(*key); }
-                RawInputEvent::KeyReleased(key) => { self.current_keys.remove(key); }
+                RawInputEvent::KeyReleased(key) => { self.current_keys.remove(*key); }
                 RawInputEvent::MouseMoved { dx, dy } => {
                     self.mouse_delta.0 += dx;
                     self.mouse_delta.1 += dy;
                 }
                 RawInputEvent::MouseButtonPressed(btn) => { self.current_mouse_buttons.insert(*btn); }
-                RawInputEvent::MouseButtonReleased(btn) => { self.current_mouse_buttons.remove(btn); }
+                RawInputEvent::MouseButtonReleased(btn) => { self.current_mouse_buttons.remove(*btn); }
                 RawInputEvent::GamepadButtonPressed(btn) => { self.current_gamepad_buttons.insert(*btn); }
-                RawInputEvent::GamepadButtonReleased(btn) => { self.current_gamepad_buttons.remove(btn); }
+                RawInputEvent::GamepadButtonReleased(btn) => { self.current_gamepad_buttons.remove(*btn); }
                 RawInputEvent::GamepadAxisChanged { axis, value } => {
                     self.gamepad_axes.insert(*axis, *value);
                 }
@@ -225,12 +226,12 @@ impl PlayerController {
         let map_name = self.active_map.clone();
         if let Some(ref map_name) = map_name {
             if let Some(map) = self.maps.get(map_name) {
-                // Collect keys to avoid iterator-borrow conflicts with future writes
-                let axis_actions: Vec<String> = map.all_axis_actions().cloned().collect();
-                let button_actions: Vec<String> = map.all_button_actions().cloned().collect();
+                // Collect borrowed &str references — avoids cloning action name Strings.
+                let axis_actions: Vec<&str> = map.all_axis_actions().map(String::as_str).collect();
+                let button_actions: Vec<&str> = map.all_button_actions().map(String::as_str).collect();
 
                 if !locked {
-                    for action in &axis_actions {
+                    for &action in &axis_actions {
                         let mut value = 0.0_f32;
                         for binding in map.axis_bindings(action) {
                             let v = eval_axis(binding, cur_keys, mouse_delta, gpad_axes);
@@ -238,11 +239,11 @@ impl PlayerController {
                                 value = v;
                             }
                         }
-                        new_snapshot.set_axis(action.clone(), value);
+                        new_snapshot.set_axis(action.to_owned(), value);
 
                         // Emit an axis-change event when the value meaningfully
                         // crosses the deadzone boundary or changes while active.
-                        let prev = self.previous_axis_values.get(action.as_str()).copied().unwrap_or(0.0);
+                        let prev = self.previous_axis_values.get(action).copied().unwrap_or(0.0);
                         let prev_active = prev.abs() > AXIS_DEADZONE;
                         let curr_active = value.abs() > AXIS_DEADZONE;
                         let deadzone_crossed = prev_active != curr_active;
@@ -254,10 +255,10 @@ impl PlayerController {
                                 value,
                             });
                         }
-                        self.previous_axis_values.insert(action.clone(), value);
+                        self.previous_axis_values.insert(action.to_owned(), value);
                     }
 
-                    for action in &button_actions {
+                    for &action in &button_actions {
                         let currently = map
                             .button_bindings(action)
                             .iter()
@@ -271,12 +272,12 @@ impl PlayerController {
                         let held = currently;
                         let released = !currently && previously;
 
-                        new_snapshot.set_button(action.clone(), pressed, held, released);
+                        new_snapshot.set_button(action.to_owned(), pressed, held, released);
 
                         if pressed {
-                            new_events.push(InputActionEvent { action: action.clone(), value: 1.0 });
+                            new_events.push(InputActionEvent { action: action.to_owned(), value: 1.0 });
                         } else if released {
-                            new_events.push(InputActionEvent { action: action.clone(), value: 0.0 });
+                            new_events.push(InputActionEvent { action: action.to_owned(), value: 0.0 });
                         }
                     }
                 }

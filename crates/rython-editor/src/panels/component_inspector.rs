@@ -37,11 +37,18 @@ impl ComponentInspectorPanel {
         ui.heading("Inspector");
         ui.separator();
 
-        let comps = scene.components.snapshot_entity(entity);
-        let present: Vec<&str> = comps.iter().map(|(n, _)| *n).collect();
+        // Build the present-type list cheaply using has::<T>() checks
+        // instead of snapshot_entity which serializes all component data.
+        let mut present: Vec<&str> = Vec::new();
+        if scene.components.has::<TransformComponent>(entity) { present.push("TransformComponent"); }
+        if scene.components.has::<MeshComponent>(entity) { present.push("MeshComponent"); }
+        if scene.components.has::<TagComponent>(entity) { present.push("TagComponent"); }
+        if scene.components.has::<RigidBodyComponent>(entity) { present.push("RigidBodyComponent"); }
+        if scene.components.has::<ColliderComponent>(entity) { present.push("ColliderComponent"); }
+        if scene.components.has::<BillboardComponent>(entity) { present.push("BillboardComponent"); }
 
         // Render each present component
-        for (type_name, _data) in &comps {
+        for type_name in &present {
             let type_name = *type_name;
 
             ui.push_id(type_name, |ui| {

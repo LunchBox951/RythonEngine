@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use pyo3::prelude::*;
 use rython_ecs::component::TransformComponent;
-use rython_ecs::EntityId;
+use rython_ecs::{EntityId, Scene};
 
 use super::scene_store;
 
@@ -71,6 +73,8 @@ impl Vec3Py {
 pub struct TransformPy {
     /// Entity this transform is bound to (None = standalone value).
     pub entity_id: Option<u64>,
+    /// Cached scene reference — avoids the global Mutex on every write_back.
+    pub scene: Option<Arc<Scene>>,
     pub x: f32,
     pub y: f32,
     pub z: f32,
@@ -83,9 +87,10 @@ pub struct TransformPy {
 }
 
 impl TransformPy {
-    pub fn from_component(comp: &TransformComponent, entity_id: EntityId) -> Self {
+    pub fn from_component(comp: &TransformComponent, entity_id: EntityId, scene: Arc<Scene>) -> Self {
         Self {
             entity_id: Some(entity_id.0),
+            scene: Some(scene),
             x: comp.x,
             y: comp.y,
             z: comp.z,
@@ -100,24 +105,29 @@ impl TransformPy {
 
     fn write_back(&self) {
         let Some(eid) = self.entity_id else { return };
-        let scene = { let guard = scene_store().lock(); guard.as_ref().cloned() };
-        if let Some(scene) = scene {
-            let entity = EntityId(eid);
-            let (x, y, z, rx, ry, rz, sx, sy, sz) =
-                (self.x, self.y, self.z, self.rot_x, self.rot_y, self.rot_z,
-                 self.scale_x, self.scale_y, self.scale_z);
-            scene.components.get_mut(entity, |t: &mut TransformComponent| {
-                t.x = x;
-                t.y = y;
-                t.z = z;
-                t.rot_x = rx;
-                t.rot_y = ry;
-                t.rot_z = rz;
-                t.scale_x = sx;
-                t.scale_y = sy;
-                t.scale_z = sz;
-            });
-        }
+        // Use cached scene if available, otherwise fall back to global store.
+        let scene = if let Some(ref s) = self.scene {
+            Arc::clone(s)
+        } else if let Some(s) = scene_store().lock().as_ref().cloned() {
+            s
+        } else {
+            return;
+        };
+        let entity = EntityId(eid);
+        let (x, y, z, rx, ry, rz, sx, sy, sz) =
+            (self.x, self.y, self.z, self.rot_x, self.rot_y, self.rot_z,
+             self.scale_x, self.scale_y, self.scale_z);
+        scene.components.get_mut(entity, |t: &mut TransformComponent| {
+            t.x = x;
+            t.y = y;
+            t.z = z;
+            t.rot_x = rx;
+            t.rot_y = ry;
+            t.rot_z = rz;
+            t.scale_x = sx;
+            t.scale_y = sy;
+            t.scale_z = sz;
+        });
     }
 }
 
@@ -139,6 +149,7 @@ impl TransformPy {
     ) -> Self {
         Self {
             entity_id: None,
+            scene: None,
             x, y, z,
             rot_x, rot_y, rot_z,
             scale_x: scale_x.unwrap_or(scale),

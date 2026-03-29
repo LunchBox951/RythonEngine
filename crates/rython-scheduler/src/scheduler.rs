@@ -71,6 +71,19 @@ pub struct TaskScheduler {
     // Frame pacer
     pacer: FramePacer,
 
+    // Pre-allocated scratch buffer for group callbacks ready to fire
+    ready_group_callbacks: Vec<(
+        GroupId,
+        Box<
+            dyn FnOnce(
+                    Vec<Result<Box<dyn Any + Send + 'static>, EngineError>>,
+                ) -> Result<(), EngineError>
+                + Send
+                + 'static,
+        >,
+        Vec<Result<Box<dyn Any + Send + 'static>, EngineError>>,
+    )>,
+
     // Rayon thread pool
     pool: rayon::ThreadPool,
 }
@@ -95,6 +108,7 @@ impl TaskScheduler {
             bg_tx,
             bg_rx,
             groups: HashMap::new(),
+            ready_group_callbacks: Vec::new(),
             pacer: FramePacer::new(config.target_fps, config.spin_threshold_us),
             pool,
         }
@@ -328,33 +342,18 @@ impl TaskScheduler {
         }
 
         // 2. Sequential phase
-        // Collect one-shots + recurring, sort by priority
-        let mut seq_tasks: Vec<(Priority, OwnerId, Box<dyn FnOnce() -> Result<(), EngineError> + Send>)> = Vec::new();
+        // Sort one-shots in-place by priority and drain, avoiding an intermediate Vec
+        self.seq_queue.sort_by_key(|t| t.priority);
 
-        let one_shots = std::mem::take(&mut self.seq_queue);
-        for t in one_shots {
-            seq_tasks.push((t.priority, t.owner, t.f));
-        }
-
-        // Collect recurring tasks (we can't take them, so run them separately after)
-        // We run one-shots first at their priority, recurring interleaved
-        seq_tasks.sort_by_key(|(p, _, _)| *p);
-
-        for (_, _, f) in seq_tasks {
-            run_sequential_task(f);
+        for t in std::mem::take(&mut self.seq_queue) {
+            run_sequential_task(t.f);
         }
 
         // Run recurring sequential tasks (sorted by priority)
         self.recurring_seq.sort_by_key(|t| t.priority);
-        let mut keep = Vec::new();
-        for mut t in std::mem::take(&mut self.recurring_seq) {
-            let should_continue = std::panic::catch_unwind(AssertUnwindSafe(|| (t.f)()))
-                .unwrap_or(false);
-            if should_continue {
-                keep.push(t);
-            }
-        }
-        self.recurring_seq = keep;
+        self.recurring_seq.retain_mut(|t| {
+            std::panic::catch_unwind(AssertUnwindSafe(|| (t.f)())).unwrap_or(false)
+        });
 
         // 3. Parallel phase
         let par_tasks = std::mem::take(&mut self.par_queue);
@@ -372,28 +371,19 @@ impl TaskScheduler {
         }
 
         // Run recurring parallel tasks
-        let rpar_keep = self.pool.install(|| {
-            let mut keep = Vec::new();
-            for mut t in std::mem::take(&mut self.recurring_par) {
-                let should_continue = std::panic::catch_unwind(AssertUnwindSafe(|| (t.f)()))
-                    .unwrap_or(false);
-                if should_continue {
-                    keep.push(t);
-                }
-            }
-            keep
+        self.pool.install(|| {
+            self.recurring_par.retain_mut(|t| {
+                std::panic::catch_unwind(AssertUnwindSafe(|| (t.f)())).unwrap_or(false)
+            });
         });
-        self.recurring_par = rpar_keep;
 
         // 4. Background phase: check completions, fire callbacks
-        let mut ready_group_callbacks: Vec<(GroupId, Box<dyn FnOnce(Vec<Result<Box<dyn Any + Send + 'static>, EngineError>>) -> Result<(), EngineError> + Send>, Vec<Result<Box<dyn Any + Send + 'static>, EngineError>>)> = Vec::new();
-
         while let Ok(complete) = self.bg_rx.try_recv() {
             if let Some(group_id) = complete.group_id {
                 if let Some(state) = self.groups.get(&group_id) {
                     if state.member_complete(complete.result) {
                         if let Some((cb, results)) = state.take_callback_and_results() {
-                            ready_group_callbacks.push((group_id, cb, results));
+                            self.ready_group_callbacks.push((group_id, cb, results));
                         }
                     }
                 }
@@ -404,7 +394,7 @@ impl TaskScheduler {
         }
 
         // Fire group callbacks and remove finished groups
-        for (group_id, cb, results) in ready_group_callbacks {
+        for (group_id, cb, results) in self.ready_group_callbacks.drain(..) {
             let _ = cb(results);
             self.groups.remove(&group_id);
         }

@@ -3879,7 +3879,7 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
 name = "rython-audio"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "kira",
  "rython-core",
@@ -3890,7 +3890,7 @@ dependencies = [
 
 [[package]]
 name = "rython-cli"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "env_logger",
@@ -3917,7 +3917,7 @@ dependencies = [
 
 [[package]]
 name = "rython-core"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "downcast-rs",
  "glam 0.29.3",
@@ -3928,7 +3928,7 @@ dependencies = [
 
 [[package]]
 name = "rython-ecs"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "downcast-rs",
  "glam 0.29.3",
@@ -3940,7 +3940,7 @@ dependencies = [
 
 [[package]]
 name = "rython-editor"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "eframe",
@@ -3966,7 +3966,7 @@ dependencies = [
 
 [[package]]
 name = "rython-engine"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "log",
  "parking_lot",
@@ -3989,7 +3989,7 @@ dependencies = [
 
 [[package]]
 name = "rython-input"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "gilrs",
  "parking_lot",
@@ -4001,7 +4001,7 @@ dependencies = [
 
 [[package]]
 name = "rython-modules"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "downcast-rs",
  "parking_lot",
@@ -4011,7 +4011,7 @@ dependencies = [
 
 [[package]]
 name = "rython-physics"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "crossbeam-channel",
  "rapier3d",
@@ -4026,7 +4026,7 @@ dependencies = [
 
 [[package]]
 name = "rython-renderer"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "env_logger",
@@ -4044,7 +4044,7 @@ dependencies = [
 
 [[package]]
 name = "rython-resources"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "crossbeam-channel",
@@ -4061,7 +4061,7 @@ dependencies = [
 
 [[package]]
 name = "rython-scheduler"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "crossbeam-channel",
  "parking_lot",
@@ -4071,7 +4071,7 @@ dependencies = [
 
 [[package]]
 name = "rython-scripting"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "crossbeam-channel",
  "env_logger",
@@ -4099,7 +4099,7 @@ dependencies = [
 
 [[package]]
 name = "rython-ui"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "rython-core",
  "rython-input",
@@ -4111,7 +4111,7 @@ dependencies = [
 
 [[package]]
 name = "rython-window"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "rython-core",
  "rython-modules",

@@ -574,11 +574,7 @@ fn next_pow2(n: u32) -> u32 {
     if n == 0 {
         return 1;
     }
-    let mut p = 1u32;
-    while p < n {
-        p <<= 1;
-    }
-    p
+    n.next_power_of_two()
 }
 
 // ─── Internal cache ───────────────────────────────────────────────────────────

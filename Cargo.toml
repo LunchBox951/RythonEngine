@@ -19,7 +19,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.5"
+version = "0.2.0"
 edition = "2021"
 
 [workspace.dependencies]
@@ -70,3 +70,12 @@ egui-wgpu = "0.31"
 egui-winit = "0.31"
 egui_dock = "0.18"
 rfd = "0.15"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.dev]
+opt-level = 1

@@ -293,7 +293,7 @@ impl SceneBridge {
         scene.drain_commands();
 
         let eid = handle.get().ok_or_else(|| PyErr::new::<PyRuntimeError, _>("Spawn failed"))?;
-        Ok(EntityPy { id: eid.0 })
+        Ok(EntityPy { id: eid.0, scene: Some(scene) })
     }
 
     /// Emit a custom named event with keyword payload.

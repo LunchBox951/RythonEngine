@@ -234,8 +234,11 @@ impl Component for LightComponent {
 
 // ── Component Storage ────────────────────────────────────────────────────────
 
-/// Per-type storage: entity ID -> boxed component, protected by RwLock.
-pub type TypeStore = RwLock<HashMap<EntityId, Box<dyn Component>>>;
+/// Per-type storage: entity ID -> boxed component (plain HashMap, no inner lock).
+/// All mutation goes through `drain_commands()` at a deterministic point and
+/// the engine is effectively single-threaded for component access, so the
+/// outer RwLock on `stores` is sufficient.
+pub type TypeStore = HashMap<EntityId, Box<dyn Component>>;
 
 /// Global component storage: one TypeStore per component TypeId.
 pub struct ComponentStorage {
@@ -253,29 +256,15 @@ impl ComponentStorage {
 
     pub fn insert<C: Component>(&self, entity: EntityId, component: C) {
         let tid = TypeId::of::<C>();
-        // Get or create store for this type
-        {
-            let read = self.stores.read();
-            if let Some(store) = read.get(&tid) {
-                store.write().insert(entity, Box::new(component));
-                return;
-            }
-        }
         let mut write = self.stores.write();
-        let store = write.entry(tid).or_insert_with(|| RwLock::new(HashMap::new()));
-        store.write().insert(entity, Box::new(component));
+        write.entry(tid).or_insert_with(HashMap::new)
+            .insert(entity, Box::new(component));
     }
 
     pub fn insert_boxed(&self, entity: EntityId, tid: TypeId, component: Box<dyn Component>) {
-        let read = self.stores.read();
-        if let Some(store) = read.get(&tid) {
-            store.write().insert(entity, component);
-            return;
-        }
-        drop(read);
         let mut write = self.stores.write();
-        let store = write.entry(tid).or_insert_with(|| RwLock::new(HashMap::new()));
-        store.write().insert(entity, component);
+        write.entry(tid).or_insert_with(HashMap::new)
+            .insert(entity, component);
     }
 
     pub fn get<C: Component>(&self, entity: EntityId) -> Option<C>
@@ -285,8 +274,7 @@ impl ComponentStorage {
         let tid = TypeId::of::<C>();
         let stores = self.stores.read();
         let store = stores.get(&tid)?;
-        let map = store.read();
-        let comp = map.get(&entity)?;
+        let comp = store.get(&entity)?;
         comp.downcast_ref::<C>().map(|c| c.clone())
     }
 
@@ -297,8 +285,7 @@ impl ComponentStorage {
         let tid = TypeId::of::<C>();
         let stores = self.stores.read();
         let store = stores.get(&tid)?;
-        let map = store.read();
-        let comp = map.get(&entity)?;
+        let comp = store.get(&entity)?;
         comp.downcast_ref::<C>().map(f)
     }
 
@@ -307,10 +294,9 @@ impl ComponentStorage {
         F: FnOnce(&mut C),
     {
         let tid = TypeId::of::<C>();
-        let stores = self.stores.read();
-        if let Some(store) = stores.get(&tid) {
-            let mut map = store.write();
-            if let Some(comp) = map.get_mut(&entity) {
+        let mut stores = self.stores.write();
+        if let Some(store) = stores.get_mut(&tid) {
+            if let Some(comp) = store.get_mut(&entity) {
                 if let Some(c) = comp.downcast_mut::<C>() {
                     f(c);
                     return true;
@@ -322,17 +308,17 @@ impl ComponentStorage {
 
     pub fn remove<C: Component>(&self, entity: EntityId) -> bool {
         let tid = TypeId::of::<C>();
-        let stores = self.stores.read();
-        if let Some(store) = stores.get(&tid) {
-            return store.write().remove(&entity).is_some();
+        let mut stores = self.stores.write();
+        if let Some(store) = stores.get_mut(&tid) {
+            return store.remove(&entity).is_some();
         }
         false
     }
 
     pub fn remove_by_tid(&self, entity: EntityId, tid: TypeId) -> bool {
-        let stores = self.stores.read();
-        if let Some(store) = stores.get(&tid) {
-            return store.write().remove(&entity).is_some();
+        let mut stores = self.stores.write();
+        if let Some(store) = stores.get_mut(&tid) {
+            return store.remove(&entity).is_some();
         }
         false
     }
@@ -341,16 +327,16 @@ impl ComponentStorage {
         let tid = TypeId::of::<C>();
         let stores = self.stores.read();
         if let Some(store) = stores.get(&tid) {
-            return store.read().contains_key(&entity);
+            return store.contains_key(&entity);
         }
         false
     }
 
     /// Remove all components for the given entity across all type stores.
     pub fn remove_all_for(&self, entity: EntityId) {
-        let stores = self.stores.read();
-        for store in stores.values() {
-            store.write().remove(&entity);
+        let mut stores = self.stores.write();
+        for store in stores.values_mut() {
+            store.remove(&entity);
         }
     }
 
@@ -362,8 +348,7 @@ impl ComponentStorage {
         let tid = TypeId::of::<C>();
         let stores = self.stores.read();
         if let Some(store) = stores.get(&tid) {
-            let map = store.read();
-            for (eid, comp) in map.iter() {
+            for (eid, comp) in store.iter() {
                 if let Some(c) = comp.downcast_ref::<C>() {
                     f(*eid, c);
                 }
@@ -376,7 +361,7 @@ impl ComponentStorage {
         let tid = TypeId::of::<C>();
         let stores = self.stores.read();
         if let Some(store) = stores.get(&tid) {
-            return store.read().keys().copied().collect();
+            return store.keys().copied().collect();
         }
         Vec::new()
     }
@@ -386,7 +371,7 @@ impl ComponentStorage {
         let tid = TypeId::of::<C>();
         let stores = self.stores.read();
         if let Some(store) = stores.get(&tid) {
-            return store.read().len();
+            return store.len();
         }
         0
     }
@@ -396,8 +381,7 @@ impl ComponentStorage {
         let stores = self.stores.read();
         let mut result = Vec::new();
         for store in stores.values() {
-            let map = store.read();
-            if let Some(comp) = map.get(&entity) {
+            if let Some(comp) = store.get(&entity) {
                 result.push((comp.component_type_name(), comp.serialize_json()));
             }
         }
@@ -405,9 +389,9 @@ impl ComponentStorage {
     }
 
     pub fn clear(&self) {
-        let stores = self.stores.read();
-        for store in stores.values() {
-            store.write().clear();
+        let mut stores = self.stores.write();
+        for store in stores.values_mut() {
+            store.clear();
         }
     }
 }

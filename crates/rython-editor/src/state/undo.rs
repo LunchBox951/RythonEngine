@@ -368,13 +368,36 @@ pub struct DetachComponent {
 
 impl DetachComponent {
     pub fn capture(entity: EntityId, type_name: &str, scene: &Scene) -> Self {
-        let comps = scene.components.snapshot_entity(entity);
-        let component_json = comps
-            .into_iter()
-            .find(|(n, _)| *n == type_name)
-            .map(|(_, v)| v)
-            .unwrap_or(Value::Null);
+        // Serialize only the targeted component instead of snapshot_entity
+        // which serializes ALL components for the entity.
+        let component_json = snapshot_single_component(entity, type_name, scene);
         Self { entity, type_name: type_name.to_string(), component_json }
+    }
+}
+
+/// Serialize a single component by type name, avoiding the cost of
+/// `snapshot_entity` which serializes every component on the entity.
+fn snapshot_single_component(entity: EntityId, type_name: &str, scene: &Scene) -> Value {
+    match type_name {
+        "TransformComponent" => scene.components.get::<TransformComponent>(entity)
+            .map(|c| serde_json::to_value(&c).unwrap())
+            .unwrap_or(Value::Null),
+        "MeshComponent" => scene.components.get::<MeshComponent>(entity)
+            .map(|c| serde_json::to_value(&c).unwrap())
+            .unwrap_or(Value::Null),
+        "TagComponent" => scene.components.get::<TagComponent>(entity)
+            .map(|c| serde_json::to_value(&c).unwrap())
+            .unwrap_or(Value::Null),
+        "RigidBodyComponent" => scene.components.get::<RigidBodyComponent>(entity)
+            .map(|c| serde_json::to_value(&c).unwrap())
+            .unwrap_or(Value::Null),
+        "ColliderComponent" => scene.components.get::<ColliderComponent>(entity)
+            .map(|c| serde_json::to_value(&c).unwrap())
+            .unwrap_or(Value::Null),
+        "BillboardComponent" => scene.components.get::<BillboardComponent>(entity)
+            .map(|c| serde_json::to_value(&c).unwrap())
+            .unwrap_or(Value::Null),
+        _ => Value::Null,
     }
 }
 

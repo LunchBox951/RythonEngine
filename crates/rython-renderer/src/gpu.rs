@@ -838,6 +838,67 @@ impl GpuContext {
     }
 }
 
+struct PoolEntry {
+    buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+}
+
+/// Growable pool of uniform buffer + bind group pairs for a single bind group layout.
+///
+/// Each frame, existing entries are reused with `queue.write_buffer`.  If the
+/// draw count exceeds the current pool size, new entries are appended.  This
+/// avoids per-frame GPU buffer and bind group allocation in the common case.
+struct UniformPool {
+    entries: Vec<PoolEntry>,
+    /// Size in bytes of each uniform buffer (fixed for the pool's lifetime).
+    uniform_size: u64,
+}
+
+impl UniformPool {
+    fn new(uniform_size: u64) -> Self {
+        Self {
+            entries: Vec::new(),
+            uniform_size,
+        }
+    }
+
+    /// Ensure the pool has at least `count` entries, creating new ones as needed.
+    fn ensure_capacity(
+        &mut self,
+        count: usize,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        label: &str,
+        extra_entries: &[wgpu::BindGroupEntry<'_>],
+    ) {
+        while self.entries.len() < count {
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: self.uniform_size,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let mut bg_entries = vec![wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }];
+            bg_entries.extend_from_slice(extra_entries);
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(label),
+                layout,
+                entries: &bg_entries,
+            });
+            self.entries.push(PoolEntry { buffer, bind_group });
+        }
+    }
+
+    /// Get the buffer and bind group at the given index (must be < len after ensure_capacity).
+    fn get(&self, index: usize) -> (&wgpu::Buffer, &wgpu::BindGroup) {
+        let e = &self.entries[index];
+        (&e.buffer, &e.bind_group)
+    }
+}
+
 /// GPU vertex and index buffers for one cached mesh.
 pub struct MeshBuffers {
     pub vertex_buf: wgpu::Buffer,
@@ -1129,6 +1190,24 @@ pub struct RendererState {
     _fallback_shadow_uniform_buf: wgpu::Buffer,
     /// Kept alive so the fallback 1×1 depth texture view is not dropped.
     _fallback_shadow_depth_tex: wgpu::Texture,
+
+    // ── Persistent uniform buffers (reused every frame) ──────────────────
+    /// Persistent camera uniform buffer (group 0 of mesh pipeline).
+    cam_uniform_buf: wgpu::Buffer,
+    /// Bind group referencing `cam_uniform_buf`.
+    cam_uniform_bg: wgpu::BindGroup,
+    /// Persistent light buffer (group 5 of mesh pipeline).
+    light_uniform_buf: wgpu::Buffer,
+    /// Bind group referencing `light_uniform_buf`.
+    light_uniform_bg: wgpu::BindGroup,
+    /// Pool of model uniform buffers + bind groups for per-draw mesh uniforms.
+    model_pool: UniformPool,
+    /// Pool of primitive uniform buffers + bind groups for per-draw rect uniforms.
+    rect_pool: UniformPool,
+    /// Pool of text uniform buffers + bind groups for per-draw text uniforms.
+    text_pool: UniformPool,
+    /// Whether the text pool bind groups have been built with the current atlas.
+    text_pool_atlas_ready: bool,
 }
 
 impl RendererState {
@@ -1419,6 +1498,42 @@ impl RendererState {
             ],
         });
 
+        // Persistent camera uniform buffer (reused every frame via queue.write_buffer).
+        let cam_uniform_buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cam_uniform_persistent"),
+            size: std::mem::size_of::<CameraUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let cam_uniform_bg = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("cam_bg_persistent"),
+            layout: &gpu.bind_group_layouts.mesh_camera,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: cam_uniform_buf.as_entire_binding(),
+            }],
+        });
+
+        // Persistent light uniform buffer.
+        let light_uniform_buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("light_uniform_persistent"),
+            size: std::mem::size_of::<LightBuffer>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let light_uniform_bg = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("light_bg_persistent"),
+            layout: &gpu.bind_group_layouts.mesh_light_buffer,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: light_uniform_buf.as_entire_binding(),
+            }],
+        });
+
+        let model_uniform_size = std::mem::size_of::<ModelUniform>() as u64;
+        let rect_uniform_size = std::mem::size_of::<PrimitiveUniform>() as u64;
+        let text_uniform_size = std::mem::size_of::<TextUniform>() as u64;
+
         Self {
             gpu,
             config,
@@ -1439,6 +1554,14 @@ impl RendererState {
             fallback_shadow_bg,
             _fallback_shadow_uniform_buf: fallback_shadow_uniform_buf,
             _fallback_shadow_depth_tex: fallback_depth_tex,
+            cam_uniform_buf,
+            cam_uniform_bg,
+            light_uniform_buf,
+            light_uniform_bg,
+            model_pool: UniformPool::new(model_uniform_size),
+            rect_pool: UniformPool::new(rect_uniform_size),
+            text_pool: UniformPool::new(text_uniform_size),
+            text_pool_atlas_ready: false,
         }
     }
 
@@ -1461,7 +1584,7 @@ impl RendererState {
         let vertex_buf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(mesh_id),
             size: vertices_bytes.len() as u64,
-            usage: wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         vertex_buf.slice(..).get_mapped_range_mut().copy_from_slice(vertices_bytes);
@@ -1471,7 +1594,7 @@ impl RendererState {
         let index_buf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(mesh_id),
             size: index_bytes.len() as u64,
-            usage: wgpu::BufferUsages::INDEX,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         index_buf.slice(..).get_mapped_range_mut().copy_from_slice(index_bytes);
@@ -1879,67 +2002,85 @@ impl RendererState {
             }
         }
 
-        // Compute light-space matrices from the primary directional light direction.
-        let [lx, ly, lz] = self.scene_settings.light_direction;
-        let light_dir = Vec3::new(lx, ly, lz);
-        let light_matrices = LightMatrices::from_directional(
-            light_dir,
-            Vec3::ZERO,
-            SHADOW_SCENE_RADIUS,
-            self.scene_settings.shadow.bias,
-        );
+        // Shadow resources — only computed when shadows are enabled.
+        struct ShadowResources {
+            model_data: Vec<([[f32; 4]; 4], wgpu::Buffer, wgpu::BindGroup)>,
+            uniform_bg: wgpu::BindGroup,
+            _uniform_buf: wgpu::Buffer,
+        }
+        let shadow_resources: Option<ShadowResources> = if shadow_enabled {
+            // Compute light-space matrices from the primary directional light direction.
+            let [lx, ly, lz] = self.scene_settings.light_direction;
+            let light_dir = Vec3::new(lx, ly, lz);
+            let light_matrices = LightMatrices::from_directional(
+                light_dir,
+                Vec3::ZERO,
+                SHADOW_SCENE_RADIUS,
+                self.scene_settings.shadow.bias,
+            );
 
-        // Build per-draw shadow model uniforms (model matrix only, 64 bytes).
-        // These are used in both the shadow pass (group 1) and need to outlive the encoder.
-        let shadow_model_data: Vec<([[f32; 4]; 4], wgpu::Buffer, wgpu::BindGroup)> =
-            commands.iter().map(|cmd| {
-                let mat = cmd.transform.to_cols_array_2d();
-                let bytes: &[u8] = bytemuck::bytes_of(&mat);
-                let buf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
-                    label:              Some("shadow_model_buf"),
-                    size:               bytes.len() as u64,
-                    usage:              wgpu::BufferUsages::UNIFORM,
-                    mapped_at_creation: true,
-                });
-                buf.slice(..).get_mapped_range_mut().copy_from_slice(bytes);
-                buf.unmap();
-                let bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label:  Some("shadow_model_bg"),
-                    layout: &self.gpu.bind_group_layouts.mesh_model,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding:  0,
-                        resource: buf.as_entire_binding(),
-                    }],
-                });
-                (mat, buf, bg)
-            }).collect();
+            let shadow_model_data: Vec<([[f32; 4]; 4], wgpu::Buffer, wgpu::BindGroup)> =
+                commands.iter().map(|cmd| {
+                    let mat = cmd.transform.to_cols_array_2d();
+                    let bytes: &[u8] = bytemuck::bytes_of(&mat);
+                    let buf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                        label:              Some("shadow_model_buf"),
+                        size:               bytes.len() as u64,
+                        usage:              wgpu::BufferUsages::UNIFORM,
+                        mapped_at_creation: true,
+                    });
+                    buf.slice(..).get_mapped_range_mut().copy_from_slice(bytes);
+                    buf.unmap();
+                    let bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label:  Some("shadow_model_bg"),
+                        layout: &self.gpu.bind_group_layouts.mesh_model,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding:  0,
+                            resource: buf.as_entire_binding(),
+                        }],
+                    });
+                    (mat, buf, bg)
+                }).collect();
 
-        // Shadow uniform (group 0 of shadow pipeline): light view-proj.
-        let shadow_uniform_data = light_matrices.view_proj.to_cols_array_2d();
-        let shadow_uniform_bytes: &[u8] = bytemuck::bytes_of(&shadow_uniform_data);
-        let shadow_uniform_buf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label:              Some("shadow_uniform_buf"),
-            size:               shadow_uniform_bytes.len() as u64,
-            usage:              wgpu::BufferUsages::UNIFORM,
-            mapped_at_creation: true,
-        });
-        shadow_uniform_buf.slice(..).get_mapped_range_mut().copy_from_slice(shadow_uniform_bytes);
-        shadow_uniform_buf.unmap();
-        let shadow_uniform_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label:  Some("shadow_uniform_bg"),
-            layout: &self.gpu.bind_group_layouts.shadow_uniform,
-            entries: &[wgpu::BindGroupEntry {
-                binding:  0,
-                resource: shadow_uniform_buf.as_entire_binding(),
-            }],
-        });
+            let shadow_uniform_data = light_matrices.view_proj.to_cols_array_2d();
+            let shadow_uniform_bytes: &[u8] = bytemuck::bytes_of(&shadow_uniform_data);
+            let shadow_uniform_buf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label:              Some("shadow_uniform_buf"),
+                size:               shadow_uniform_bytes.len() as u64,
+                usage:              wgpu::BufferUsages::UNIFORM,
+                mapped_at_creation: true,
+            });
+            shadow_uniform_buf.slice(..).get_mapped_range_mut().copy_from_slice(shadow_uniform_bytes);
+            shadow_uniform_buf.unmap();
+            let shadow_uniform_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label:  Some("shadow_uniform_bg"),
+                layout: &self.gpu.bind_group_layouts.shadow_uniform,
+                entries: &[wgpu::BindGroupEntry {
+                    binding:  0,
+                    resource: shadow_uniform_buf.as_entire_binding(),
+                }],
+            });
+
+            Some(ShadowResources {
+                model_data: shadow_model_data,
+                uniform_bg: shadow_uniform_bg,
+                _uniform_buf: shadow_uniform_buf,
+            })
+        } else {
+            None
+        };
 
         // Mesh shadow bind group (group 7): LightShadowUniform + shadow depth + comparison sampler.
         // Built only when shadows are enabled; otherwise use fallback_shadow_bg.
         let active_mesh_shadow_bg_opt: Option<(wgpu::Buffer, wgpu::BindGroup)> = if shadow_enabled {
             if let Some(ref sm) = self.shadow_map {
+                let [lx, ly, lz] = self.scene_settings.light_direction;
+                let light_dir = Vec3::new(lx, ly, lz);
+                let lm = LightMatrices::from_directional(
+                    light_dir, Vec3::ZERO, SHADOW_SCENE_RADIUS, self.scene_settings.shadow.bias,
+                );
                 let lsu = LightShadowUniform {
-                    light_view_proj: light_matrices.view_proj.to_cols_array_2d(),
+                    light_view_proj: lm.view_proj.to_cols_array_2d(),
                     bias:            self.scene_settings.shadow.bias,
                     pcf_samples:     self.scene_settings.shadow.pcf_samples,
                     shadow_enabled:  1,
@@ -1992,27 +2133,11 @@ impl RendererState {
             _pad: 0.0,
         };
         let cam_bytes: &[u8] = bytemuck::bytes_of(&cam_uniform);
-        let cam_buf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cam_uniform"),
-            size: cam_bytes.len() as u64,
-            usage: wgpu::BufferUsages::UNIFORM,
-            mapped_at_creation: true,
-        });
-        cam_buf.slice(..).get_mapped_range_mut().copy_from_slice(cam_bytes);
-        cam_buf.unmap();
-
-        let cam_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("cam_bg"),
-            layout: &self.gpu.bind_group_layouts.mesh_camera,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: cam_buf.as_entire_binding(),
-            }],
-        });
+        self.gpu.queue.write_buffer(&self.cam_uniform_buf, 0, cam_bytes);
 
         // Light buffer — shared across all mesh draws in this batch.
         // Use provided LightBuffer, or build a fallback from scene_settings.
-        let light_bg = {
+        {
             let lb: LightBuffer = if let Some(provided) = light_buffer {
                 *provided
             } else {
@@ -2037,60 +2162,76 @@ impl RendererState {
                 fallback.light_count = 1;
                 fallback
             };
-            let lb_bytes: &[u8] = bytemuck::bytes_of(&lb);
-            let lb_buf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("light_buffer"),
-                size: lb_bytes.len() as u64,
-                usage: wgpu::BufferUsages::UNIFORM,
-                mapped_at_creation: true,
-            });
-            lb_buf.slice(..).get_mapped_range_mut().copy_from_slice(lb_bytes);
-            lb_buf.unmap();
-            self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("light_buf_bg"),
-                layout: &self.gpu.bind_group_layouts.mesh_light_buffer,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: lb_buf.as_entire_binding(),
-                }],
-            })
-        };
+            self.gpu.queue.write_buffer(&self.light_uniform_buf, 0, bytemuck::bytes_of(&lb));
+        }
+
+        // Ensure model pool has enough entries for all draw commands.
+        self.model_pool.ensure_capacity(
+            commands.len(),
+            &self.gpu.device,
+            &self.gpu.bind_group_layouts.mesh_model,
+            "model_pool",
+            &[],
+        );
+        // Write each command's model uniform into its pooled buffer.
+        for (i, cmd) in commands.iter().enumerate() {
+            let has_tex = if cmd.texture_id.is_empty() { 0u32 } else { 1u32 };
+            let has_normal_map = if cmd.normal_map_id.is_some() { 1u32 } else { 0u32 };
+            let has_specular_map = if cmd.specular_map_id.is_some() { 1u32 } else { 0u32 };
+            let has_emissive_map = if cmd.emissive_map_id.is_some() { 1u32 } else { 0u32 };
+            let [sr, sg, sb] = cmd.specular_color;
+            let [er, eg, eb, _] = cmd.emissive_color;
+            let model_uniform = ModelUniform {
+                model: cmd.transform.to_cols_array_2d(),
+                color: [1.0, 1.0, 1.0, 1.0],
+                specular_color: [sr, sg, sb, 0.0],
+                emissive_color: [er, eg, eb, cmd.emissive_intensity],
+                has_texture: has_tex,
+                has_normal_map,
+                has_specular_map,
+                has_emissive_map,
+                metallic: cmd.metallic.clamp(0.0, 1.0),
+                roughness: cmd.roughness.clamp(0.0, 1.0),
+                shininess: cmd.shininess,
+                _pad0: 0,
+            };
+            let (buf, _) = self.model_pool.get(i);
+            self.gpu.queue.write_buffer(buf, 0, bytemuck::bytes_of(&model_uniform));
+        }
 
         let mut encoder = self.gpu.device.create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("mesh encoder") },
         );
 
         // ── §3 Shadow pass — depth-only, executes before main pass ───────────────
-        if shadow_enabled {
-            if let Some(ref shadow_map) = self.shadow_map {
-                let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("shadow pass"),
-                    color_attachments: &[],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &shadow_map.view,
-                        depth_ops: Some(wgpu::Operations {
-                            load:  wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
+        if let (Some(ref sr), Some(ref shadow_map)) = (&shadow_resources, &self.shadow_map) {
+            let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("shadow pass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &shadow_map.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load:  wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
                     }),
-                    timestamp_writes:  None,
-                    occlusion_query_set: None,
-                });
+                    stencil_ops: None,
+                }),
+                timestamp_writes:  None,
+                occlusion_query_set: None,
+            });
 
-                shadow_pass.set_pipeline(&self.gpu.pipelines.shadow);
-                shadow_pass.set_bind_group(0, &shadow_uniform_bg, &[]);
+            shadow_pass.set_pipeline(&self.gpu.pipelines.shadow);
+            shadow_pass.set_bind_group(0, &sr.uniform_bg, &[]);
 
-                for (cmd_idx, cmd) in commands.iter().enumerate() {
-                    let Some(mesh) = self.mesh_cache.get(&cmd.mesh_id) else {
-                        continue;
-                    };
-                    let (_, _, ref shadow_model_bg) = shadow_model_data[cmd_idx];
-                    shadow_pass.set_bind_group(1, shadow_model_bg, &[]);
-                    shadow_pass.set_vertex_buffer(0, mesh.vertex_buf.slice(..));
-                    shadow_pass.set_index_buffer(mesh.index_buf.slice(..), wgpu::IndexFormat::Uint32);
-                    shadow_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                }
+            for (cmd_idx, cmd) in commands.iter().enumerate() {
+                let Some(mesh) = self.mesh_cache.get(&cmd.mesh_id) else {
+                    continue;
+                };
+                let (_, _, ref shadow_model_bg) = sr.model_data[cmd_idx];
+                shadow_pass.set_bind_group(1, shadow_model_bg, &[]);
+                shadow_pass.set_vertex_buffer(0, mesh.vertex_buf.slice(..));
+                shadow_pass.set_index_buffer(mesh.index_buf.slice(..), wgpu::IndexFormat::Uint32);
+                shadow_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
             }
         }
 
@@ -2118,54 +2259,17 @@ impl RendererState {
             });
 
             pass.set_pipeline(&self.gpu.pipelines.mesh);
-            pass.set_bind_group(0, &cam_bg, &[]);
-            pass.set_bind_group(5, &light_bg, &[]);
+            pass.set_bind_group(0, &self.cam_uniform_bg, &[]);
+            pass.set_bind_group(5, &self.light_uniform_bg, &[]);
             pass.set_bind_group(7, mesh_shadow_bg, &[]);  // §3 shadow
 
-            for cmd in commands {
+            for (cmd_i, cmd) in commands.iter().enumerate() {
                 let Some(mesh) = self.mesh_cache.get(&cmd.mesh_id) else {
                     log::warn!("render_meshes: mesh '{}' not in cache — skipped", cmd.mesh_id);
                     continue;
                 };
 
-                let has_tex = if cmd.texture_id.is_empty() { 0u32 } else { 1u32 };
-                let has_normal_map = if cmd.normal_map_id.is_some() { 1u32 } else { 0u32 };
-                let has_specular_map = if cmd.specular_map_id.is_some() { 1u32 } else { 0u32 };
-                let has_emissive_map = if cmd.emissive_map_id.is_some() { 1u32 } else { 0u32 };
-                let [sr, sg, sb] = cmd.specular_color;
-                let [er, eg, eb, _] = cmd.emissive_color;
-                let model_uniform = ModelUniform {
-                    model: cmd.transform.to_cols_array_2d(),
-                    color: [1.0, 1.0, 1.0, 1.0],
-                    specular_color: [sr, sg, sb, 0.0],
-                    emissive_color: [er, eg, eb, cmd.emissive_intensity],
-                    has_texture: has_tex,
-                    has_normal_map,
-                    has_specular_map,
-                    has_emissive_map,
-                    metallic: cmd.metallic.clamp(0.0, 1.0),
-                    roughness: cmd.roughness.clamp(0.0, 1.0),
-                    shininess: cmd.shininess,
-                    _pad0: 0,
-                };
-                let model_bytes: &[u8] = bytemuck::bytes_of(&model_uniform);
-                let model_buf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("model_uniform"),
-                    size: model_bytes.len() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM,
-                    mapped_at_creation: true,
-                });
-                model_buf.slice(..).get_mapped_range_mut().copy_from_slice(model_bytes);
-                model_buf.unmap();
-
-                let model_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("model_bg"),
-                    layout: &self.gpu.bind_group_layouts.mesh_model,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: model_buf.as_entire_binding(),
-                    }],
-                });
+                let (_, model_bg) = self.model_pool.get(cmd_i);
 
                 let tex_bg = if cmd.texture_id.is_empty() {
                     &self.fallback_texture_bg
@@ -2202,7 +2306,7 @@ impl RendererState {
                     None => &self.fallback_emissive_map_bg,
                 };
 
-                pass.set_bind_group(1, &model_bg, &[]);
+                pass.set_bind_group(1, model_bg, &[]);
                 pass.set_bind_group(2, tex_bg, &[]);
                 pass.set_bind_group(3, normal_map_bg, &[]);
                 pass.set_bind_group(4, specular_map_bg, &[]);
@@ -2290,6 +2394,34 @@ impl RendererState {
         let atlas_view = &self.glyph_atlas.as_ref().unwrap().view;
         let atlas_sampler = &self.glyph_atlas.as_ref().unwrap().sampler;
 
+        // Rebuild text pool bind groups when the atlas is first created/recreated.
+        if !self.text_pool_atlas_ready {
+            self.text_pool.entries.clear();
+            self.text_pool_atlas_ready = true;
+        }
+
+        // Ensure text pool has enough entries and write uniform data.
+        self.text_pool.ensure_capacity(
+            draws.len(),
+            &self.gpu.device,
+            &self.gpu.bind_group_layouts.text,
+            "text_pool",
+            &[
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(atlas_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(atlas_sampler),
+                },
+            ],
+        );
+        for (i, uniform) in draws.iter().enumerate() {
+            let (buf, _) = self.text_pool.get(i);
+            self.gpu.queue.write_buffer(buf, 0, bytemuck::bytes_of(uniform));
+        }
+
         let mut encoder = self.gpu.device.create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("text encoder") },
         );
@@ -2312,37 +2444,9 @@ impl RendererState {
 
             pass.set_pipeline(&self.gpu.pipelines.text);
 
-            for uniform in &draws {
-                let bytes: &[u8] = bytemuck::bytes_of(uniform);
-                let ubuf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("text_uniform"),
-                    size: bytes.len() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM,
-                    mapped_at_creation: true,
-                });
-                ubuf.slice(..).get_mapped_range_mut().copy_from_slice(bytes);
-                ubuf.unmap();
-
-                let bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("text_bg"),
-                    layout: &self.gpu.bind_group_layouts.text,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: ubuf.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(atlas_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::Sampler(atlas_sampler),
-                        },
-                    ],
-                });
-
-                pass.set_bind_group(0, &bg, &[]);
+            for i in 0..draws.len() {
+                let (_, bg) = self.text_pool.get(i);
+                pass.set_bind_group(0, bg, &[]);
                 pass.draw(0..6, 0..1);
             }
         }
@@ -2359,7 +2463,7 @@ impl RendererState {
     /// texture is available, it is used as the render attachment and `color_view`
     /// becomes the resolve target.
     pub fn render_rects(
-        &self,
+        &mut self,
         rects: &[DrawRect],
         color_view: &wgpu::TextureView,
         _width: u32,
@@ -2417,6 +2521,19 @@ impl RendererState {
             }
         }
 
+        // Ensure rect pool has enough entries and write uniform data.
+        self.rect_pool.ensure_capacity(
+            draws.len(),
+            &self.gpu.device,
+            &self.gpu.bind_group_layouts.primitive,
+            "rect_pool",
+            &[],
+        );
+        for (i, uniform) in draws.iter().enumerate() {
+            let (buf, _) = self.rect_pool.get(i);
+            self.gpu.queue.write_buffer(buf, 0, bytemuck::bytes_of(uniform));
+        }
+
         let mut encoder = self.gpu.device.create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("rect encoder") },
         );
@@ -2439,27 +2556,9 @@ impl RendererState {
 
             pass.set_pipeline(&self.gpu.pipelines.primitive);
 
-            for uniform in &draws {
-                let bytes: &[u8] = bytemuck::bytes_of(uniform);
-                let ubuf = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("rect_uniform"),
-                    size: bytes.len() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM,
-                    mapped_at_creation: true,
-                });
-                ubuf.slice(..).get_mapped_range_mut().copy_from_slice(bytes);
-                ubuf.unmap();
-
-                let bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("rect_bg"),
-                    layout: &self.gpu.bind_group_layouts.primitive,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: ubuf.as_entire_binding(),
-                    }],
-                });
-
-                pass.set_bind_group(0, &bg, &[]);
+            for i in 0..draws.len() {
+                let (_, bg) = self.rect_pool.get(i);
+                pass.set_bind_group(0, bg, &[]);
                 pass.draw(0..6, 0..1);
             }
         }

@@ -7,7 +7,7 @@ use crate::hierarchy::{Hierarchy, MAX_HIERARCHY_DEPTH};
 use crate::component::ComponentStorage;
 
 /// World-space transform cache, keyed by entity ID.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct WorldTransform {
     pub position: Vec3,
     pub rotation: Quat,
@@ -72,21 +72,25 @@ impl TransformSystem {
 
         for ancestor in chain.iter().rev() {
             if let Some(cached) = cache.get(ancestor) {
-                parent_world = cached.clone();
+                parent_world = *cached;
                 continue;
             }
-            let local = components
-                .get::<TransformComponent>(*ancestor)
-                .unwrap_or_default();
 
-            let local_pos = Vec3::new(local.x, local.y, local.z);
-            let local_rot = Quat::from_euler(
-                glam::EulerRot::XYZ,
-                local.rot_x,
-                local.rot_y,
-                local.rot_z,
-            );
-            let local_scale = Vec3::new(local.scale_x, local.scale_y, local.scale_z);
+            // Use get_ref to avoid cloning the entire TransformComponent
+            let (local_pos, local_rot, local_scale) = components
+                .get_ref::<TransformComponent, _, _>(*ancestor, |local| {
+                    (
+                        Vec3::new(local.x, local.y, local.z),
+                        Quat::from_euler(
+                            glam::EulerRot::XYZ,
+                            local.rot_x,
+                            local.rot_y,
+                            local.rot_z,
+                        ),
+                        Vec3::new(local.scale_x, local.scale_y, local.scale_z),
+                    )
+                })
+                .unwrap_or((Vec3::ZERO, Quat::IDENTITY, Vec3::ONE));
 
             // Compose with parent world transform
             let world_scale = parent_world.scale * local_scale;
@@ -106,7 +110,7 @@ impl TransformSystem {
                 scale: world_scale,
                 matrix,
             };
-            cache.insert(*ancestor, wt.clone());
+            cache.insert(*ancestor, wt);
             parent_world = wt;
         }
     }

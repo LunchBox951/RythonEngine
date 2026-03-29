@@ -63,12 +63,20 @@ impl EventBus {
     pub fn emit(&self, event_name: &str, payload: &Value) {
         // Snapshot handler Arcs while holding read lock, then drop lock before calling.
         // This prevents deadlock when a handler calls subscribe() (which needs a write lock).
-        let handlers: Vec<NamedHandler> = {
-            let named = self.named.read();
-            named.get(event_name)
-                .map(|subs| subs.iter().map(|s| Arc::clone(&s.handler)).collect())
-                .unwrap_or_default()
-        };
+        let named = self.named.read();
+        let Some(subs) = named.get(event_name) else { return };
+        if subs.is_empty() {
+            return;
+        }
+        // Fast path: single handler — avoid Vec allocation
+        if subs.len() == 1 {
+            let h = Arc::clone(&subs[0].handler);
+            drop(named);
+            h(event_name, payload);
+            return;
+        }
+        let handlers: Vec<NamedHandler> = subs.iter().map(|s| Arc::clone(&s.handler)).collect();
+        drop(named);
         for h in handlers {
             h(event_name, payload);
         }
@@ -88,10 +96,20 @@ impl EventBus {
     }
 
     pub fn emit_entity_spawned(&self, entity_id: u64) {
-        let handlers: Vec<Arc<dyn Fn(u64) + Send + Sync + 'static>> = {
-            let subs = self.entity_spawned.read();
-            subs.iter().map(|(_, h)| Arc::clone(h)).collect()
-        };
+        let subs = self.entity_spawned.read();
+        if subs.is_empty() {
+            return;
+        }
+        // Fast path: single handler — avoid Vec allocation
+        if subs.len() == 1 {
+            let h = Arc::clone(&subs[0].1);
+            drop(subs);
+            h(entity_id);
+            return;
+        }
+        let handlers: Vec<Arc<dyn Fn(u64) + Send + Sync + 'static>> =
+            subs.iter().map(|(_, h)| Arc::clone(h)).collect();
+        drop(subs);
         for h in handlers {
             h(entity_id);
         }
@@ -111,10 +129,20 @@ impl EventBus {
     }
 
     pub fn emit_entity_despawned(&self, entity_id: u64) {
-        let handlers: Vec<Arc<dyn Fn(u64) + Send + Sync + 'static>> = {
-            let subs = self.entity_despawned.read();
-            subs.iter().map(|(_, h)| Arc::clone(h)).collect()
-        };
+        let subs = self.entity_despawned.read();
+        if subs.is_empty() {
+            return;
+        }
+        // Fast path: single handler — avoid Vec allocation
+        if subs.len() == 1 {
+            let h = Arc::clone(&subs[0].1);
+            drop(subs);
+            h(entity_id);
+            return;
+        }
+        let handlers: Vec<Arc<dyn Fn(u64) + Send + Sync + 'static>> =
+            subs.iter().map(|(_, h)| Arc::clone(h)).collect();
+        drop(subs);
         for h in handlers {
             h(entity_id);
         }
