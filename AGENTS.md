@@ -3,7 +3,8 @@
 ```
 RythonEngine/
 ├── .claude/
-│   └── remake_agent.py
+│   ├── remake_agent.py
+│   └── settings.json
 ├── crates/
 │   ├── rython-audio/
 │   │   ├── src/
@@ -366,7 +367,7 @@ RythonEngine/
 │   ├── _ui.py
 │   └── py.typed
 ├── .gitignore
-├── AGENT.md
+├── AGENTS.md
 ├── Cargo.lock
 ├── Cargo.toml
 ├── Makefile

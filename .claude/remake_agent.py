@@ -68,7 +68,7 @@ def main():
 
     agent_md = f"# Source Map\n\n```\n{project_root.name}/\n{tree_content}\n```\n"
 
-    agent_md_path = project_root / "AGENT.md"
+    agent_md_path = project_root / "AGENTS.md"
     with tempfile.NamedTemporaryFile(mode="w", dir=agent_md_path.parent, delete=False) as tmp:
         tmp.write(agent_md)
         tmp_path = tmp.name
