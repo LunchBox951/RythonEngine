@@ -56,11 +56,7 @@ const ROTATE_SEGMENTS: usize = 32;
 
 /// Project a world-space point through the camera VP matrix onto screen pixels.
 /// Returns `None` if the point is behind the camera (w ≤ 0).
-fn world_to_screen(
-    world: Vec3,
-    vp: Mat4,
-    viewport_rect: egui::Rect,
-) -> Option<egui::Pos2> {
+fn world_to_screen(world: Vec3, vp: Mat4, viewport_rect: egui::Rect) -> Option<egui::Pos2> {
     let clip = vp * Vec4::new(world.x, world.y, world.z, 1.0);
     if clip.w <= 0.0 {
         return None;
@@ -96,6 +92,7 @@ fn screen_axis_dir(
 ///
 /// Returns the screen-space positions of the three axis tips (X, Y, Z) and
 /// the origin, used later for hit-testing.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_gizmo(
     painter: &egui::Painter,
     mode: GizmoMode,
@@ -124,20 +121,38 @@ pub fn draw_gizmo(
     match mode {
         GizmoMode::Translate => {
             draw_translate_gizmo(
-                painter, &axes, entity_pos, origin_screen, vp, viewport_rect,
-                hovered_axis, active_drag,
+                painter,
+                &axes,
+                entity_pos,
+                origin_screen,
+                vp,
+                viewport_rect,
+                hovered_axis,
+                active_drag,
             );
         }
         GizmoMode::Rotate => {
             draw_rotate_gizmo(
-                painter, &axes, entity_pos, origin_screen, vp, viewport_rect,
-                hovered_axis, active_drag,
+                painter,
+                &axes,
+                entity_pos,
+                origin_screen,
+                vp,
+                viewport_rect,
+                hovered_axis,
+                active_drag,
             );
         }
         GizmoMode::Scale => {
             draw_scale_gizmo(
-                painter, &axes, entity_pos, origin_screen, vp, viewport_rect,
-                hovered_axis, active_drag,
+                painter,
+                &axes,
+                entity_pos,
+                origin_screen,
+                vp,
+                viewport_rect,
+                hovered_axis,
+                active_drag,
             );
         }
     }
@@ -145,7 +160,12 @@ pub fn draw_gizmo(
     let _ = entity;
 }
 
-fn axis_color(axis: GizmoAxis, base: egui::Color32, hovered: Option<GizmoAxis>, active: Option<&GizmoDrag>) -> egui::Color32 {
+fn axis_color(
+    axis: GizmoAxis,
+    base: egui::Color32,
+    hovered: Option<GizmoAxis>,
+    active: Option<&GizmoDrag>,
+) -> egui::Color32 {
     if active.map(|d| d.axis == axis).unwrap_or(false) {
         return COLOR_HOVER;
     }
@@ -155,6 +175,7 @@ fn axis_color(axis: GizmoAxis, base: egui::Color32, hovered: Option<GizmoAxis>, 
     base
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_translate_gizmo(
     painter: &egui::Painter,
     axes: &[(GizmoAxis, Vec3, egui::Color32); 3],
@@ -168,9 +189,14 @@ fn draw_translate_gizmo(
     for (axis_id, axis_dir, base_color) in axes {
         // Find scale: project axis tip to screen, compute pixel distance
         let tip_world = entity_pos + *axis_dir;
-        let Some(tip_screen) = world_to_screen(tip_world, vp, viewport_rect) else { continue };
-        let raw_len = ((tip_screen.x - origin.x).powi(2) + (tip_screen.y - origin.y).powi(2)).sqrt();
-        if raw_len < 1e-3 { continue; }
+        let Some(tip_screen) = world_to_screen(tip_world, vp, viewport_rect) else {
+            continue;
+        };
+        let raw_len =
+            ((tip_screen.x - origin.x).powi(2) + (tip_screen.y - origin.y).powi(2)).sqrt();
+        if raw_len < 1e-3 {
+            continue;
+        }
         // Scale so the arrow is exactly GIZMO_SIZE pixels
         let scale = GIZMO_SIZE / raw_len;
         let tip = egui::Pos2::new(
@@ -196,6 +222,7 @@ fn draw_translate_gizmo(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_rotate_gizmo(
     painter: &egui::Painter,
     axes: &[(GizmoAxis, Vec3, egui::Color32); 3],
@@ -222,25 +249,33 @@ fn draw_rotate_gizmo(
             if let Some(sp) = world_to_screen(circle_world, vp, viewport_rect) {
                 // Scale so radius ≈ ROTATE_RADIUS pixels at the current depth
                 let raw_r = ((sp.x - origin.x).powi(2) + (sp.y - origin.y).powi(2)).sqrt();
-                if raw_r < 1e-3 { pts.push(sp); continue; }
+                if raw_r < 1e-3 {
+                    pts.push(sp);
+                    continue;
+                }
                 // Actually just collect projected points; accept that radius varies with perspective
                 pts.push(sp);
             }
         }
 
         // Scale all points so the average radius is ROTATE_RADIUS
-        let avg_r: f32 = pts.iter().map(|p| {
-            ((p.x - origin.x).powi(2) + (p.y - origin.y).powi(2)).sqrt()
-        }).sum::<f32>() / pts.len() as f32;
+        let avg_r: f32 = pts
+            .iter()
+            .map(|p| ((p.x - origin.x).powi(2) + (p.y - origin.y).powi(2)).sqrt())
+            .sum::<f32>()
+            / pts.len() as f32;
 
         if avg_r > 1e-3 {
             let scale = ROTATE_RADIUS / avg_r;
-            let scaled: Vec<egui::Pos2> = pts.iter().map(|p| {
-                egui::Pos2::new(
-                    origin.x + (p.x - origin.x) * scale,
-                    origin.y + (p.y - origin.y) * scale,
-                )
-            }).collect();
+            let scaled: Vec<egui::Pos2> = pts
+                .iter()
+                .map(|p| {
+                    egui::Pos2::new(
+                        origin.x + (p.x - origin.x) * scale,
+                        origin.y + (p.y - origin.y) * scale,
+                    )
+                })
+                .collect();
             painter.add(egui::Shape::line(scaled, stroke));
         }
     }
@@ -248,6 +283,7 @@ fn draw_rotate_gizmo(
     let _ = viewport_rect;
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_scale_gizmo(
     painter: &egui::Painter,
     axes: &[(GizmoAxis, Vec3, egui::Color32); 3],
@@ -260,9 +296,14 @@ fn draw_scale_gizmo(
 ) {
     for (axis_id, axis_dir, base_color) in axes {
         let tip_world = entity_pos + *axis_dir;
-        let Some(tip_screen) = world_to_screen(tip_world, vp, viewport_rect) else { continue };
-        let raw_len = ((tip_screen.x - origin.x).powi(2) + (tip_screen.y - origin.y).powi(2)).sqrt();
-        if raw_len < 1e-3 { continue; }
+        let Some(tip_screen) = world_to_screen(tip_world, vp, viewport_rect) else {
+            continue;
+        };
+        let raw_len =
+            ((tip_screen.x - origin.x).powi(2) + (tip_screen.y - origin.y).powi(2)).sqrt();
+        if raw_len < 1e-3 {
+            continue;
+        }
         let scale = GIZMO_SIZE / raw_len;
         let tip = egui::Pos2::new(
             origin.x + (tip_screen.x - origin.x) * scale,
@@ -327,20 +368,27 @@ pub fn hit_test_gizmo_with_vp(
     mouse: egui::Pos2,
 ) -> Option<GizmoAxis> {
     let entity_pos = Vec3::new(transform.x, transform.y, transform.z);
-    let Some(origin) = world_to_screen(entity_pos, vp, viewport_rect) else {
-        return None;
-    };
+    let origin = world_to_screen(entity_pos, vp, viewport_rect)?;
 
-    let axes = [(GizmoAxis::X, Vec3::X), (GizmoAxis::Y, Vec3::Y), (GizmoAxis::Z, Vec3::Z)];
+    let axes = [
+        (GizmoAxis::X, Vec3::X),
+        (GizmoAxis::Y, Vec3::Y),
+        (GizmoAxis::Z, Vec3::Z),
+    ];
 
     match mode {
         GizmoMode::Translate | GizmoMode::Scale => {
             let mut best: Option<(GizmoAxis, f32)> = None;
             for (axis_id, axis_dir) in &axes {
                 let tip_world = entity_pos + *axis_dir;
-                let Some(tip_screen) = world_to_screen(tip_world, vp, viewport_rect) else { continue };
-                let raw_len = ((tip_screen.x - origin.x).powi(2) + (tip_screen.y - origin.y).powi(2)).sqrt();
-                if raw_len < 1e-3 { continue; }
+                let Some(tip_screen) = world_to_screen(tip_world, vp, viewport_rect) else {
+                    continue;
+                };
+                let raw_len =
+                    ((tip_screen.x - origin.x).powi(2) + (tip_screen.y - origin.y).powi(2)).sqrt();
+                if raw_len < 1e-3 {
+                    continue;
+                }
                 let scale = GIZMO_SIZE / raw_len;
                 let tip = egui::Pos2::new(
                     origin.x + (tip_screen.x - origin.x) * scale,
@@ -358,10 +406,13 @@ pub fn hit_test_gizmo_with_vp(
             }
             // For scale: also check center cube
             if mode == GizmoMode::Scale {
-                let center_dist = ((mouse.x - origin.x).powi(2) + (mouse.y - origin.y).powi(2)).sqrt();
+                let center_dist =
+                    ((mouse.x - origin.x).powi(2) + (mouse.y - origin.y).powi(2)).sqrt();
                 if center_dist < HIT_RADIUS * 1.2 {
                     match best {
-                        Some((_, d)) if center_dist < d => best = Some((GizmoAxis::Center, center_dist)),
+                        Some((_, d)) if center_dist < d => {
+                            best = Some((GizmoAxis::Center, center_dist))
+                        }
                         None => best = Some((GizmoAxis::Center, center_dist)),
                         _ => {}
                     }
@@ -381,7 +432,9 @@ pub fn hit_test_gizmo_with_vp(
                         let sp = world_to_screen(circle_world, vp, viewport_rect)?;
                         // Scale to ROTATE_RADIUS
                         let raw_r = ((sp.x - origin.x).powi(2) + (sp.y - origin.y).powi(2)).sqrt();
-                        if raw_r < 1e-3 { return None; }
+                        if raw_r < 1e-3 {
+                            return None;
+                        }
                         let scale = ROTATE_RADIUS / raw_r;
                         let scaled = egui::Pos2::new(
                             origin.x + (sp.x - origin.x) * scale,

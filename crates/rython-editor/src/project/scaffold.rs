@@ -117,7 +117,7 @@ pub fn write_script(root: &Path, filename: &str, content: &str) -> std::io::Resu
 
 /// Convert `snake_case`, `kebab-case`, or space-separated words to PascalCase.
 fn to_pascal_case(s: &str) -> String {
-    s.split(|c: char| c == '_' || c == '-' || c == ' ')
+    s.split(['_', '-', ' '])
         .filter(|part| !part.is_empty())
         .map(|part| {
             let mut chars = part.chars();
@@ -141,8 +141,7 @@ mod tests {
     impl TempDir {
         fn new(label: &str) -> Self {
             let n = SCAFFOLD_TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-            let path =
-                std::env::temp_dir().join(format!("rython_scaffold_{}_{}", label, n));
+            let path = std::env::temp_dir().join(format!("rython_scaffold_{}_{}", label, n));
             std::fs::create_dir_all(&path).unwrap();
             TempDir(path)
         }
@@ -305,8 +304,7 @@ mod tests {
         let tmp = TempDir::new("write_overwrite");
         write_script(&tmp.0, "mod.py", "# v1").unwrap();
         write_script(&tmp.0, "mod.py", "# v2").unwrap();
-        let content =
-            std::fs::read_to_string(tmp.0.join("scripts").join("mod.py")).unwrap();
+        let content = std::fs::read_to_string(tmp.0.join("scripts").join("mod.py")).unwrap();
         assert_eq!(content, "# v2");
     }
 }

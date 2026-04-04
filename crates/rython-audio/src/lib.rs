@@ -9,11 +9,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use kira::{
-    manager::{
-        AudioManager as KiraManager, AudioManagerSettings,
-        backend::cpal::CpalBackend,
-    },
-    sound::static_sound::{StaticSoundData, StaticSoundSettings, StaticSoundHandle},
+    manager::{backend::cpal::CpalBackend, AudioManager as KiraManager, AudioManagerSettings},
+    sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings},
     track::{TrackBuilder, TrackHandle},
     tween::Tween,
     Volume,
@@ -21,20 +18,15 @@ use kira::{
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputMode {
+    #[default]
     Stereo,
     #[serde(rename = "5.1")]
     Surround51,
     #[serde(rename = "5.1.2")]
     Surround512,
-}
-
-impl Default for OutputMode {
-    fn default() -> Self {
-        Self::Stereo
-    }
 }
 
 fn default_volume() -> f32 {
@@ -94,7 +86,7 @@ pub enum AudioCategory {
 }
 
 impl AudioCategory {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_name(s: &str) -> Option<Self> {
         match s {
             "sfx" => Some(Self::Sfx),
             "dialogue" => Some(Self::Dialogue),
@@ -226,16 +218,18 @@ impl KiraInner {
     /// TrackHandle::set_volume only needs &self.
     fn apply_volumes(&self, config: &AudioConfig) {
         let tween = Tween::default();
-        let _ = self
-            .sfx_track
-            .set_volume(Volume::Amplitude((config.master_volume * config.sfx_volume) as f64), tween);
+        let _ = self.sfx_track.set_volume(
+            Volume::Amplitude((config.master_volume * config.sfx_volume) as f64),
+            tween,
+        );
         let _ = self.dialogue_track.set_volume(
             Volume::Amplitude((config.master_volume * config.dialogue_volume) as f64),
             tween,
         );
-        let _ = self
-            .music_track
-            .set_volume(Volume::Amplitude((config.master_volume * config.music_volume) as f64), tween);
+        let _ = self.music_track.set_volume(
+            Volume::Amplitude((config.master_volume * config.music_volume) as f64),
+            tween,
+        );
         let _ = self.ambient_track.set_volume(
             Volume::Amplitude((config.master_volume * config.ambient_volume) as f64),
             tween,
@@ -255,17 +249,17 @@ impl KiraInner {
                 .volume(Volume::Amplitude(effective_vol as f64))
                 .output_destination(track);
             // `..` (RangeFull) → loop entire sound
-            if request.looping { base.loop_region(..) } else { base }
+            if request.looping {
+                base.loop_region(..)
+            } else {
+                base
+            }
         };
 
-        match StaticSoundData::from_file(&request.path, settings) {
-            Ok(data) => match self.manager.play(data) {
-                Ok(handle) => {
-                    self.sound_handles.insert(id, handle);
-                }
-                Err(_) => {}
-            },
-            Err(_) => {}
+        if let Ok(data) = StaticSoundData::from_file(&request.path, settings) {
+            if let Ok(handle) = self.manager.play(data) {
+                self.sound_handles.insert(id, handle);
+            }
         }
     }
 
@@ -403,7 +397,11 @@ impl AudioManager {
     }
 
     pub fn set_listener(&mut self, position: Vec3, forward: Vec3, up: Vec3) {
-        self.listener = ListenerState { position, forward, up };
+        self.listener = ListenerState {
+            position,
+            forward,
+            up,
+        };
     }
 
     /// Play a sound. Returns a handle that uniquely identifies this playback.
@@ -434,12 +432,9 @@ impl AudioManager {
             self.needs_reinit = false;
             if self.kira.is_some() {
                 self.kira = None;
-                match KiraInner::new(&self.config) {
-                    Ok(inner) => {
-                        inner.apply_volumes(&self.config);
-                        self.kira = Some(inner);
-                    }
-                    Err(_) => {} // audio stays silent rather than crashing
+                if let Ok(inner) = KiraInner::new(&self.config) {
+                    inner.apply_volumes(&self.config);
+                    self.kira = Some(inner);
                 }
             }
         }
@@ -475,7 +470,7 @@ impl AudioManager {
 
     /// Stop all sounds in a category.
     pub fn stop_category(&mut self, category_str: &str) -> Result<(), AudioError> {
-        let category = AudioCategory::from_str(category_str)
+        let category = AudioCategory::from_name(category_str)
             .ok_or_else(|| AudioError::UnknownCategory(category_str.to_string()))?;
 
         let ids: Vec<u64> = self
@@ -506,8 +501,14 @@ impl AudioManager {
         positions: Vec<Vec3>,
         max_audible: usize,
     ) {
-        self.ambient_groups
-            .insert(name, AmbientGroupDef { sound, positions, max_audible });
+        self.ambient_groups.insert(
+            name,
+            AmbientGroupDef {
+                sound,
+                positions,
+                max_audible,
+            },
+        );
     }
 }
 
@@ -654,7 +655,10 @@ mod tests {
             })
             .unwrap();
         assert_ne!(h5.id(), 0);
-        assert_eq!(m.active_count, 4, "active count must not exceed max_sources");
+        assert_eq!(
+            m.active_count, 4,
+            "active count must not exceed max_sources"
+        );
     }
 
     // ── T-AUD-03: Idempotent stop ─────────────────────────────────────────────
@@ -686,7 +690,10 @@ mod tests {
 
         assert_eq!(m.active_count, 2, "2 music sounds should remain");
         for id in [1u64, 2, 3] {
-            assert!(!m.handle_categories.contains_key(&id), "sfx {id} should be gone");
+            assert!(
+                !m.handle_categories.contains_key(&id),
+                "sfx {id} should be gone"
+            );
         }
         assert!(m.handle_categories.contains_key(&4));
         assert!(m.handle_categories.contains_key(&5));
@@ -751,7 +758,10 @@ mod tests {
         // Move listener to far cluster
         m.set_listener(Vec3::new(101.0, 0.0, 0.0), Vec3::Z, Vec3::Y);
         let active2 = m.cull_ambient_group(&group);
-        assert!(!active2.contains(&0), "near emitter should be culled after move");
+        assert!(
+            !active2.contains(&0),
+            "near emitter should be culled after move"
+        );
         assert!(active2.contains(&1) || active2.contains(&2));
     }
 
@@ -893,7 +903,10 @@ mod tests {
         let mut m = manager();
         m.active_count = 3;
         m.stop(PlaybackHandle::from_raw(9999)).unwrap();
-        assert_eq!(m.active_count, 3, "untracked stop must not change active_count");
+        assert_eq!(
+            m.active_count, 3,
+            "untracked stop must not change active_count"
+        );
     }
 
     // ── T-AUD-23: needs_reinit set when last sound stopped ────────────────────
@@ -911,7 +924,10 @@ mod tests {
             .unwrap();
         assert!(!m.needs_reinit);
         m.stop(h).unwrap();
-        assert!(m.needs_reinit, "needs_reinit should be set after last sound stops");
+        assert!(
+            m.needs_reinit,
+            "needs_reinit should be set after last sound stops"
+        );
     }
 
     // ── T-AUD-24: needs_reinit not set while other sounds remain ─────────────
@@ -935,7 +951,10 @@ mod tests {
         })
         .unwrap();
         m.stop(h1).unwrap();
-        assert!(!m.needs_reinit, "needs_reinit should be clear while sounds remain");
+        assert!(
+            !m.needs_reinit,
+            "needs_reinit should be clear while sounds remain"
+        );
     }
 
     // ── T-AUD-25: spatial play beyond radius skips active_count ──────────────
@@ -955,26 +974,38 @@ mod tests {
             })
             .unwrap();
         assert_ne!(h.id(), 0, "culled play still returns non-zero handle");
-        assert_eq!(m.active_count, 0, "culled play must not increment active_count");
+        assert_eq!(
+            m.active_count, 0,
+            "culled play must not increment active_count"
+        );
     }
 
     // ── T-AUD-26: AudioCategory::from_str all valid values ───────────────────
 
     #[test]
     fn t_aud_26_category_from_str_valid() {
-        assert_eq!(AudioCategory::from_str("sfx"), Some(AudioCategory::Sfx));
-        assert_eq!(AudioCategory::from_str("dialogue"), Some(AudioCategory::Dialogue));
-        assert_eq!(AudioCategory::from_str("music"), Some(AudioCategory::Music));
-        assert_eq!(AudioCategory::from_str("ambient"), Some(AudioCategory::Ambient));
+        assert_eq!(AudioCategory::from_name("sfx"), Some(AudioCategory::Sfx));
+        assert_eq!(
+            AudioCategory::from_name("dialogue"),
+            Some(AudioCategory::Dialogue)
+        );
+        assert_eq!(
+            AudioCategory::from_name("music"),
+            Some(AudioCategory::Music)
+        );
+        assert_eq!(
+            AudioCategory::from_name("ambient"),
+            Some(AudioCategory::Ambient)
+        );
     }
 
     // ── T-AUD-27: AudioCategory::from_str unknown returns None ───────────────
 
     #[test]
     fn t_aud_27_category_from_str_unknown_returns_none() {
-        assert_eq!(AudioCategory::from_str("boom"), None);
-        assert_eq!(AudioCategory::from_str(""), None);
-        assert_eq!(AudioCategory::from_str("SFX"), None, "case sensitive");
+        assert_eq!(AudioCategory::from_name("boom"), None);
+        assert_eq!(AudioCategory::from_name(""), None);
+        assert_eq!(AudioCategory::from_name("SFX"), None, "case sensitive");
     }
 
     // ── T-AUD-28: PlaybackHandle from_raw / id() roundtrip ───────────────────
@@ -1020,7 +1051,11 @@ mod tests {
             max_audible: 10,
         };
         let active = m.cull_ambient_group(&group);
-        assert_eq!(active.len(), 2, "should return all positions when max_audible > len");
+        assert_eq!(
+            active.len(),
+            2,
+            "should return all positions when max_audible > len"
+        );
         assert!(active.contains(&0));
         assert!(active.contains(&1));
     }
@@ -1030,7 +1065,11 @@ mod tests {
     #[test]
     fn t_aud_32_ambient_cull_zero_positions() {
         let m = manager();
-        let group = AmbientGroupDef { sound: "wind.ogg".into(), positions: vec![], max_audible: 3 };
+        let group = AmbientGroupDef {
+            sound: "wind.ogg".into(),
+            positions: vec![],
+            max_audible: 3,
+        };
         assert!(m.cull_ambient_group(&group).is_empty());
     }
 
@@ -1045,7 +1084,10 @@ mod tests {
             vec![Vec3::new(10.0, 0.0, 0.0)],
             2,
         );
-        let g = m.ambient_groups.get("forest").expect("group should be stored");
+        let g = m
+            .ambient_groups
+            .get("forest")
+            .expect("group should be stored");
         assert_eq!(g.sound, "birds.ogg");
         assert_eq!(g.positions.len(), 1);
         assert_eq!(g.max_audible, 2);
@@ -1102,7 +1144,10 @@ mod tests {
             })
             .unwrap_err();
         assert!(matches!(err, AudioError::UnsupportedFormat { .. }));
-        assert_eq!(m.active_count, 0, "active_count must not change on format error");
+        assert_eq!(
+            m.active_count, 0,
+            "active_count must not change on format error"
+        );
     }
 
     // ── T-AUD-38: stop_category sets needs_reinit when all sounds cleared ─────
@@ -1117,7 +1162,10 @@ mod tests {
         m.stop_category("sfx").unwrap();
 
         assert_eq!(m.active_count, 0);
-        assert!(m.needs_reinit, "needs_reinit should be set after stop_category empties all sounds");
+        assert!(
+            m.needs_reinit,
+            "needs_reinit should be set after stop_category empties all sounds"
+        );
     }
 
     // ── T-AUD-39: handle IDs are sequential and unique ────────────────────────
@@ -1170,7 +1218,8 @@ mod tests {
     fn t_aud_01_audio_system_initialization() {
         let sched = NoopScheduler;
         let mut m = manager();
-        m.on_load(&sched).expect("audio manager should load without error");
+        m.on_load(&sched)
+            .expect("audio manager should load without error");
         assert!(m.kira.is_some());
         m.on_unload(&sched).unwrap();
         assert!(m.kira.is_none());

@@ -9,15 +9,15 @@ use crate::systems::transform::WorldTransform;
 /// `kind`: 0=directional, 1=point, 2=spot
 #[derive(Clone, Debug)]
 pub struct CollectedLight {
-    pub kind:      u32,
+    pub kind: u32,
     /// World-space position (point/spot); zero for directional.
-    pub position:  [f32; 3],
+    pub position: [f32; 3],
     /// Direction toward light (directional) or spotlight aim (spot); zero for point.
     pub direction: [f32; 3],
-    pub color:     [f32; 3],
+    pub color: [f32; 3],
     pub intensity: f32,
     /// Effective range (point/spot).
-    pub radius:    f32,
+    pub radius: f32,
     /// Cosine of inner cone half-angle (spot only).
     pub inner_cos: f32,
     /// Cosine of outer cone half-angle (spot only).
@@ -67,7 +67,11 @@ impl LightSystem {
                     inner_cos: 0.0,
                     outer_cos: 0.0,
                 },
-                LightKind::Spot { direction, inner_angle, outer_angle } => CollectedLight {
+                LightKind::Spot {
+                    direction,
+                    inner_angle,
+                    outer_angle,
+                } => CollectedLight {
                     kind: 2,
                     position: pos,
                     direction: *direction,
@@ -83,7 +87,9 @@ impl LightSystem {
 
         // Keep the brightest lights when over the GPU limit.
         lights.sort_by(|a, b| {
-            b.intensity.partial_cmp(&a.intensity).unwrap_or(std::cmp::Ordering::Equal)
+            b.intensity
+                .partial_cmp(&a.intensity)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         lights.truncate(16);
         lights
@@ -93,11 +99,13 @@ impl LightSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glam::{Mat4, Quat, Vec3};
     use crate::component::ComponentStorage;
     use crate::entity::EntityId;
+    use glam::{Mat4, Quat, Vec3};
 
-    fn id(n: u64) -> EntityId { EntityId(n) }
+    fn id(n: u64) -> EntityId {
+        EntityId(n)
+    }
 
     #[test]
     fn no_lights_returns_empty() {
@@ -109,13 +117,18 @@ mod tests {
     #[test]
     fn directional_light_has_kind_zero() {
         let cs = ComponentStorage::new();
-        cs.insert(id(1), LightComponent {
-            kind: LightKind::Directional { direction: [0.0, 1.0, 0.0] },
-            color: [1.0, 1.0, 1.0],
-            intensity: 1.0,
-            enabled: true,
-            cast_shadows: false,
-        });
+        cs.insert(
+            id(1),
+            LightComponent {
+                kind: LightKind::Directional {
+                    direction: [0.0, 1.0, 0.0],
+                },
+                color: [1.0, 1.0, 1.0],
+                intensity: 1.0,
+                enabled: true,
+                cast_shadows: false,
+            },
+        );
         let lights = LightSystem::run(&cs, &HashMap::new());
         assert_eq!(lights.len(), 1);
         assert_eq!(lights[0].kind, 0);
@@ -125,20 +138,26 @@ mod tests {
     #[test]
     fn disabled_light_is_excluded() {
         let cs = ComponentStorage::new();
-        cs.insert(id(1), LightComponent {
-            kind: LightKind::Point { radius: 5.0 },
-            color: [1.0, 0.0, 0.0],
-            intensity: 2.0,
-            enabled: false,
-            cast_shadows: false,
-        });
-        cs.insert(id(2), LightComponent {
-            kind: LightKind::Point { radius: 5.0 },
-            color: [0.0, 1.0, 0.0],
-            intensity: 1.0,
-            enabled: true,
-            cast_shadows: false,
-        });
+        cs.insert(
+            id(1),
+            LightComponent {
+                kind: LightKind::Point { radius: 5.0 },
+                color: [1.0, 0.0, 0.0],
+                intensity: 2.0,
+                enabled: false,
+                cast_shadows: false,
+            },
+        );
+        cs.insert(
+            id(2),
+            LightComponent {
+                kind: LightKind::Point { radius: 5.0 },
+                color: [0.0, 1.0, 0.0],
+                intensity: 1.0,
+                enabled: true,
+                cast_shadows: false,
+            },
+        );
         let lights = LightSystem::run(&cs, &HashMap::new());
         assert_eq!(lights.len(), 1);
     }
@@ -147,13 +166,16 @@ mod tests {
     fn excess_lights_capped_at_16() {
         let cs = ComponentStorage::new();
         for i in 0..20u64 {
-            cs.insert(id(i), LightComponent {
-                kind: LightKind::Point { radius: 10.0 },
-                color: [1.0, 1.0, 1.0],
-                intensity: i as f32,
-                enabled: true,
-                cast_shadows: false,
-            });
+            cs.insert(
+                id(i),
+                LightComponent {
+                    kind: LightKind::Point { radius: 10.0 },
+                    color: [1.0, 1.0, 1.0],
+                    intensity: i as f32,
+                    enabled: true,
+                    cast_shadows: false,
+                },
+            );
         }
         let lights = LightSystem::run(&cs, &HashMap::new());
         assert_eq!(lights.len(), 16);
@@ -163,17 +185,20 @@ mod tests {
     fn spot_light_converts_angles_to_cosines() {
         use std::f32::consts::PI;
         let cs = ComponentStorage::new();
-        cs.insert(id(1), LightComponent {
-            kind: LightKind::Spot {
-                direction: [0.0, -1.0, 0.0],
-                inner_angle: 15.0,
-                outer_angle: 30.0,
+        cs.insert(
+            id(1),
+            LightComponent {
+                kind: LightKind::Spot {
+                    direction: [0.0, -1.0, 0.0],
+                    inner_angle: 15.0,
+                    outer_angle: 30.0,
+                },
+                color: [1.0, 1.0, 1.0],
+                intensity: 1.0,
+                enabled: true,
+                cast_shadows: false,
             },
-            color: [1.0, 1.0, 1.0],
-            intensity: 1.0,
-            enabled: true,
-            cast_shadows: false,
-        });
+        );
         let lights = LightSystem::run(&cs, &HashMap::new());
         assert_eq!(lights.len(), 1);
         assert_eq!(lights[0].kind, 2);
@@ -186,20 +211,26 @@ mod tests {
     #[test]
     fn point_light_uses_world_position() {
         let cs = ComponentStorage::new();
-        cs.insert(id(1), LightComponent {
-            kind: LightKind::Point { radius: 5.0 },
-            color: [1.0, 1.0, 1.0],
-            intensity: 1.0,
-            enabled: true,
-            cast_shadows: false,
-        });
+        cs.insert(
+            id(1),
+            LightComponent {
+                kind: LightKind::Point { radius: 5.0 },
+                color: [1.0, 1.0, 1.0],
+                intensity: 1.0,
+                enabled: true,
+                cast_shadows: false,
+            },
+        );
         let mut wt = HashMap::new();
-        wt.insert(id(1), WorldTransform {
-            position: Vec3::new(3.0, 2.0, 1.0),
-            rotation: Quat::IDENTITY,
-            scale: Vec3::ONE,
-            matrix: Mat4::IDENTITY,
-        });
+        wt.insert(
+            id(1),
+            WorldTransform {
+                position: Vec3::new(3.0, 2.0, 1.0),
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ONE,
+                matrix: Mat4::IDENTITY,
+            },
+        );
         let lights = LightSystem::run(&cs, &wt);
         assert_eq!(lights.len(), 1);
         assert_eq!(lights[0].position, [3.0, 2.0, 1.0]);
@@ -209,13 +240,16 @@ mod tests {
     fn excess_lights_brightest_are_kept() {
         let cs = ComponentStorage::new();
         for i in 0..20u64 {
-            cs.insert(id(i), LightComponent {
-                kind: LightKind::Point { radius: 10.0 },
-                color: [1.0, 1.0, 1.0],
-                intensity: i as f32,
-                enabled: true,
-                cast_shadows: false,
-            });
+            cs.insert(
+                id(i),
+                LightComponent {
+                    kind: LightKind::Point { radius: 10.0 },
+                    color: [1.0, 1.0, 1.0],
+                    intensity: i as f32,
+                    enabled: true,
+                    cast_shadows: false,
+                },
+            );
         }
         let lights = LightSystem::run(&cs, &HashMap::new());
         assert_eq!(lights.len(), 16);

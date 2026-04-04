@@ -79,35 +79,38 @@ fn output_mode_serde_surround512_roundtrip() {
 
 #[test]
 fn audio_category_from_str_sfx() {
-    assert_eq!(AudioCategory::from_str("sfx"), Some(AudioCategory::Sfx));
+    assert_eq!(AudioCategory::from_name("sfx"), Some(AudioCategory::Sfx));
 }
 
 #[test]
 fn audio_category_from_str_dialogue() {
     assert_eq!(
-        AudioCategory::from_str("dialogue"),
+        AudioCategory::from_name("dialogue"),
         Some(AudioCategory::Dialogue)
     );
 }
 
 #[test]
 fn audio_category_from_str_music() {
-    assert_eq!(AudioCategory::from_str("music"), Some(AudioCategory::Music));
+    assert_eq!(
+        AudioCategory::from_name("music"),
+        Some(AudioCategory::Music)
+    );
 }
 
 #[test]
 fn audio_category_from_str_ambient() {
     assert_eq!(
-        AudioCategory::from_str("ambient"),
+        AudioCategory::from_name("ambient"),
         Some(AudioCategory::Ambient)
     );
 }
 
 #[test]
 fn audio_category_from_str_unknown_returns_none() {
-    assert!(AudioCategory::from_str("boom").is_none());
-    assert!(AudioCategory::from_str("SFX").is_none()); // case-sensitive
-    assert!(AudioCategory::from_str("").is_none());
+    assert!(AudioCategory::from_name("boom").is_none());
+    assert!(AudioCategory::from_name("SFX").is_none()); // case-sensitive
+    assert!(AudioCategory::from_name("").is_none());
 }
 
 // ── AudioConfig serde ─────────────────────────────────────────────────────────

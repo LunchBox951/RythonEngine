@@ -20,6 +20,7 @@ pub struct CameraPy {
 #[pymethods]
 impl CameraPy {
     #[new]
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         // Default position (0, 0, -10) looking at origin (0, 0, 0).
         Self {

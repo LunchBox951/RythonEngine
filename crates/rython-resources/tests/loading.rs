@@ -4,7 +4,9 @@
 use rython_resources::{HandleState, ResourceManager, ResourceManagerConfig};
 
 fn make_manager() -> ResourceManager {
-    ResourceManager::new(ResourceManagerConfig { streaming_budget_mb: 256.0 })
+    ResourceManager::new(ResourceManagerConfig {
+        streaming_budget_mb: 256.0,
+    })
 }
 
 // ── ResourceManagerConfig ─────────────────────────────────────────────────────
@@ -21,7 +23,9 @@ fn resource_manager_config_default_budget_is_256mb() {
 
 #[test]
 fn resource_manager_budget_matches_config() {
-    let mgr = ResourceManager::new(ResourceManagerConfig { streaming_budget_mb: 512.0 });
+    let mgr = ResourceManager::new(ResourceManagerConfig {
+        streaming_budget_mb: 512.0,
+    });
     assert!((mgr.memory_budget_mb() - 512.0).abs() < 0.001);
 }
 
@@ -37,7 +41,11 @@ fn resource_manager_initial_memory_used_is_zero() {
 fn load_mesh_returns_pending_handle() {
     let mgr = make_manager();
     let h = mgr.load_mesh("nonexistent.glb");
-    assert_eq!(h.state(), HandleState::Pending, "load_mesh must return PENDING immediately");
+    assert_eq!(
+        h.state(),
+        HandleState::Pending,
+        "load_mesh must return PENDING immediately"
+    );
 }
 
 #[test]
@@ -45,7 +53,10 @@ fn load_mesh_same_path_deduplicates() {
     let mgr = make_manager();
     let h1 = mgr.load_mesh("model.glb");
     let h2 = mgr.load_mesh("model.glb");
-    assert!(h1.ptr_eq(&h2), "same path must return same underlying asset handle");
+    assert!(
+        h1.ptr_eq(&h2),
+        "same path must return same underlying asset handle"
+    );
 }
 
 #[test]
@@ -53,7 +64,10 @@ fn load_mesh_different_paths_distinct_handles() {
     let mgr = make_manager();
     let h1 = mgr.load_mesh("model_a.glb");
     let h2 = mgr.load_mesh("model_b.glb");
-    assert!(!h1.ptr_eq(&h2), "different paths must yield distinct handles");
+    assert!(
+        !h1.ptr_eq(&h2),
+        "different paths must yield distinct handles"
+    );
 }
 
 // ── load_font ─────────────────────────────────────────────────────────────────
@@ -78,7 +92,10 @@ fn load_font_different_sizes_distinct_handles() {
     let mgr = make_manager();
     let h1 = mgr.load_font("ui.ttf", 12.0);
     let h2 = mgr.load_font("ui.ttf", 14.0);
-    assert!(!h1.ptr_eq(&h2), "different font sizes must yield distinct handles");
+    assert!(
+        !h1.ptr_eq(&h2),
+        "different font sizes must yield distinct handles"
+    );
 }
 
 // ── load_spritesheet ──────────────────────────────────────────────────────────
@@ -103,7 +120,10 @@ fn load_spritesheet_different_cols_distinct_handles() {
     let mgr = make_manager();
     let h1 = mgr.load_spritesheet("sheet.png", 4, 1);
     let h2 = mgr.load_spritesheet("sheet.png", 8, 1);
-    assert!(!h1.ptr_eq(&h2), "different cols must yield distinct handles");
+    assert!(
+        !h1.ptr_eq(&h2),
+        "different cols must yield distinct handles"
+    );
 }
 
 // ── load_sound ────────────────────────────────────────────────────────────────
@@ -134,5 +154,8 @@ fn load_image_and_mesh_with_same_path_are_distinct() {
     // Different asset types with identical paths must NOT share an entry.
     let image = mgr.load_image("asset.png");
     let mesh = mgr.load_mesh("asset.png");
-    assert!(!image.ptr_eq(&mesh), "image and mesh with same filename must be distinct handles");
+    assert!(
+        !image.ptr_eq(&mesh),
+        "image and mesh with same filename must be distinct handles"
+    );
 }

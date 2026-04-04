@@ -1,10 +1,10 @@
-use std::collections::HashMap;
 use glam::{Mat4, Quat, Vec3};
+use std::collections::HashMap;
 
+use crate::component::ComponentStorage;
 use crate::component::TransformComponent;
 use crate::entity::EntityId;
 use crate::hierarchy::{Hierarchy, MAX_HIERARCHY_DEPTH};
-use crate::component::ComponentStorage;
 
 /// World-space transform cache, keyed by entity ID.
 #[derive(Debug, Clone, Copy)]
@@ -95,14 +95,10 @@ impl TransformSystem {
             // Compose with parent world transform
             let world_scale = parent_world.scale * local_scale;
             let world_rot = parent_world.rotation * local_rot;
-            let world_pos = parent_world.position
-                + parent_world.rotation * (parent_world.scale * local_pos);
+            let world_pos =
+                parent_world.position + parent_world.rotation * (parent_world.scale * local_pos);
 
-            let matrix = Mat4::from_scale_rotation_translation(
-                world_scale,
-                world_rot,
-                world_pos,
-            );
+            let matrix = Mat4::from_scale_rotation_translation(world_scale, world_rot, world_pos);
 
             let wt = WorldTransform {
                 position: world_pos,

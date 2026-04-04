@@ -50,7 +50,10 @@ fn t_win_03_push_drain_events() {
     let events = wm.drain_events();
     assert_eq!(events.len(), 3);
 
-    assert!(matches!(events[0], RawInputEvent::KeyPressed(KeyCode::Space)));
+    assert!(matches!(
+        events[0],
+        RawInputEvent::KeyPressed(KeyCode::Space)
+    ));
     assert!(matches!(events[1], RawInputEvent::KeyReleased(KeyCode::W)));
     assert!(matches!(events[2], RawInputEvent::MouseMoved { dx, dy } if dx == 1.5 && dy == -2.0));
 }

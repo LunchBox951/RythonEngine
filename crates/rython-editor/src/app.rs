@@ -19,8 +19,8 @@ use crate::project::io::{create_project, list_scenes, load_scene, open_project, 
 use crate::state::undo::{DespawnEntity, EntitySnapshot, ModifyComponent, SpawnEntity};
 use crate::state::{ProjectState, SelectionState, UndoStack, ViewportState};
 use crate::viewport::gizmo::{
-    apply_rotate_drag, apply_scale_drag, apply_translate_drag, draw_gizmo,
-    hit_test_gizmo_with_vp, GizmoDrag, GizmoMode,
+    apply_rotate_drag, apply_scale_drag, apply_translate_drag, draw_gizmo, hit_test_gizmo_with_vp,
+    GizmoDrag, GizmoMode,
 };
 use crate::viewport::ViewportTexture;
 
@@ -43,7 +43,10 @@ pub struct ConsoleEntry {
 
 impl ConsoleEntry {
     fn new(level: LogLevel, message: impl Into<String>) -> Self {
-        Self { level, message: message.into() }
+        Self {
+            level,
+            message: message.into(),
+        }
     }
 }
 
@@ -106,7 +109,9 @@ impl Preferences {
     }
 
     fn save(&self) {
-        let Some(path) = Self::config_path() else { return };
+        let Some(path) = Self::config_path() else {
+            return;
+        };
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -145,8 +150,12 @@ fn recent_projects_path() -> Option<PathBuf> {
 }
 
 fn load_recent_projects() -> Vec<PathBuf> {
-    let Some(path) = recent_projects_path() else { return Vec::new() };
-    let Ok(content) = std::fs::read_to_string(&path) else { return Vec::new() };
+    let Some(path) = recent_projects_path() else {
+        return Vec::new();
+    };
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
     let Ok(paths): Result<Vec<String>, _> = serde_json::from_str(&content) else {
         return Vec::new();
     };
@@ -159,12 +168,16 @@ fn load_recent_projects() -> Vec<PathBuf> {
 }
 
 fn save_recent_projects(projects: &[PathBuf]) {
-    let Some(path) = recent_projects_path() else { return };
+    let Some(path) = recent_projects_path() else {
+        return;
+    };
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let strs: Vec<String> =
-        projects.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+    let strs: Vec<String> = projects
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
     if let Ok(content) = serde_json::to_string_pretty(&strs) {
         let _ = std::fs::write(&path, content);
     }
@@ -228,22 +241,35 @@ impl PlaySession {
         let stderr = child.stderr.take().expect("stderr was piped");
 
         std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines().flatten() {
-                if tx.send((LogLevel::Info, line)).is_err() {
-                    break;
+            for line in BufReader::new(stdout).lines() {
+                match line {
+                    Ok(l) => {
+                        if tx.send((LogLevel::Info, l)).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
                 }
             }
         });
         std::thread::spawn(move || {
-            for line in BufReader::new(stderr).lines().flatten() {
-                if tx2.send((LogLevel::Warn, line)).is_err() {
-                    break;
+            for line in BufReader::new(stderr).lines() {
+                match line {
+                    Ok(l) => {
+                        if tx2.send((LogLevel::Warn, l)).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
                 }
             }
         });
 
         console.push(ConsoleEntry::new(LogLevel::Info, "▶ Game started"));
-        Some(PlaySession { child, output_rx: rx })
+        Some(PlaySession {
+            child,
+            output_rx: rx,
+        })
     }
 
     fn poll(&mut self, console: &mut Vec<ConsoleEntry>) {
@@ -372,11 +398,7 @@ impl EditorApp {
 
         // Upload built-in cube mesh so scene entities with mesh_id "cube" render correctly
         let cube = rython_resources::generate_cube();
-        renderer.upload_mesh(
-            "cube",
-            bytemuck::cast_slice(&cube.vertices),
-            &cube.indices,
-        );
+        renderer.upload_mesh("cube", bytemuck::cast_slice(&cube.vertices), &cube.indices);
 
         let preferences = Preferences::load();
         let recent_projects = load_recent_projects();
@@ -426,7 +448,9 @@ impl EditorApp {
     }
 
     fn save_current_scene(&mut self) {
-        let Some(root) = self.project.root_dir.clone() else { return };
+        let Some(root) = self.project.root_dir.clone() else {
+            return;
+        };
         let name = self
             .project
             .open_scene_name
@@ -502,8 +526,7 @@ impl EditorApp {
             return;
         };
         let entry = self.project.config.entry_point.clone();
-        self.play_session =
-            PlaySession::launch(&root, entry.as_deref(), &mut self.console_lines);
+        self.play_session = PlaySession::launch(&root, entry.as_deref(), &mut self.console_lines);
         if self.play_session.is_some() {
             self.show_console = true;
             self.bottom_tab = BottomTab::Console;
@@ -518,7 +541,9 @@ impl EditorApp {
     }
 
     fn duplicate_selected(&mut self) {
-        let Some(entity) = self.selection.selected_entity() else { return };
+        let Some(entity) = self.selection.selected_entity() else {
+            return;
+        };
         if !self.scene.entity_exists(entity) {
             return;
         }
@@ -540,14 +565,16 @@ impl EditorApp {
         self.clipboard.clear();
         if let Some(entity) = self.selection.selected_entity() {
             if self.scene.entity_exists(entity) {
-                self.clipboard.push(EntitySnapshot::capture(entity, &self.scene));
+                self.clipboard
+                    .push(EntitySnapshot::capture(entity, &self.scene));
             }
         }
         for &entity in &self.multi_select {
             if self.scene.entity_exists(entity)
                 && !self.clipboard.iter().any(|s| s.entity == entity)
             {
-                self.clipboard.push(EntitySnapshot::capture(entity, &self.scene));
+                self.clipboard
+                    .push(EntitySnapshot::capture(entity, &self.scene));
             }
         }
         if !self.clipboard.is_empty() {
@@ -606,8 +633,7 @@ impl EditorApp {
     fn focus_camera_on_selected(&mut self) {
         if let Some(entity) = self.selection.selected_entity() {
             if let Some(t) = self.scene.components.get::<TransformComponent>(entity) {
-                self.viewport_state.camera_controller.target =
-                    Vec3::new(t.x, t.y, t.z);
+                self.viewport_state.camera_controller.target = Vec3::new(t.x, t.y, t.z);
             }
         }
     }
@@ -621,7 +647,10 @@ impl EditorApp {
 
             ui.horizontal(|ui| {
                 ui.add_space(ui.available_width() / 2.0 - 110.0);
-                if ui.button(egui::RichText::new("  New Project…  ").size(16.0)).clicked() {
+                if ui
+                    .button(egui::RichText::new("  New Project…  ").size(16.0))
+                    .clicked()
+                {
                     if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                         let name = dir
                             .file_name()
@@ -632,7 +661,10 @@ impl EditorApp {
                     }
                 }
                 ui.add_space(8.0);
-                if ui.button(egui::RichText::new("  Open Project…  ").size(16.0)).clicked() {
+                if ui
+                    .button(egui::RichText::new("  Open Project…  ").size(16.0))
+                    .clicked()
+                {
                     if let Some(path) = rfd::FileDialog::new()
                         .add_filter("Project", &["json"])
                         .pick_file()
@@ -736,16 +768,18 @@ impl EditorApp {
                         ui.end_row();
 
                         ui.label("Font size:");
-                        ui.add(egui::Slider::new(
-                            &mut self.preferences.font_size,
-                            10.0..=20.0,
-                        ).suffix(" pt"));
+                        ui.add(
+                            egui::Slider::new(&mut self.preferences.font_size, 10.0..=20.0)
+                                .suffix(" pt"),
+                        );
                         ui.end_row();
 
                         ui.label("Grid spacing:");
-                        ui.add(egui::DragValue::new(
-                            &mut self.preferences.grid_spacing,
-                        ).speed(0.1).range(0.1..=100.0_f32));
+                        ui.add(
+                            egui::DragValue::new(&mut self.preferences.grid_spacing)
+                                .speed(0.1)
+                                .range(0.1..=100.0_f32),
+                        );
                         ui.end_row();
 
                         ui.label("Auto-save:");
@@ -758,11 +792,7 @@ impl EditorApp {
                                 _ => "Custom",
                             })
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(
-                                    &mut self.preferences.auto_save_secs,
-                                    0,
-                                    "Off",
-                                );
+                                ui.selectable_value(&mut self.preferences.auto_save_secs, 0, "Off");
                                 ui.selectable_value(
                                     &mut self.preferences.auto_save_secs,
                                     60,
@@ -856,45 +886,30 @@ impl eframe::App for EditorApp {
         if self.preferences.auto_save_secs > 0
             && self.project.dirty
             && self.project.root_dir.is_some()
+            && self.last_autosave.elapsed().as_secs() >= self.preferences.auto_save_secs
         {
-            if self.last_autosave.elapsed().as_secs() >= self.preferences.auto_save_secs {
-                self.save_current_scene();
-                self.last_autosave = Instant::now();
-            }
+            self.save_current_scene();
+            self.last_autosave = Instant::now();
         }
 
         // ── Global keyboard shortcuts ─────────────────────────────────────────
-        let undo_pressed = ctx.input(|i| {
-            i.key_pressed(egui::Key::Z) && i.modifiers.ctrl && !i.modifiers.shift
-        });
-        let redo_pressed = ctx.input(|i| {
-            i.key_pressed(egui::Key::Z) && i.modifiers.ctrl && i.modifiers.shift
-        });
-        let save_pressed = ctx.input(|i| {
-            i.key_pressed(egui::Key::S) && i.modifiers.ctrl && !i.modifiers.shift
-        });
-        let save_as_pressed = ctx.input(|i| {
-            i.key_pressed(egui::Key::S) && i.modifiers.ctrl && i.modifiers.shift
-        });
-        let new_project_pressed = ctx.input(|i| {
-            i.key_pressed(egui::Key::N) && i.modifiers.ctrl
-        });
-        let open_project_pressed = ctx.input(|i| {
-            i.key_pressed(egui::Key::O) && i.modifiers.ctrl
-        });
-        let prefs_pressed = ctx.input(|i| {
-            i.key_pressed(egui::Key::Comma) && i.modifiers.ctrl
-        });
-        let play_pressed = ctx.input(|i| {
-            i.key_pressed(egui::Key::F5) && !i.modifiers.shift
-        });
-        let stop_pressed = ctx.input(|i| {
-            i.key_pressed(egui::Key::F5) && i.modifiers.shift
-        });
+        let undo_pressed =
+            ctx.input(|i| i.key_pressed(egui::Key::Z) && i.modifiers.ctrl && !i.modifiers.shift);
+        let redo_pressed =
+            ctx.input(|i| i.key_pressed(egui::Key::Z) && i.modifiers.ctrl && i.modifiers.shift);
+        let save_pressed =
+            ctx.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.ctrl && !i.modifiers.shift);
+        let save_as_pressed =
+            ctx.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.ctrl && i.modifiers.shift);
+        let new_project_pressed = ctx.input(|i| i.key_pressed(egui::Key::N) && i.modifiers.ctrl);
+        let open_project_pressed = ctx.input(|i| i.key_pressed(egui::Key::O) && i.modifiers.ctrl);
+        let prefs_pressed = ctx.input(|i| i.key_pressed(egui::Key::Comma) && i.modifiers.ctrl);
+        let play_pressed = ctx.input(|i| i.key_pressed(egui::Key::F5) && !i.modifiers.shift);
+        let stop_pressed = ctx.input(|i| i.key_pressed(egui::Key::F5) && i.modifiers.shift);
 
         // Entity shortcuts (not when typing in a text field)
-        let delete_pressed = !ctx.wants_keyboard_input()
-            && ctx.input(|i| i.key_pressed(egui::Key::Delete));
+        let delete_pressed =
+            !ctx.wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::Delete));
         let duplicate_pressed = !ctx.wants_keyboard_input()
             && ctx.input(|i| i.key_pressed(egui::Key::D) && i.modifiers.ctrl);
         let copy_pressed = !ctx.wants_keyboard_input()
@@ -973,7 +988,11 @@ impl eframe::App for EditorApp {
             self.save_current_scene();
         }
         if save_as_pressed && self.project.root_dir.is_some() {
-            let root = self.project.root_dir.clone().expect("root_dir is Some — guarded by is_some() check above");
+            let root = self
+                .project
+                .root_dir
+                .clone()
+                .expect("root_dir is Some — guarded by is_some() check above");
             if let Some(path) = rfd::FileDialog::new()
                 .set_directory(root.join("scenes"))
                 .add_filter("Scene", &["json"])
@@ -1075,7 +1094,9 @@ impl eframe::App for EditorApp {
                                 let label = self.recent_projects[i]
                                     .file_name()
                                     .map(|n| n.to_string_lossy().to_string())
-                                    .unwrap_or_else(|| self.recent_projects[i].to_string_lossy().to_string());
+                                    .unwrap_or_else(|| {
+                                        self.recent_projects[i].to_string_lossy().to_string()
+                                    });
                                 if ui.button(label).clicked() {
                                     to_open = Some(i);
                                     ui.close_menu();
@@ -1227,7 +1248,10 @@ impl eframe::App for EditorApp {
                 if self.project.root_dir.is_some() {
                     if self.play_session.is_none() {
                         if ui
-                            .button(egui::RichText::new("▶ Play").color(egui::Color32::from_rgb(100, 220, 100)))
+                            .button(
+                                egui::RichText::new("▶ Play")
+                                    .color(egui::Color32::from_rgb(100, 220, 100)),
+                            )
                             .on_hover_text("F5")
                             .clicked()
                         {
@@ -1235,7 +1259,10 @@ impl eframe::App for EditorApp {
                         }
                     } else {
                         if ui
-                            .button(egui::RichText::new("■ Stop").color(egui::Color32::from_rgb(220, 100, 100)))
+                            .button(
+                                egui::RichText::new("■ Stop")
+                                    .color(egui::Color32::from_rgb(220, 100, 100)),
+                            )
                             .on_hover_text("Shift+F5")
                             .clicked()
                         {
@@ -1263,11 +1290,7 @@ impl eframe::App for EditorApp {
                         "Asset Browser",
                     );
                     if self.show_console {
-                        ui.selectable_value(
-                            &mut self.bottom_tab,
-                            BottomTab::Console,
-                            "Console",
-                        );
+                        ui.selectable_value(&mut self.bottom_tab, BottomTab::Console, "Console");
                     }
                 });
                 ui.separator();
@@ -1471,9 +1494,10 @@ impl eframe::App for EditorApp {
                             if let Some(current_t) =
                                 self.scene.components.get::<TransformComponent>(drag.entity)
                             {
-                                let old_json =
-                                    serde_json::to_value(&drag.initial_transform).expect("TransformComponent must be serializable");
-                                let new_json = serde_json::to_value(&current_t).expect("TransformComponent must be serializable");
+                                let old_json = serde_json::to_value(&drag.initial_transform)
+                                    .expect("TransformComponent must be serializable");
+                                let new_json = serde_json::to_value(&current_t)
+                                    .expect("TransformComponent must be serializable");
                                 if old_json != new_json {
                                     let cmd = ModifyComponent {
                                         entity: drag.entity,
@@ -1491,15 +1515,14 @@ impl eframe::App for EditorApp {
                     // ── Camera controller (skip if gizmo active) ──────────────
                     if self.viewport_state.active_drag.is_none() {
                         let vs = &mut self.viewport_state;
-                        vs.camera_controller.update(&viewport_response, &mut vs.camera);
+                        vs.camera_controller
+                            .update(&viewport_response, &mut vs.camera);
                     }
 
                     // ── Ray-cast picking on click ─────────────────────────────
                     if viewport_response.clicked() && !viewport_response.dragged() {
                         if let Some(click_pos) = viewport_response.interact_pointer_pos() {
-                            use crate::viewport::picking::{
-                                pick_entity, ray_from_viewport_click,
-                            };
+                            use crate::viewport::picking::{pick_entity, ray_from_viewport_click};
                             let ray = ray_from_viewport_click(
                                 click_pos,
                                 viewport_rect,

@@ -5,7 +5,10 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub enum AxisBinding {
     /// Two keyboard keys: negative and positive direction.
-    KBAxis { negative: KeyCode, positive: KeyCode },
+    KBAxis {
+        negative: KeyCode,
+        positive: KeyCode,
+    },
     /// Mouse movement on an axis.
     MouseAxis { axis: MouseAxisType },
     /// Gamepad analog stick or trigger.
@@ -43,19 +46,31 @@ impl InputMap {
     }
 
     pub fn bind_axis(&mut self, action: impl Into<String>, binding: AxisBinding) {
-        self.axis_bindings.entry(action.into()).or_default().push(binding);
+        self.axis_bindings
+            .entry(action.into())
+            .or_default()
+            .push(binding);
     }
 
     pub fn bind_button(&mut self, action: impl Into<String>, binding: ButtonBinding) {
-        self.button_bindings.entry(action.into()).or_default().push(binding);
+        self.button_bindings
+            .entry(action.into())
+            .or_default()
+            .push(binding);
     }
 
     pub fn axis_bindings(&self, action: &str) -> &[AxisBinding] {
-        self.axis_bindings.get(action).map(Vec::as_slice).unwrap_or(&[])
+        self.axis_bindings
+            .get(action)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     pub fn button_bindings(&self, action: &str) -> &[ButtonBinding] {
-        self.button_bindings.get(action).map(Vec::as_slice).unwrap_or(&[])
+        self.button_bindings
+            .get(action)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     pub fn all_axis_actions(&self) -> impl Iterator<Item = &String> {

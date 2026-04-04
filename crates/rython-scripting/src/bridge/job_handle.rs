@@ -14,7 +14,12 @@ pub(crate) struct JobStateInner {
 
 impl JobStateInner {
     fn new() -> Self {
-        Self { done: false, failed: false, error: None, on_complete: Vec::new() }
+        Self {
+            done: false,
+            failed: false,
+            error: None,
+            on_complete: Vec::new(),
+        }
     }
 }
 

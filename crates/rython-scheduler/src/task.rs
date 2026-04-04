@@ -1,6 +1,16 @@
 use rython_core::{EngineError, OwnerId, Priority, TaskId};
 use std::any::Any;
 
+/// The result produced by a background task: an erased value or an engine error.
+pub type TaskOutput = Result<Box<dyn Any + Send + 'static>, EngineError>;
+
+/// Callback invoked when a single background task completes.
+pub type TaskCallback = Box<dyn FnOnce(TaskOutput) -> Result<(), EngineError> + Send + 'static>;
+
+/// Callback invoked when all tasks in a group have completed.
+pub type GroupCallback =
+    Box<dyn FnOnce(Vec<TaskOutput>) -> Result<(), EngineError> + Send + 'static>;
+
 /// A one-shot sequential task to run on the main thread.
 pub struct SequentialTask {
     pub id: TaskId,
@@ -36,9 +46,8 @@ pub struct BackgroundTask {
 pub struct BgComplete {
     pub task_id: TaskId,
     pub owner: OwnerId,
-    pub result: Result<Box<dyn Any + Send + 'static>, EngineError>,
-    pub callback:
-        Option<Box<dyn FnOnce(Result<Box<dyn Any + Send + 'static>, EngineError>) -> Result<(), EngineError> + Send + 'static>>,
+    pub result: TaskOutput,
+    pub callback: Option<TaskCallback>,
     pub group_id: Option<rython_core::GroupId>,
 }
 

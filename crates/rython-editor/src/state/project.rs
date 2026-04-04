@@ -2,23 +2,13 @@ use std::path::PathBuf;
 
 use crate::project::ProjectConfig;
 
+#[derive(Default)]
 pub struct ProjectState {
     pub root_dir: Option<PathBuf>,
     pub config: ProjectConfig,
     pub open_scene_name: Option<String>,
     /// Set by any scene mutation; cleared on save.
     pub dirty: bool,
-}
-
-impl Default for ProjectState {
-    fn default() -> Self {
-        Self {
-            root_dir: None,
-            config: ProjectConfig::default(),
-            open_scene_name: None,
-            dirty: false,
-        }
-    }
 }
 
 impl ProjectState {

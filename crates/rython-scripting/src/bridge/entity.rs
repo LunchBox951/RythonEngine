@@ -4,7 +4,11 @@ use pyo3::prelude::*;
 use rython_ecs::component::{TagComponent, TransformComponent};
 use rython_ecs::{EntityId, Scene};
 
-use super::{physics::physics_store, scene_store, types::{TransformPy, Vec3Py}};
+use super::{
+    physics::physics_store,
+    scene_store,
+    types::{TransformPy, Vec3Py},
+};
 
 // ─── Entity wrapper ───────────────────────────────────────────────────────────
 
@@ -73,7 +77,12 @@ impl EntityPy {
                 }
             });
             if !existed {
-                scene.components.insert(entity, TagComponent { tags: vec![tag_owned] });
+                scene.components.insert(
+                    entity,
+                    TagComponent {
+                        tags: vec![tag_owned],
+                    },
+                );
             }
         }
     }
@@ -100,7 +109,9 @@ impl EntityPy {
 
     fn set_velocity(&self, x: f32, y: f32, z: f32) {
         if let Some(world) = physics_store() {
-            world.lock().set_linear_velocity(EntityId(self.id), [x, y, z]);
+            world
+                .lock()
+                .set_linear_velocity(EntityId(self.id), [x, y, z]);
         }
     }
 

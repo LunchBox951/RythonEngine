@@ -26,7 +26,7 @@ pub struct AudioBridge {}
 impl AudioBridge {
     #[pyo3(signature = (path, category = "sfx", looping = false))]
     fn play(&self, path: &str, category: &str, looping: bool) -> PyResult<u64> {
-        let cat = AudioCategory::from_str(category).ok_or_else(|| {
+        let cat = AudioCategory::from_name(category).ok_or_else(|| {
             PyErr::new::<PyRuntimeError, _>(format!("Unknown audio category: {category}"))
         })?;
         let request = PlayRequest {

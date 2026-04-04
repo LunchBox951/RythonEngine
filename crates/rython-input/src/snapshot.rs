@@ -24,7 +24,14 @@ impl InputSnapshot {
     }
 
     pub fn set_button(&mut self, action: String, pressed: bool, held: bool, released: bool) {
-        self.buttons.insert(action, ButtonState { pressed, held, released });
+        self.buttons.insert(
+            action,
+            ButtonState {
+                pressed,
+                held,
+                released,
+            },
+        );
     }
 
     /// Axis value for the action (-1.0 to 1.0). Returns 0.0 if unbound.
@@ -44,6 +51,9 @@ impl InputSnapshot {
 
     /// True on the first frame the button is released.
     pub fn released(&self, action: &str) -> bool {
-        self.buttons.get(action).map(|b| b.released).unwrap_or(false)
+        self.buttons
+            .get(action)
+            .map(|b| b.released)
+            .unwrap_or(false)
     }
 }

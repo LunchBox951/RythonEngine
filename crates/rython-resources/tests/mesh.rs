@@ -76,11 +76,11 @@ fn compute_tangents_cube_produces_nonzero_tangents() {
     let mut mesh = generate_cube();
     compute_tangents(&mut mesh.vertices, &mesh.indices);
 
-    let any_nonzero = mesh
-        .vertices
-        .iter()
-        .any(|v| length3(v.tangent) > 1e-6);
-    assert!(any_nonzero, "compute_tangents must produce non-zero tangents on cube");
+    let any_nonzero = mesh.vertices.iter().any(|v| length3(v.tangent) > 1e-6);
+    assert!(
+        any_nonzero,
+        "compute_tangents must produce non-zero tangents on cube"
+    );
 }
 
 #[test]
@@ -88,11 +88,11 @@ fn compute_tangents_cube_produces_nonzero_bitangents() {
     let mut mesh = generate_cube();
     compute_tangents(&mut mesh.vertices, &mesh.indices);
 
-    let any_nonzero = mesh
-        .vertices
-        .iter()
-        .any(|v| length3(v.bitangent) > 1e-6);
-    assert!(any_nonzero, "compute_tangents must produce non-zero bitangents on cube");
+    let any_nonzero = mesh.vertices.iter().any(|v| length3(v.bitangent) > 1e-6);
+    assert!(
+        any_nonzero,
+        "compute_tangents must produce non-zero bitangents on cube"
+    );
 }
 
 /// After compute_tangents, tangent must be approximately orthogonal to normal
@@ -145,7 +145,11 @@ fn compute_tangents_idempotent() {
     compute_tangents(&mut mesh.vertices, &mesh.indices);
 
     for (i, (v, t)) in mesh.vertices.iter().zip(tangents_first.iter()).enumerate() {
-        let diff = length3([v.tangent[0] - t[0], v.tangent[1] - t[1], v.tangent[2] - t[2]]);
+        let diff = length3([
+            v.tangent[0] - t[0],
+            v.tangent[1] - t[1],
+            v.tangent[2] - t[2],
+        ]);
         assert!(
             diff < 0.01,
             "vertex {i}: tangent differs after second compute_tangents call (diff={diff:.6})"

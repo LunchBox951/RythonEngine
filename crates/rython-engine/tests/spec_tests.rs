@@ -19,9 +19,8 @@ fn crate_layer(name: &str) -> Option<u8> {
     match name {
         "rython-core" => Some(0),
         "rython-scheduler" | "rython-modules" => Some(1),
-        "rython-ecs" | "rython-window" | "rython-input"
-        | "rython-renderer" | "rython-physics" | "rython-audio"
-        | "rython-resources" => Some(2),
+        "rython-ecs" | "rython-window" | "rython-input" | "rython-renderer" | "rython-physics"
+        | "rython-audio" | "rython-resources" => Some(2),
         "rython-ui" | "rython-scripting" => Some(3),
         "rython-engine" => Some(4),
         _ => None,
@@ -238,13 +237,28 @@ fn t_spec_03_boot_shutdown_sequence() {
 
     let entries = log.lock().unwrap().clone();
 
-    let load_a = entries.iter().position(|e| e == "load:A").expect("A loaded");
-    let load_b = entries.iter().position(|e| e == "load:B").expect("B loaded");
+    let load_a = entries
+        .iter()
+        .position(|e| e == "load:A")
+        .expect("A loaded");
+    let load_b = entries
+        .iter()
+        .position(|e| e == "load:B")
+        .expect("B loaded");
     assert!(load_a < load_b, "A must be loaded before its dependent B");
 
-    let unload_b = entries.iter().position(|e| e == "unload:B").expect("B unloaded");
-    let unload_a = entries.iter().position(|e| e == "unload:A").expect("A unloaded");
-    assert!(unload_b < unload_a, "B must be unloaded before A (reverse dependency order)");
+    let unload_b = entries
+        .iter()
+        .position(|e| e == "unload:B")
+        .expect("B unloaded");
+    let unload_a = entries
+        .iter()
+        .position(|e| e == "unload:A")
+        .expect("A unloaded");
+    assert!(
+        unload_b < unload_a,
+        "B must be unloaded before A (reverse dependency order)"
+    );
 }
 
 // ─── T-SPEC-04: Feature Flags ─────────────────────────────────────────────────
@@ -291,8 +305,14 @@ fn t_spec_04_feature_flags() {
 
     engine.boot().unwrap();
 
-    assert!(a_loaded.load(Ordering::Relaxed), "feature_a should be loaded");
-    assert!(!b_loaded.load(Ordering::Relaxed), "feature_b was not added, must not be loaded");
+    assert!(
+        a_loaded.load(Ordering::Relaxed),
+        "feature_a should be loaded"
+    );
+    assert!(
+        !b_loaded.load(Ordering::Relaxed),
+        "feature_b was not added, must not be loaded"
+    );
 
     engine.shutdown().unwrap();
 }
@@ -342,7 +362,11 @@ fn t_spec_05_frame_timeline_ordering() {
     engine.tick().unwrap();
 
     let order = seq.lock().unwrap().clone();
-    assert_eq!(order.len(), 6, "all 6 phase tasks should execute in one tick");
+    assert_eq!(
+        order.len(),
+        6,
+        "all 6 phase tasks should execute in one tick"
+    );
     for w in order.windows(2) {
         assert!(
             w[0] <= w[1],
@@ -385,7 +409,10 @@ fn t_thr_01_sequential_tasks_on_main_thread() {
     let ids = captured.lock().unwrap();
     assert_eq!(ids.len(), 10, "all 10 sequential tasks should run");
     for id in ids.iter() {
-        assert_eq!(*id, main_id, "sequential task must run on the calling (main) thread");
+        assert_eq!(
+            *id, main_id,
+            "sequential task must run on the calling (main) thread"
+        );
     }
 }
 
@@ -435,7 +462,7 @@ fn t_thr_02_parallel_tasks_on_multiple_threads() {
 // ─── T-THR-03: Background Tasks Run Off Main Thread ──────────────────────────
 #[test]
 fn t_thr_03_background_tasks_off_main_thread() {
-    use rython_core::{EngineError, priorities, SchedulerConfig};
+    use rython_core::{priorities, EngineError, SchedulerConfig};
     use rython_scheduler::TaskScheduler;
     use std::sync::{Arc, Mutex};
 
@@ -467,7 +494,10 @@ fn t_thr_03_background_tasks_off_main_thread() {
         .lock()
         .unwrap()
         .expect("background task should have recorded its thread ID");
-    assert_ne!(id, main_id, "background task must run on a pool thread, not the calling thread");
+    assert_ne!(
+        id, main_id,
+        "background task must run on a pool thread, not the calling thread"
+    );
 }
 
 // ─── T-THR-04: Scene Read Concurrency ────────────────────────────────────────
@@ -520,7 +550,11 @@ fn t_thr_04_scene_read_concurrency() {
     sched.tick().unwrap();
     let elapsed = start.elapsed();
 
-    assert_eq!(completions.load(Ordering::Relaxed), 4, "all 4 concurrent reads should complete");
+    assert_eq!(
+        completions.load(Ordering::Relaxed),
+        4,
+        "all 4 concurrent reads should complete"
+    );
     assert!(
         elapsed < Duration::from_millis(200),
         "concurrent reads should complete quickly (no deadlock); took {:?}",
@@ -562,7 +596,13 @@ fn t_thr_05_scene_write_exclusivity() {
     sched.submit_sequential(
         Box::new(move || {
             for e in s.all_entities() {
-                s.queue_attach(e, TransformComponent { x: 42.0, ..Default::default() });
+                s.queue_attach(
+                    e,
+                    TransformComponent {
+                        x: 42.0,
+                        ..Default::default()
+                    },
+                );
             }
             s.drain_commands();
             d.store(true, Ordering::Release);
@@ -574,11 +614,19 @@ fn t_thr_05_scene_write_exclusivity() {
 
     sched.tick().unwrap();
 
-    assert!(done.load(Ordering::Acquire), "sequential write task should complete without error");
+    assert!(
+        done.load(Ordering::Acquire),
+        "sequential write task should complete without error"
+    );
 
     for e in scene.all_entities() {
         let x = scene.components.get::<TransformComponent>(e).map(|c| c.x);
-        assert_eq!(x, Some(42.0), "entity {:?}: TransformComponent.x should be 42.0", e);
+        assert_eq!(
+            x,
+            Some(42.0),
+            "entity {:?}: TransformComponent.x should be 42.0",
+            e
+        );
     }
 }
 
@@ -729,18 +777,34 @@ fn t_thr_08_double_buffered_render_queue() {
         }));
     }
 
-    assert_eq!(queue.back_len(), 10_000, "back buffer should hold 10,000 commands");
-    assert_eq!(queue.front_len(), 0, "front buffer should be empty before swap");
+    assert_eq!(
+        queue.back_len(),
+        10_000,
+        "back buffer should hold 10,000 commands"
+    );
+    assert_eq!(
+        queue.front_len(),
+        0,
+        "front buffer should be empty before swap"
+    );
 
     // Phase boundary: swap front ↔ back
     queue.swap();
 
-    assert_eq!(queue.front_len(), 10_000, "front should hold this frame's 10,000 commands");
+    assert_eq!(
+        queue.front_len(),
+        10_000,
+        "front should hold this frame's 10,000 commands"
+    );
     assert_eq!(queue.back_len(), 0, "back should be cleared after swap");
 
     // RENDER_EXECUTE phase: drain front buffer
     let cmds = queue.take_sorted_front();
-    assert_eq!(cmds.len(), 10_000, "renderer must receive exactly 10,000 commands");
+    assert_eq!(
+        cmds.len(),
+        10_000,
+        "renderer must receive exactly 10,000 commands"
+    );
 }
 
 // ─── T-THR-09: Locking Hierarchy — No Deadlock Under Stress ──────────────────
@@ -877,13 +941,17 @@ fn t_thr_15_audio_command_thread_safety() {
                     position: None,
                     looping: false,
                 });
-                assert!(result.is_ok(), "play() from thread {i} should not return an error");
+                assert!(
+                    result.is_ok(),
+                    "play() from thread {i} should not return an error"
+                );
             })
         })
         .collect();
 
     for h in handles {
-        h.join().expect("audio command from thread should not panic or deadlock");
+        h.join()
+            .expect("audio command from thread should not panic or deadlock");
     }
 }
 
@@ -984,7 +1052,10 @@ fn t_eng_03_with_scene_shares_arc() {
     let scene: Arc<Scene> = Arc::new(Scene::new());
     let scene_ptr = Arc::as_ptr(&scene);
 
-    let engine = EngineBuilder::new().with_scene(Arc::clone(&scene)).build().unwrap();
+    let engine = EngineBuilder::new()
+        .with_scene(Arc::clone(&scene))
+        .build()
+        .unwrap();
 
     assert_eq!(
         Arc::as_ptr(engine.scene()),
@@ -1060,9 +1131,15 @@ fn t_eng_06_load_failure_propagates() {
         }
     }
 
-    let mut engine = EngineBuilder::new().add_module(Box::new(ErrMod)).build().unwrap();
+    let mut engine = EngineBuilder::new()
+        .add_module(Box::new(ErrMod))
+        .build()
+        .unwrap();
     let result = engine.boot();
-    assert!(result.is_err(), "boot() must return Err when a module's on_load fails");
+    assert!(
+        result.is_err(),
+        "boot() must return Err when a module's on_load fails"
+    );
 }
 
 // ─── T-ENG-07: Circular Dependency Detected at Boot ─────────────────────────
@@ -1100,7 +1177,10 @@ fn t_eng_07_circular_dependency_detected() {
         .unwrap();
 
     let result = engine.boot();
-    assert!(result.is_err(), "boot() must return Err on circular dependency");
+    assert!(
+        result.is_err(),
+        "boot() must return Err on circular dependency"
+    );
     if let Err(EngineError::Module { message, .. }) = result {
         assert!(
             message.contains("circular"),
@@ -1145,7 +1225,11 @@ fn t_eng_08_diamond_dependency_load_order() {
 
     macro_rules! mk {
         ($id:expr, $deps:expr) => {
-            Box::new(Mod { id: $id, deps: $deps, log: Arc::clone(&log) })
+            Box::new(Mod {
+                id: $id,
+                deps: $deps,
+                log: Arc::clone(&log),
+            })
         };
     }
 
@@ -1162,7 +1246,12 @@ fn t_eng_08_diamond_dependency_load_order() {
 
     let entries = log.lock().unwrap().clone();
 
-    let pos = |s: &str| entries.iter().position(|e| e == s).unwrap_or_else(|| panic!("{s} missing"));
+    let pos = |s: &str| {
+        entries
+            .iter()
+            .position(|e| e == s)
+            .unwrap_or_else(|| panic!("{s} missing"))
+    };
 
     // Load constraints: A < B, A < C, B < D, C < D
     assert!(pos("load:A") < pos("load:B"), "A must load before B");

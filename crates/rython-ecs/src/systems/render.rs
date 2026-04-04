@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use glam::Mat4;
+use std::collections::HashMap;
 
 use crate::component::{BillboardComponent, ComponentStorage, MeshComponent};
 use crate::entity::EntityId;

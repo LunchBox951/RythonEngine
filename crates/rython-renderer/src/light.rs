@@ -2,7 +2,6 @@
 ///
 /// `LightBuffer` replaces `DirectionalLightUniform` at bind group 5.
 /// Layout: 16 lights × 64B + 4B count + 12B ambient = 1040B (16-byte aligned).
-
 pub const MAX_LIGHTS: usize = 16;
 
 /// One light on the GPU — 64 bytes (4 × vec4<f32>).
@@ -16,9 +15,9 @@ pub const MAX_LIGHTS: usize = 16;
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuLight {
     pub position_or_dir: [f32; 4],
-    pub color_intensity:  [f32; 4],
-    pub spot_params:      [f32; 4],
-    pub spot_dir_pad:     [f32; 4],
+    pub color_intensity: [f32; 4],
+    pub spot_params: [f32; 4],
+    pub spot_dir_pad: [f32; 4],
 }
 
 /// Full light buffer uploaded to bind group 5 each frame — 1040 bytes.
@@ -35,9 +34,9 @@ pub struct GpuLight {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct LightBuffer {
-    pub lights:      [GpuLight; MAX_LIGHTS],
+    pub lights: [GpuLight; MAX_LIGHTS],
     pub light_count: u32,
-    pub ambient:     [f32; 3],
+    pub ambient: [f32; 3],
 }
 
 impl LightBuffer {
@@ -53,10 +52,10 @@ impl LightBuffer {
         let mut buf = Self::empty();
         buf.ambient = [0.1, 0.1, 0.1];
         buf.lights[0] = GpuLight {
-            position_or_dir: [0.5, 1.0, 0.5, 0.0],   // w=0 → directional
-            color_intensity:  [1.0, 1.0, 1.0, 1.0],
-            spot_params:      [0.0, 0.0, 0.0, 1.0],   // w=1 → enabled
-            spot_dir_pad:     [0.0; 4],
+            position_or_dir: [0.5, 1.0, 0.5, 0.0], // w=0 → directional
+            color_intensity: [1.0, 1.0, 1.0, 1.0],
+            spot_params: [0.0, 0.0, 0.0, 1.0], // w=1 → enabled
+            spot_dir_pad: [0.0; 4],
         };
         buf.light_count = 1;
         buf

@@ -59,13 +59,7 @@ impl UIBridge {
 
     /// Set the layout direction for a container widget.
     /// `direction` must be "none", "vertical", or "horizontal".
-    fn set_layout(
-        &self,
-        id: u64,
-        direction: &str,
-        spacing: f32,
-        padding: f32,
-    ) -> PyResult<()> {
+    fn set_layout(&self, id: u64, direction: &str, spacing: f32, padding: f32) -> PyResult<()> {
         let dir = match direction {
             "none" => LayoutDir::None,
             "vertical" => LayoutDir::Vertical,

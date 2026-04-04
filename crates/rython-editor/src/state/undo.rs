@@ -24,7 +24,11 @@ pub struct UndoStack {
 
 impl Default for UndoStack {
     fn default() -> Self {
-        Self { history: Vec::new(), position: 0, max_history: 200 }
+        Self {
+            history: Vec::new(),
+            position: 0,
+            max_history: 200,
+        }
     }
 }
 
@@ -99,42 +103,42 @@ fn apply_component_json(scene: &Scene, entity: EntityId, type_name: &str, data: 
 
 fn default_component_json(type_name: &str) -> Value {
     match type_name {
-        "TransformComponent" => {
-            serde_json::to_value(TransformComponent::default())
-                .expect("TransformComponent must be serializable")
-        }
-        "MeshComponent" => {
-            serde_json::to_value(MeshComponent::default())
-                .expect("MeshComponent must be serializable")
-        }
-        "TagComponent" => {
-            serde_json::to_value(TagComponent::default())
-                .expect("TagComponent must be serializable")
-        }
-        "RigidBodyComponent" => {
-            serde_json::to_value(RigidBodyComponent::default())
-                .expect("RigidBodyComponent must be serializable")
-        }
-        "ColliderComponent" => {
-            serde_json::to_value(ColliderComponent::default())
-                .expect("ColliderComponent must be serializable")
-        }
-        "BillboardComponent" => {
-            serde_json::to_value(BillboardComponent::default())
-                .expect("BillboardComponent must be serializable")
-        }
+        "TransformComponent" => serde_json::to_value(TransformComponent::default())
+            .expect("TransformComponent must be serializable"),
+        "MeshComponent" => serde_json::to_value(MeshComponent::default())
+            .expect("MeshComponent must be serializable"),
+        "TagComponent" => serde_json::to_value(TagComponent::default())
+            .expect("TagComponent must be serializable"),
+        "RigidBodyComponent" => serde_json::to_value(RigidBodyComponent::default())
+            .expect("RigidBodyComponent must be serializable"),
+        "ColliderComponent" => serde_json::to_value(ColliderComponent::default())
+            .expect("ColliderComponent must be serializable"),
+        "BillboardComponent" => serde_json::to_value(BillboardComponent::default())
+            .expect("BillboardComponent must be serializable"),
         _ => Value::Null,
     }
 }
 
 fn remove_component_by_type_name(scene: &Scene, entity: EntityId, type_name: &str) {
     match type_name {
-        "TransformComponent" => { scene.components.remove::<TransformComponent>(entity); }
-        "MeshComponent" => { scene.components.remove::<MeshComponent>(entity); }
-        "TagComponent" => { scene.components.remove::<TagComponent>(entity); }
-        "RigidBodyComponent" => { scene.components.remove::<RigidBodyComponent>(entity); }
-        "ColliderComponent" => { scene.components.remove::<ColliderComponent>(entity); }
-        "BillboardComponent" => { scene.components.remove::<BillboardComponent>(entity); }
+        "TransformComponent" => {
+            scene.components.remove::<TransformComponent>(entity);
+        }
+        "MeshComponent" => {
+            scene.components.remove::<MeshComponent>(entity);
+        }
+        "TagComponent" => {
+            scene.components.remove::<TagComponent>(entity);
+        }
+        "RigidBodyComponent" => {
+            scene.components.remove::<RigidBodyComponent>(entity);
+        }
+        "ColliderComponent" => {
+            scene.components.remove::<ColliderComponent>(entity);
+        }
+        "BillboardComponent" => {
+            scene.components.remove::<BillboardComponent>(entity);
+        }
         _ => {}
     }
 }
@@ -191,8 +195,16 @@ pub struct SpawnEntity {
 }
 
 impl SpawnEntity {
-    pub fn new(entity: EntityId, components: Vec<(String, Value)>, parent: Option<EntityId>) -> Self {
-        Self { entity, components, parent }
+    pub fn new(
+        entity: EntityId,
+        components: Vec<(String, Value)>,
+        parent: Option<EntityId>,
+    ) -> Self {
+        Self {
+            entity,
+            components,
+            parent,
+        }
     }
 }
 
@@ -224,7 +236,9 @@ pub struct DespawnEntity {
 
 impl DespawnEntity {
     pub fn capture(entity: EntityId, scene: &Scene) -> Self {
-        Self { snapshot: EntitySnapshot::capture(entity, scene) }
+        Self {
+            snapshot: EntitySnapshot::capture(entity, scene),
+        }
     }
 }
 
@@ -254,7 +268,10 @@ pub struct BatchCommand {
 
 impl BatchCommand {
     pub fn new(commands: Vec<Box<dyn EditorCommand>>, description: impl Into<String>) -> Self {
-        Self { commands, description: description.into() }
+        Self {
+            commands,
+            description: description.into(),
+        }
     }
 }
 
@@ -346,7 +363,11 @@ pub struct AttachComponent {
 impl AttachComponent {
     pub fn new(entity: EntityId, type_name: &str) -> Self {
         let default_json = default_component_json(type_name);
-        Self { entity, type_name: type_name.to_string(), default_json }
+        Self {
+            entity,
+            type_name: type_name.to_string(),
+            default_json,
+        }
     }
 }
 
@@ -377,7 +398,11 @@ impl DetachComponent {
         // Serialize only the targeted component instead of snapshot_entity
         // which serializes ALL components for the entity.
         let component_json = snapshot_single_component(entity, type_name, scene);
-        Self { entity, type_name: type_name.to_string(), component_json }
+        Self {
+            entity,
+            type_name: type_name.to_string(),
+            component_json,
+        }
     }
 }
 
@@ -385,22 +410,34 @@ impl DetachComponent {
 /// `snapshot_entity` which serializes every component on the entity.
 fn snapshot_single_component(entity: EntityId, type_name: &str, scene: &Scene) -> Value {
     match type_name {
-        "TransformComponent" => scene.components.get::<TransformComponent>(entity)
+        "TransformComponent" => scene
+            .components
+            .get::<TransformComponent>(entity)
             .map(|c| serde_json::to_value(&c).expect("TransformComponent must be serializable"))
             .unwrap_or(Value::Null),
-        "MeshComponent" => scene.components.get::<MeshComponent>(entity)
+        "MeshComponent" => scene
+            .components
+            .get::<MeshComponent>(entity)
             .map(|c| serde_json::to_value(&c).expect("MeshComponent must be serializable"))
             .unwrap_or(Value::Null),
-        "TagComponent" => scene.components.get::<TagComponent>(entity)
+        "TagComponent" => scene
+            .components
+            .get::<TagComponent>(entity)
             .map(|c| serde_json::to_value(&c).expect("TagComponent must be serializable"))
             .unwrap_or(Value::Null),
-        "RigidBodyComponent" => scene.components.get::<RigidBodyComponent>(entity)
+        "RigidBodyComponent" => scene
+            .components
+            .get::<RigidBodyComponent>(entity)
             .map(|c| serde_json::to_value(&c).expect("RigidBodyComponent must be serializable"))
             .unwrap_or(Value::Null),
-        "ColliderComponent" => scene.components.get::<ColliderComponent>(entity)
+        "ColliderComponent" => scene
+            .components
+            .get::<ColliderComponent>(entity)
             .map(|c| serde_json::to_value(&c).expect("ColliderComponent must be serializable"))
             .unwrap_or(Value::Null),
-        "BillboardComponent" => scene.components.get::<BillboardComponent>(entity)
+        "BillboardComponent" => scene
+            .components
+            .get::<BillboardComponent>(entity)
             .map(|c| serde_json::to_value(&c).expect("BillboardComponent must be serializable"))
             .unwrap_or(Value::Null),
         _ => Value::Null,
@@ -442,7 +479,13 @@ mod tests {
     impl MockCmd {
         fn new(label: &'static str) -> (Self, Arc<Mutex<Counts>>) {
             let counts = Arc::new(Mutex::new(Counts::default()));
-            (Self { counts: counts.clone(), label }, counts)
+            (
+                Self {
+                    counts: counts.clone(),
+                    label,
+                },
+                counts,
+            )
         }
     }
 
@@ -563,7 +606,11 @@ mod tests {
         let mut stack = UndoStack::new();
         let (cmd, counts) = MockCmd::new("a");
         stack.push_no_execute(Box::new(cmd));
-        assert_eq!(counts.lock().unwrap().execute, 0, "push_no_execute must not call execute");
+        assert_eq!(
+            counts.lock().unwrap().execute,
+            0,
+            "push_no_execute must not call execute"
+        );
     }
 
     #[test]

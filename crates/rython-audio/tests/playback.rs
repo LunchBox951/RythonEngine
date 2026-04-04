@@ -3,7 +3,9 @@
 //!
 //! These tests only use the public API of AudioManager.
 
-use rython_audio::{AudioCategory, AudioConfig, AudioError, AudioManager, PlayRequest, PlaybackHandle};
+use rython_audio::{
+    AudioCategory, AudioConfig, AudioError, AudioManager, PlayRequest, PlaybackHandle,
+};
 use rython_core::Vec3;
 
 fn manager() -> AudioManager {
@@ -173,7 +175,10 @@ fn set_volume_dialogue_category() {
     let mut m = manager();
     m.set_volume("dialogue", 0.3).unwrap();
     let vol = m.effective_volume(AudioCategory::Dialogue);
-    assert!((vol - 0.3).abs() < f32::EPSILON, "dialogue volume should be 0.3, got {vol}");
+    assert!(
+        (vol - 0.3).abs() < f32::EPSILON,
+        "dialogue volume should be 0.3, got {vol}"
+    );
 }
 
 #[test]
@@ -181,7 +186,10 @@ fn set_volume_ambient_category() {
     let mut m = manager();
     m.set_volume("ambient", 0.6).unwrap();
     let vol = m.effective_volume(AudioCategory::Ambient);
-    assert!((vol - 0.6).abs() < f32::EPSILON, "ambient volume should be 0.6, got {vol}");
+    assert!(
+        (vol - 0.6).abs() < f32::EPSILON,
+        "ambient volume should be 0.6, got {vol}"
+    );
 }
 
 // ── stop_category on empty manager ───────────────────────────────────────────
@@ -190,7 +198,10 @@ fn set_volume_ambient_category() {
 fn stop_category_empty_is_noop() {
     let mut m = manager();
     let result = m.stop_category("sfx");
-    assert!(result.is_ok(), "stop_category on empty manager must succeed");
+    assert!(
+        result.is_ok(),
+        "stop_category on empty manager must succeed"
+    );
     // Still able to play more (slot wasn't somehow consumed)
     assert!(m.can_play_more());
 }
@@ -225,8 +236,18 @@ fn play_ids_are_monotonically_increasing() {
         })
         .unwrap();
 
-    assert!(h2.id() > h1.id(), "handle IDs must increase (h1={} h2={})", h1.id(), h2.id());
-    assert!(h3.id() > h2.id(), "handle IDs must increase (h2={} h3={})", h2.id(), h3.id());
+    assert!(
+        h2.id() > h1.id(),
+        "handle IDs must increase (h1={} h2={})",
+        h1.id(),
+        h2.id()
+    );
+    assert!(
+        h3.id() > h2.id(),
+        "handle IDs must increase (h2={} h3={})",
+        h2.id(),
+        h3.id()
+    );
 }
 
 // ── Max-sources exhaustion then free slot via stop ────────────────────────────

@@ -45,7 +45,10 @@ impl ConsolePanel {
     }
 
     pub fn push(&mut self, level: LogLevel, message: impl Into<String>) {
-        self.log.push(LogEntry { level, message: message.into() });
+        self.log.push(LogEntry {
+            level,
+            message: message.into(),
+        });
     }
 
     pub fn push_info(&mut self, msg: impl Into<String>) {

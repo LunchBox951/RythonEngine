@@ -58,25 +58,35 @@ pub struct ResourcesBridge {}
 #[pymethods]
 impl ResourcesBridge {
     fn load_image(&self, path: &str) -> AssetHandlePy {
-        AssetHandlePy { inner: resource_store().load_image(path) }
+        AssetHandlePy {
+            inner: resource_store().load_image(path),
+        }
     }
 
     fn load_mesh(&self, path: &str) -> AssetHandlePy {
-        AssetHandlePy { inner: resource_store().load_mesh(path) }
+        AssetHandlePy {
+            inner: resource_store().load_mesh(path),
+        }
     }
 
     fn load_sound(&self, path: &str) -> AssetHandlePy {
-        AssetHandlePy { inner: resource_store().load_sound(path) }
+        AssetHandlePy {
+            inner: resource_store().load_sound(path),
+        }
     }
 
     #[pyo3(signature = (path, size = 16.0))]
     fn load_font(&self, path: &str, size: f32) -> AssetHandlePy {
-        AssetHandlePy { inner: resource_store().load_font(path, size) }
+        AssetHandlePy {
+            inner: resource_store().load_font(path, size),
+        }
     }
 
     #[pyo3(signature = (path, cols = 1, rows = 1))]
     fn load_spritesheet(&self, path: &str, cols: u32, rows: u32) -> AssetHandlePy {
-        AssetHandlePy { inner: resource_store().load_spritesheet(path, cols, rows) }
+        AssetHandlePy {
+            inner: resource_store().load_spritesheet(path, cols, rows),
+        }
     }
 
     fn memory_used_mb(&self) -> f64 {

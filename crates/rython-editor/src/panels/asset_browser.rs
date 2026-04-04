@@ -150,7 +150,9 @@ impl AssetBrowserPanel {
                 Tab::All => true,
                 Tab::Category(cat) => a.category == cat,
             })
-            .filter(|a| filter_lower.is_empty() || a.filename.to_lowercase().contains(&filter_lower))
+            .filter(|a| {
+                filter_lower.is_empty() || a.filename.to_lowercase().contains(&filter_lower)
+            })
             .collect();
 
         if visible.is_empty() {
@@ -161,7 +163,9 @@ impl AssetBrowserPanel {
         let cell_size = 72.0;
         let spacing = 8.0;
         let avail_width = ui.available_width();
-        let cols = ((avail_width + spacing) / (cell_size + spacing)).floor().max(1.0) as usize;
+        let cols = ((avail_width + spacing) / (cell_size + spacing))
+            .floor()
+            .max(1.0) as usize;
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             egui::Grid::new("asset_grid")
@@ -248,7 +252,13 @@ impl AssetBrowserPanel {
     fn import_files(&mut self, project_root: Option<&PathBuf>) {
         let Some(root) = project_root else { return };
         let result = rfd::FileDialog::new()
-            .add_filter("Assets", &["png", "jpg", "jpeg", "bmp", "tga", "glb", "gltf", "obj", "wav", "ogg", "mp3", "flac", "ttf", "otf"])
+            .add_filter(
+                "Assets",
+                &[
+                    "png", "jpg", "jpeg", "bmp", "tga", "glb", "gltf", "obj", "wav", "ogg", "mp3",
+                    "flac", "ttf", "otf",
+                ],
+            )
             .pick_files();
 
         let Some(paths) = result else { return };
@@ -290,7 +300,9 @@ impl Default for AssetBrowserPanel {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn scan_dir(dir: &Path, out: &mut Vec<AssetEntry>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -310,7 +322,12 @@ fn scan_dir(dir: &Path, out: &mut Vec<AssetEntry>) {
                 .file_stem()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
-            out.push(AssetEntry { path, category, filename, stem });
+            out.push(AssetEntry {
+                path,
+                category,
+                filename,
+                stem,
+            });
         }
     }
 }
