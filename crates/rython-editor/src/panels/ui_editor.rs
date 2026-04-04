@@ -402,7 +402,7 @@ impl UiEditorPanel {
         let roots = self.root_order.clone();
         for &id in &roots {
             {
-                let w = self.widgets.get_mut(&id).unwrap();
+                let w = self.widgets.get_mut(&id).expect("root_order ids must exist in widget map");
                 w.abs_x = w.x;
                 w.abs_y = w.y;
             }
@@ -425,7 +425,7 @@ impl UiEditorPanel {
                         (c.x, c.y)
                     };
                     {
-                        let c = self.widgets.get_mut(&child_id).unwrap();
+                        let c = self.widgets.get_mut(&child_id).expect("child ids must exist in widget map");
                         c.abs_x = abs_x + cx;
                         c.abs_y = abs_y + cy;
                     }
@@ -437,7 +437,7 @@ impl UiEditorPanel {
                 for child_id in children {
                     let child_h = self.widgets[&child_id].h;
                     {
-                        let c = self.widgets.get_mut(&child_id).unwrap();
+                        let c = self.widgets.get_mut(&child_id).expect("child ids must exist in widget map");
                         c.abs_x = abs_x + PAD;
                         c.abs_y = cursor_y;
                     }
@@ -450,7 +450,7 @@ impl UiEditorPanel {
                 for child_id in children {
                     let child_w = self.widgets[&child_id].w;
                     {
-                        let c = self.widgets.get_mut(&child_id).unwrap();
+                        let c = self.widgets.get_mut(&child_id).expect("child ids must exist in widget map");
                         c.abs_x = cursor_x;
                         c.abs_y = abs_y + PAD;
                     }

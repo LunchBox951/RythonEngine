@@ -224,8 +224,8 @@ impl PlaySession {
 
         let (tx, rx) = mpsc::channel::<(LogLevel, String)>();
         let tx2 = tx.clone();
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
+        let stdout = child.stdout.take().expect("stdout was piped");
+        let stderr = child.stderr.take().expect("stderr was piped");
 
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines().flatten() {
@@ -973,7 +973,7 @@ impl eframe::App for EditorApp {
             self.save_current_scene();
         }
         if save_as_pressed && self.project.root_dir.is_some() {
-            let root = self.project.root_dir.clone().unwrap();
+            let root = self.project.root_dir.clone().expect("root_dir is Some — guarded by is_some() check above");
             if let Some(path) = rfd::FileDialog::new()
                 .set_directory(root.join("scenes"))
                 .add_filter("Scene", &["json"])
@@ -1472,8 +1472,8 @@ impl eframe::App for EditorApp {
                                 self.scene.components.get::<TransformComponent>(drag.entity)
                             {
                                 let old_json =
-                                    serde_json::to_value(&drag.initial_transform).unwrap();
-                                let new_json = serde_json::to_value(&current_t).unwrap();
+                                    serde_json::to_value(&drag.initial_transform).expect("TransformComponent must be serializable");
+                                let new_json = serde_json::to_value(&current_t).expect("TransformComponent must be serializable");
                                 if old_json != new_json {
                                     let cmd = ModifyComponent {
                                         entity: drag.entity,

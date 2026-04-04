@@ -199,11 +199,12 @@ fn spawn_new_entity_with_parent(
     use rython_ecs::component::TransformComponent;
 
     let new_id = EntityId::next();
-    let transform_json = serde_json::to_value(TransformComponent::default()).unwrap();
+    let transform_json = serde_json::to_value(TransformComponent::default())
+        .expect("TransformComponent must be serializable");
     let tag_json = serde_json::to_value(rython_ecs::component::TagComponent {
         tags: vec!["New Entity".to_string()],
     })
-    .unwrap();
+    .expect("TagComponent must be serializable");
 
     let cmd = SpawnEntity::new(
         new_id,

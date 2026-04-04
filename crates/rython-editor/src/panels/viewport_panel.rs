@@ -111,7 +111,7 @@ pub fn show(
     }
     drop(egui_renderer);
 
-    let vt = viewport_texture.as_ref().unwrap();
+    let vt = viewport_texture.as_ref().expect("viewport_texture was just set to Some above");
 
     // Update camera aspect ratio
     camera.aspect = px_w as f32 / px_h as f32;

@@ -102,7 +102,7 @@ impl ScriptPanel {
             ui.label("No project open.");
             return;
         }
-        let root = project_root.unwrap();
+        let root = project_root.expect("project_root is Some — guarded by is_none() check above");
 
         // ── Script list ───────────────────────────────────────────────────────
         if self.scripts.is_empty() {

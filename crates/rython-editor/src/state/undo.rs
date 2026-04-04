@@ -100,22 +100,28 @@ fn apply_component_json(scene: &Scene, entity: EntityId, type_name: &str, data: 
 fn default_component_json(type_name: &str) -> Value {
     match type_name {
         "TransformComponent" => {
-            serde_json::to_value(TransformComponent::default()).unwrap()
+            serde_json::to_value(TransformComponent::default())
+                .expect("TransformComponent must be serializable")
         }
         "MeshComponent" => {
-            serde_json::to_value(MeshComponent::default()).unwrap()
+            serde_json::to_value(MeshComponent::default())
+                .expect("MeshComponent must be serializable")
         }
         "TagComponent" => {
-            serde_json::to_value(TagComponent::default()).unwrap()
+            serde_json::to_value(TagComponent::default())
+                .expect("TagComponent must be serializable")
         }
         "RigidBodyComponent" => {
-            serde_json::to_value(RigidBodyComponent::default()).unwrap()
+            serde_json::to_value(RigidBodyComponent::default())
+                .expect("RigidBodyComponent must be serializable")
         }
         "ColliderComponent" => {
-            serde_json::to_value(ColliderComponent::default()).unwrap()
+            serde_json::to_value(ColliderComponent::default())
+                .expect("ColliderComponent must be serializable")
         }
         "BillboardComponent" => {
-            serde_json::to_value(BillboardComponent::default()).unwrap()
+            serde_json::to_value(BillboardComponent::default())
+                .expect("BillboardComponent must be serializable")
         }
         _ => Value::Null,
     }
@@ -380,22 +386,22 @@ impl DetachComponent {
 fn snapshot_single_component(entity: EntityId, type_name: &str, scene: &Scene) -> Value {
     match type_name {
         "TransformComponent" => scene.components.get::<TransformComponent>(entity)
-            .map(|c| serde_json::to_value(&c).unwrap())
+            .map(|c| serde_json::to_value(&c).expect("TransformComponent must be serializable"))
             .unwrap_or(Value::Null),
         "MeshComponent" => scene.components.get::<MeshComponent>(entity)
-            .map(|c| serde_json::to_value(&c).unwrap())
+            .map(|c| serde_json::to_value(&c).expect("MeshComponent must be serializable"))
             .unwrap_or(Value::Null),
         "TagComponent" => scene.components.get::<TagComponent>(entity)
-            .map(|c| serde_json::to_value(&c).unwrap())
+            .map(|c| serde_json::to_value(&c).expect("TagComponent must be serializable"))
             .unwrap_or(Value::Null),
         "RigidBodyComponent" => scene.components.get::<RigidBodyComponent>(entity)
-            .map(|c| serde_json::to_value(&c).unwrap())
+            .map(|c| serde_json::to_value(&c).expect("RigidBodyComponent must be serializable"))
             .unwrap_or(Value::Null),
         "ColliderComponent" => scene.components.get::<ColliderComponent>(entity)
-            .map(|c| serde_json::to_value(&c).unwrap())
+            .map(|c| serde_json::to_value(&c).expect("ColliderComponent must be serializable"))
             .unwrap_or(Value::Null),
         "BillboardComponent" => scene.components.get::<BillboardComponent>(entity)
-            .map(|c| serde_json::to_value(&c).unwrap())
+            .map(|c| serde_json::to_value(&c).expect("BillboardComponent must be serializable"))
             .unwrap_or(Value::Null),
         _ => Value::Null,
     }

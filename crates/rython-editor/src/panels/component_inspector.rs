@@ -128,7 +128,7 @@ fn show_transform(
     let Some(mut t) = scene.components.get::<TransformComponent>(entity) else {
         return false;
     };
-    let old_json = serde_json::to_value(&t).unwrap();
+    let old_json = serde_json::to_value(&t).expect("TransformComponent must be serializable");
     let mut changed = false;
 
     ui.label("Position");
@@ -199,7 +199,7 @@ fn show_transform(
     if changed {
         // Apply live
         scene.components.insert(entity, t.clone());
-        let new_json = serde_json::to_value(&t).unwrap();
+        let new_json = serde_json::to_value(&t).expect("TransformComponent must be serializable");
         let cmd = ModifyComponent {
             entity,
             type_name: "TransformComponent".to_string(),
@@ -223,7 +223,7 @@ fn show_mesh(
     let Some(mut m) = scene.components.get::<MeshComponent>(entity) else {
         return false;
     };
-    let old_json = serde_json::to_value(&m).unwrap();
+    let old_json = serde_json::to_value(&m).expect("MeshComponent must be serializable");
     let mut changed = false;
 
     // Helper: check if a dragged asset should be dropped onto a field.
@@ -281,7 +281,7 @@ fn show_mesh(
 
     if changed {
         scene.components.insert(entity, m.clone());
-        let new_json = serde_json::to_value(&m).unwrap();
+        let new_json = serde_json::to_value(&m).expect("MeshComponent must be serializable");
         let cmd = ModifyComponent {
             entity,
             type_name: "MeshComponent".to_string(),
@@ -304,7 +304,7 @@ fn show_tag(
     let Some(mut tag) = scene.components.get::<TagComponent>(entity) else {
         return false;
     };
-    let old_json = serde_json::to_value(&tag).unwrap();
+    let old_json = serde_json::to_value(&tag).expect("TagComponent must be serializable");
     let mut changed = false;
 
     let mut to_remove: Option<usize> = None;
@@ -337,7 +337,7 @@ fn show_tag(
 
     if changed {
         scene.components.insert(entity, tag.clone());
-        let new_json = serde_json::to_value(&tag).unwrap();
+        let new_json = serde_json::to_value(&tag).expect("TagComponent must be serializable");
         let cmd = ModifyComponent {
             entity,
             type_name: "TagComponent".to_string(),
@@ -360,7 +360,7 @@ fn show_rigid_body(
     let Some(mut rb) = scene.components.get::<RigidBodyComponent>(entity) else {
         return false;
     };
-    let old_json = serde_json::to_value(&rb).unwrap();
+    let old_json = serde_json::to_value(&rb).expect("RigidBodyComponent must be serializable");
     let mut changed = false;
 
     egui::Grid::new("rb").num_columns(2).show(ui, |ui| {
@@ -385,7 +385,7 @@ fn show_rigid_body(
 
     if changed {
         scene.components.insert(entity, rb.clone());
-        let new_json = serde_json::to_value(&rb).unwrap();
+        let new_json = serde_json::to_value(&rb).expect("RigidBodyComponent must be serializable");
         let cmd = ModifyComponent {
             entity,
             type_name: "RigidBodyComponent".to_string(),
@@ -408,7 +408,7 @@ fn show_collider(
     let Some(mut col) = scene.components.get::<ColliderComponent>(entity) else {
         return false;
     };
-    let old_json = serde_json::to_value(&col).unwrap();
+    let old_json = serde_json::to_value(&col).expect("ColliderComponent must be serializable");
     let mut changed = false;
 
     egui::Grid::new("col").num_columns(2).show(ui, |ui| {
@@ -439,7 +439,7 @@ fn show_collider(
 
     if changed {
         scene.components.insert(entity, col.clone());
-        let new_json = serde_json::to_value(&col).unwrap();
+        let new_json = serde_json::to_value(&col).expect("ColliderComponent must be serializable");
         let cmd = ModifyComponent {
             entity,
             type_name: "ColliderComponent".to_string(),
@@ -462,7 +462,7 @@ fn show_billboard(
     let Some(mut b) = scene.components.get::<BillboardComponent>(entity) else {
         return false;
     };
-    let old_json = serde_json::to_value(&b).unwrap();
+    let old_json = serde_json::to_value(&b).expect("BillboardComponent must be serializable");
     let mut changed = false;
 
     egui::Grid::new("bill").num_columns(2).show(ui, |ui| {
@@ -496,7 +496,7 @@ fn show_billboard(
 
     if changed {
         scene.components.insert(entity, b.clone());
-        let new_json = serde_json::to_value(&b).unwrap();
+        let new_json = serde_json::to_value(&b).expect("BillboardComponent must be serializable");
         let cmd = ModifyComponent {
             entity,
             type_name: "BillboardComponent".to_string(),
