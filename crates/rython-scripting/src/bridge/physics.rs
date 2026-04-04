@@ -25,9 +25,8 @@ pub struct PhysicsBridge {}
 #[pymethods]
 impl PhysicsBridge {
     fn set_gravity(&self, x: f32, y: f32, z: f32) -> PyResult<()> {
-        let world = physics_store().ok_or_else(|| {
-            PyErr::new::<PyRuntimeError, _>("PhysicsWorld not initialized")
-        })?;
+        let world = physics_store()
+            .ok_or_else(|| PyErr::new::<PyRuntimeError, _>("PhysicsWorld not initialized"))?;
         world.lock().set_gravity([x, y, z]);
         Ok(())
     }

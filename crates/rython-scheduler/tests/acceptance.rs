@@ -158,7 +158,10 @@ fn t_sched_07_background_callback_receives_result() {
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    assert!(cb_called.load(Ordering::Relaxed), "callback was never invoked");
+    assert!(
+        cb_called.load(Ordering::Relaxed),
+        "callback was never invoked"
+    );
     assert_eq!(received.load(Ordering::Relaxed), 42);
 }
 
@@ -217,8 +220,16 @@ fn t_sched_08_ownership_cancellation() {
     // Allow a second tick to confirm recurring tasks are gone
     sched.tick().unwrap();
 
-    assert_eq!(cancelled_ran.load(Ordering::Relaxed), 0, "cancelled tasks should not have run");
-    assert_eq!(other_ran.load(Ordering::Relaxed), 1, "other owner's task should have run once");
+    assert_eq!(
+        cancelled_ran.load(Ordering::Relaxed),
+        0,
+        "cancelled tasks should not have run"
+    );
+    assert_eq!(
+        other_ran.load(Ordering::Relaxed),
+        1,
+        "other owner's task should have run once"
+    );
 }
 
 // ─── T-SCHED-09: Recurring Task Persistence ──────────────────────────────────
@@ -324,7 +335,11 @@ fn t_sched_11_task_group_fan_in() {
         }
     }
 
-    assert_eq!(cb_count.load(Ordering::Relaxed), 1, "callback should fire exactly once");
+    assert_eq!(
+        cb_count.load(Ordering::Relaxed),
+        1,
+        "callback should fire exactly once"
+    );
     let mut r = results_received.lock().unwrap();
     r.sort();
     assert_eq!(*r, vec![10, 20, 30], "all 3 results must be present");
@@ -415,7 +430,10 @@ fn t_sched_13_cross_thread_submission() {
     // Tick picks up remote submission
     sched.tick().unwrap();
 
-    assert!(flag.load(Ordering::Relaxed), "cross-thread task should have run");
+    assert!(
+        flag.load(Ordering::Relaxed),
+        "cross-thread task should have run"
+    );
 }
 
 // ─── T-SCHED-14: Error Handling — Task Failure Does Not Stop Scheduler ────────
@@ -454,7 +472,10 @@ fn t_sched_14_task_failure_does_not_stop_scheduler() {
     );
 
     let result = sched.tick();
-    assert!(result.is_ok(), "scheduler.tick() must return Ok even on task failure");
+    assert!(
+        result.is_ok(),
+        "scheduler.tick() must return Ok even on task failure"
+    );
     assert!(a_ran.load(Ordering::Relaxed), "task A should have run");
     assert!(c_ran.load(Ordering::Relaxed), "task C should have run");
 }
@@ -495,7 +516,10 @@ fn t_sched_15_panic_recovery() {
     let result2 = sched.tick();
     assert!(result2.is_ok());
 
-    assert!(after_ran.load(Ordering::Relaxed), "task after panic should have run");
+    assert!(
+        after_ran.load(Ordering::Relaxed),
+        "task after panic should have run"
+    );
 }
 
 // ─── T-ERR-03: TaskError Captures Panic Message ──────────────────────────────
@@ -507,7 +531,10 @@ fn t_err_03_task_error_captures_panic_message() {
         message: "something broke".to_string(),
     };
     let msg = err.to_string();
-    assert!(msg.contains("something broke"), "panic message should be captured: {msg}");
+    assert!(
+        msg.contains("something broke"),
+        "panic message should be captured: {msg}"
+    );
 
     // And a panicking background task is caught by the scheduler
     let mut sched = TaskScheduler::new(&SchedulerConfig {
@@ -559,7 +586,10 @@ fn t_err_04_cancelled_on_owner_unload() {
     sched.cancel_owned(owner_id);
 
     sched.tick().unwrap();
-    assert!(!ran.load(Ordering::Relaxed), "cancelled task should not execute");
+    assert!(
+        !ran.load(Ordering::Relaxed),
+        "cancelled task should not execute"
+    );
 
     // Verify the error type exists and works
     let err = TaskError::Cancelled;
@@ -592,7 +622,11 @@ fn t_sched_16_recurring_parallel_persistence() {
         sched.tick().unwrap();
     }
 
-    assert_eq!(counter.load(Ordering::Relaxed), 20, "recurring parallel should run every tick");
+    assert_eq!(
+        counter.load(Ordering::Relaxed),
+        20,
+        "recurring parallel should run every tick"
+    );
 }
 
 // ─── T-SCHED-17: Recurring Parallel Self-Termination ─────────────────────────
@@ -621,7 +655,11 @@ fn t_sched_17_recurring_parallel_self_termination() {
         sched.tick().unwrap();
     }
 
-    assert_eq!(counter.load(Ordering::Relaxed), 5, "recurring parallel should stop after self-termination");
+    assert_eq!(
+        counter.load(Ordering::Relaxed),
+        5,
+        "recurring parallel should stop after self-termination"
+    );
 }
 
 // ─── T-SCHED-18: Empty Tick Returns Ok ───────────────────────────────────────
@@ -673,8 +711,16 @@ fn t_sched_19_cancel_owned_clears_parallel_queue() {
     sched.cancel_owned(owner);
     sched.tick().unwrap();
 
-    assert_eq!(ran.load(Ordering::Relaxed), 0, "cancelled parallel tasks should not run");
-    assert_eq!(other_ran.load(Ordering::Relaxed), 1, "other owner's parallel task should run");
+    assert_eq!(
+        ran.load(Ordering::Relaxed),
+        0,
+        "cancelled parallel tasks should not run"
+    );
+    assert_eq!(
+        other_ran.load(Ordering::Relaxed),
+        1,
+        "other owner's parallel task should run"
+    );
 }
 
 // ─── T-SCHED-20: cancel_owned Clears Recurring Parallel ──────────────────────
@@ -717,8 +763,16 @@ fn t_sched_20_cancel_owned_clears_recurring_parallel() {
         sched.tick().unwrap();
     }
 
-    assert_eq!(ran.load(Ordering::Relaxed), 0, "cancelled recurring parallel should not run");
-    assert_eq!(other_ran.load(Ordering::Relaxed), 5, "other owner's recurring parallel should keep running");
+    assert_eq!(
+        ran.load(Ordering::Relaxed),
+        0,
+        "cancelled recurring parallel should not run"
+    );
+    assert_eq!(
+        other_ran.load(Ordering::Relaxed),
+        5,
+        "other owner's recurring parallel should keep running"
+    );
 }
 
 // ─── T-SCHED-21: Group with Zero Members Fires Immediately on Seal ───────────
@@ -737,7 +791,10 @@ fn t_sched_21_group_zero_members_fires_on_seal() {
     let group_id = sched.create_group(
         Box::new(move |results| {
             f.store(true, Ordering::Relaxed);
-            assert!(results.is_empty(), "zero-member group should have empty results");
+            assert!(
+                results.is_empty(),
+                "zero-member group should have empty results"
+            );
             Ok(())
         }),
         1,
@@ -745,7 +802,10 @@ fn t_sched_21_group_zero_members_fires_on_seal() {
 
     sched.group_seal(group_id);
 
-    assert!(fired.load(Ordering::Relaxed), "zero-member group callback should fire synchronously on seal");
+    assert!(
+        fired.load(Ordering::Relaxed),
+        "zero-member group callback should fire synchronously on seal"
+    );
 }
 
 // ─── T-SCHED-22: Multiple Concurrent Remote Senders ──────────────────────────
@@ -838,7 +898,10 @@ fn t_sched_24_cancel_owned_empty_is_noop() {
     let mut sched = default_scheduler();
     sched.cancel_owned(999);
     sched.cancel_owned(0);
-    assert!(sched.tick().is_ok(), "tick after no-op cancel should return Ok");
+    assert!(
+        sched.tick().is_ok(),
+        "tick after no-op cancel should return Ok"
+    );
 }
 
 // ─── T-SCHED-25: Background Callback Returning Err Does Not Crash ────────────
@@ -858,7 +921,9 @@ fn t_sched_25_background_callback_err_does_not_crash() {
         || 0u32,
         Some(move |_result: Result<u32, EngineError>| {
             c.store(true, Ordering::Relaxed);
-            Err(EngineError::Config("intentional callback error".to_string()))
+            Err(EngineError::Config(
+                "intentional callback error".to_string(),
+            ))
         }),
         priorities::IDLE,
         1,
@@ -866,14 +931,20 @@ fn t_sched_25_background_callback_err_does_not_crash() {
 
     for _ in 0..20 {
         let result = sched.tick();
-        assert!(result.is_ok(), "scheduler must survive an Err-returning callback");
+        assert!(
+            result.is_ok(),
+            "scheduler must survive an Err-returning callback"
+        );
         if cb_called.load(Ordering::Relaxed) {
             break;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    assert!(cb_called.load(Ordering::Relaxed), "callback should have been invoked");
+    assert!(
+        cb_called.load(Ordering::Relaxed),
+        "callback should have been invoked"
+    );
 }
 
 // ─── T-SCHED-01: Frame Pacing Accuracy at 60 FPS (reduced ticks for CI) ──────
@@ -891,7 +962,11 @@ fn t_sched_01_frame_pacing_60fps() {
         durations.push(start.elapsed());
     }
 
-    let mean_ms = durations.iter().map(|d| d.as_secs_f64() * 1000.0).sum::<f64>() / n as f64;
+    let mean_ms = durations
+        .iter()
+        .map(|d| d.as_secs_f64() * 1000.0)
+        .sum::<f64>()
+        / n as f64;
     let target = 1000.0 / 60.0;
     assert!(
         (mean_ms - target).abs() < 2.0,

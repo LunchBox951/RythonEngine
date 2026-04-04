@@ -4,44 +4,29 @@ use serde::{Deserialize, Serialize};
 
 // ── Enums ─────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub enum EditorTheme {
+    #[default]
     Dark,
     Light,
 }
 
-impl Default for EditorTheme {
-    fn default() -> Self {
-        EditorTheme::Dark
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub enum AutoSaveInterval {
+    #[default]
     Off,
     OneMin,
     FiveMin,
     TenMin,
 }
 
-impl Default for AutoSaveInterval {
-    fn default() -> Self {
-        AutoSaveInterval::Off
-    }
-}
-
 /// Mirrors `GizmoMode` without depending on the viewport crate.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub enum DefaultGizmoMode {
+    #[default]
     Translate,
     Rotate,
     Scale,
-}
-
-impl Default for DefaultGizmoMode {
-    fn default() -> Self {
-        DefaultGizmoMode::Translate
-    }
 }
 
 // ── Preferences ───────────────────────────────────────────────────────────────
@@ -107,7 +92,9 @@ impl Preferences {
     }
 
     pub fn save(&self) {
-        let Some(path) = Self::config_path() else { return };
+        let Some(path) = Self::config_path() else {
+            return;
+        };
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -146,7 +133,9 @@ impl RecentProjects {
     }
 
     pub fn save(&self) {
-        let Some(path) = Self::config_path() else { return };
+        let Some(path) = Self::config_path() else {
+            return;
+        };
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -165,7 +154,8 @@ impl RecentProjects {
 
     /// Remove entries whose `project.json` no longer exists on disk.
     pub fn prune(&mut self) {
-        self.recent_projects.retain(|p| p.join("project.json").exists());
+        self.recent_projects
+            .retain(|p| p.join("project.json").exists());
     }
 }
 
@@ -179,5 +169,7 @@ fn config_base() -> Option<PathBuf> {
             return Some(PathBuf::from(xdg));
         }
     }
-    std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config"))
+    std::env::var("HOME")
+        .ok()
+        .map(|h| PathBuf::from(h).join(".config"))
 }

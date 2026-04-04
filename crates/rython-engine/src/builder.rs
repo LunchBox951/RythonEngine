@@ -63,7 +63,11 @@ impl EngineBuilder {
         for module in self.modules {
             loader.register(module, None);
         }
-        Ok(Engine { scheduler, loader, scene })
+        Ok(Engine {
+            scheduler,
+            loader,
+            scene,
+        })
     }
 }
 

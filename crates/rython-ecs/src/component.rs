@@ -1,9 +1,9 @@
+use crate::entity::EntityId;
+use downcast_rs::{impl_downcast, Downcast};
+use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 use std::any::TypeId;
 use std::collections::HashMap;
-use parking_lot::RwLock;
-use downcast_rs::{impl_downcast, Downcast};
-use serde::{Serialize, Deserialize};
-use crate::entity::EntityId;
 
 /// Core component trait — all components must implement this.
 pub trait Component: Downcast + Send + Sync + 'static {
@@ -31,14 +31,30 @@ pub struct TransformComponent {
 
 impl Default for TransformComponent {
     fn default() -> Self {
-        Self { x: 0.0, y: 0.0, z: 0.0, rot_x: 0.0, rot_y: 0.0, rot_z: 0.0, scale_x: 1.0, scale_y: 1.0, scale_z: 1.0 }
+        Self {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            rot_x: 0.0,
+            rot_y: 0.0,
+            rot_z: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            scale_z: 1.0,
+        }
     }
 }
 
 impl Component for TransformComponent {
-    fn component_type_name(&self) -> &'static str { "TransformComponent" }
-    fn clone_box(&self) -> Box<dyn Component> { Box::new(self.clone()) }
-    fn serialize_json(&self) -> serde_json::Value { serde_json::to_value(self).unwrap() }
+    fn component_type_name(&self) -> &'static str {
+        "TransformComponent"
+    }
+    fn clone_box(&self) -> Box<dyn Component> {
+        Box::new(self.clone())
+    }
+    fn serialize_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,11 +93,21 @@ pub struct MeshComponent {
 }
 
 impl MeshComponent {
-    fn default_shininess() -> f32 { 32.0 }
-    fn default_specular_color() -> [f32; 3] { [1.0, 1.0, 1.0] }
-    fn default_roughness() -> f32 { 0.5 }
-    fn default_emissive_color() -> [f32; 4] { [0.0, 0.0, 0.0, 0.0] }
-    fn default_emissive_intensity() -> f32 { 1.0 }
+    fn default_shininess() -> f32 {
+        32.0
+    }
+    fn default_specular_color() -> [f32; 3] {
+        [1.0, 1.0, 1.0]
+    }
+    fn default_roughness() -> f32 {
+        0.5
+    }
+    fn default_emissive_color() -> [f32; 4] {
+        [0.0, 0.0, 0.0, 0.0]
+    }
+    fn default_emissive_intensity() -> f32 {
+        1.0
+    }
 }
 
 impl Default for MeshComponent {
@@ -105,9 +131,15 @@ impl Default for MeshComponent {
 }
 
 impl Component for MeshComponent {
-    fn component_type_name(&self) -> &'static str { "MeshComponent" }
-    fn clone_box(&self) -> Box<dyn Component> { Box::new(self.clone()) }
-    fn serialize_json(&self) -> serde_json::Value { serde_json::to_value(self).unwrap() }
+    fn component_type_name(&self) -> &'static str {
+        "MeshComponent"
+    }
+    fn clone_box(&self) -> Box<dyn Component> {
+        Box::new(self.clone())
+    }
+    fn serialize_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,24 +164,32 @@ impl Default for BillboardComponent {
 }
 
 impl Component for BillboardComponent {
-    fn component_type_name(&self) -> &'static str { "BillboardComponent" }
-    fn clone_box(&self) -> Box<dyn Component> { Box::new(self.clone()) }
-    fn serialize_json(&self) -> serde_json::Value { serde_json::to_value(self).unwrap() }
+    fn component_type_name(&self) -> &'static str {
+        "BillboardComponent"
+    }
+    fn clone_box(&self) -> Box<dyn Component> {
+        Box::new(self.clone())
+    }
+    fn serialize_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap()
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TagComponent {
     pub tags: Vec<String>,
 }
 
-impl Default for TagComponent {
-    fn default() -> Self { Self { tags: Vec::new() } }
-}
-
 impl Component for TagComponent {
-    fn component_type_name(&self) -> &'static str { "TagComponent" }
-    fn clone_box(&self) -> Box<dyn Component> { Box::new(self.clone()) }
-    fn serialize_json(&self) -> serde_json::Value { serde_json::to_value(self).unwrap() }
+    fn component_type_name(&self) -> &'static str {
+        "TagComponent"
+    }
+    fn clone_box(&self) -> Box<dyn Component> {
+        Box::new(self.clone())
+    }
+    fn serialize_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,9 +214,15 @@ impl Default for RigidBodyComponent {
 }
 
 impl Component for RigidBodyComponent {
-    fn component_type_name(&self) -> &'static str { "RigidBodyComponent" }
-    fn clone_box(&self) -> Box<dyn Component> { Box::new(self.clone()) }
-    fn serialize_json(&self) -> serde_json::Value { serde_json::to_value(self).unwrap() }
+    fn component_type_name(&self) -> &'static str {
+        "RigidBodyComponent"
+    }
+    fn clone_box(&self) -> Box<dyn Component> {
+        Box::new(self.clone())
+    }
+    fn serialize_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,48 +234,74 @@ pub struct ColliderComponent {
 
 impl Default for ColliderComponent {
     fn default() -> Self {
-        Self { shape: "box".to_string(), size: [1.0, 1.0, 1.0], is_trigger: false }
+        Self {
+            shape: "box".to_string(),
+            size: [1.0, 1.0, 1.0],
+            is_trigger: false,
+        }
     }
 }
 
 impl Component for ColliderComponent {
-    fn component_type_name(&self) -> &'static str { "ColliderComponent" }
-    fn clone_box(&self) -> Box<dyn Component> { Box::new(self.clone()) }
-    fn serialize_json(&self) -> serde_json::Value { serde_json::to_value(self).unwrap() }
+    fn component_type_name(&self) -> &'static str {
+        "ColliderComponent"
+    }
+    fn clone_box(&self) -> Box<dyn Component> {
+        Box::new(self.clone())
+    }
+    fn serialize_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum LightKind {
-    Directional { direction: [f32; 3] },
-    Point { radius: f32 },
-    Spot { direction: [f32; 3], inner_angle: f32, outer_angle: f32 },
+    Directional {
+        direction: [f32; 3],
+    },
+    Point {
+        radius: f32,
+    },
+    Spot {
+        direction: [f32; 3],
+        inner_angle: f32,
+        outer_angle: f32,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LightComponent {
-    pub kind:         LightKind,
-    pub color:        [f32; 3],
-    pub intensity:    f32,
-    pub enabled:      bool,
+    pub kind: LightKind,
+    pub color: [f32; 3],
+    pub intensity: f32,
+    pub enabled: bool,
     pub cast_shadows: bool,
 }
 
 impl Default for LightComponent {
     fn default() -> Self {
         Self {
-            kind:         LightKind::Directional { direction: [0.5, 1.0, 0.5] },
-            color:        [1.0, 1.0, 1.0],
-            intensity:    1.0,
-            enabled:      true,
+            kind: LightKind::Directional {
+                direction: [0.5, 1.0, 0.5],
+            },
+            color: [1.0, 1.0, 1.0],
+            intensity: 1.0,
+            enabled: true,
             cast_shadows: false,
         }
     }
 }
 
 impl Component for LightComponent {
-    fn component_type_name(&self) -> &'static str { "LightComponent" }
-    fn clone_box(&self) -> Box<dyn Component> { Box::new(self.clone()) }
-    fn serialize_json(&self) -> serde_json::Value { serde_json::to_value(self).unwrap() }
+    fn component_type_name(&self) -> &'static str {
+        "LightComponent"
+    }
+    fn clone_box(&self) -> Box<dyn Component> {
+        Box::new(self.clone())
+    }
+    fn serialize_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap()
+    }
 }
 
 // ── Component Storage ────────────────────────────────────────────────────────
@@ -247,35 +319,37 @@ pub struct ComponentStorage {
 
 impl Default for ComponentStorage {
     fn default() -> Self {
-        Self { stores: RwLock::new(HashMap::new()) }
+        Self {
+            stores: RwLock::new(HashMap::new()),
+        }
     }
 }
 
 impl ComponentStorage {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn insert<C: Component>(&self, entity: EntityId, component: C) {
         let tid = TypeId::of::<C>();
         let mut write = self.stores.write();
-        write.entry(tid).or_insert_with(HashMap::new)
+        write
+            .entry(tid)
+            .or_default()
             .insert(entity, Box::new(component));
     }
 
     pub fn insert_boxed(&self, entity: EntityId, tid: TypeId, component: Box<dyn Component>) {
         let mut write = self.stores.write();
-        write.entry(tid).or_insert_with(HashMap::new)
-            .insert(entity, component);
+        write.entry(tid).or_default().insert(entity, component);
     }
 
-    pub fn get<C: Component>(&self, entity: EntityId) -> Option<C>
-    where
-        C: Clone,
-    {
+    pub fn get<C: Component + Clone>(&self, entity: EntityId) -> Option<C> {
         let tid = TypeId::of::<C>();
         let stores = self.stores.read();
         let store = stores.get(&tid)?;
         let comp = store.get(&entity)?;
-        comp.downcast_ref::<C>().map(|c| c.clone())
+        comp.downcast_ref::<C>().cloned()
     }
 
     pub fn get_ref<C: Component, F, R>(&self, entity: EntityId, f: F) -> Option<R>

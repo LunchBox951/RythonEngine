@@ -60,11 +60,12 @@ impl SceneBridge {
                         if let Ok(s) = val.extract::<String>() {
                             components.push((
                                 TypeId::of::<MeshComponent>(),
-                                Box::new(MeshComponent { mesh_id: s, ..Default::default() }),
+                                Box::new(MeshComponent {
+                                    mesh_id: s,
+                                    ..Default::default()
+                                }),
                             ));
-                        } else if let Ok(map) =
-                            val.extract::<HashMap<String, Bound<'_, PyAny>>>()
-                        {
+                        } else if let Ok(map) = val.extract::<HashMap<String, Bound<'_, PyAny>>>() {
                             let mesh_id = map
                                 .get("mesh_id")
                                 .and_then(|v| v.extract::<String>().ok())
@@ -104,15 +105,21 @@ impl SceneBridge {
                                 .and_then(|v| v.extract::<f32>().ok())
                                 .unwrap_or(0.5)
                                 .clamp(0.0, 1.0);
-                            if map.get("metallic").and_then(|v| v.extract::<f32>().ok())
-                                .is_some_and(|v| v < 0.0 || v > 1.0)
+                            if map
+                                .get("metallic")
+                                .and_then(|v| v.extract::<f32>().ok())
+                                .is_some_and(|v| !(0.0..=1.0).contains(&v))
                             {
                                 log::warn!("spawn mesh: metallic out of range — clamped to [0, 1]");
                             }
-                            if map.get("roughness").and_then(|v| v.extract::<f32>().ok())
-                                .is_some_and(|v| v < 0.0 || v > 1.0)
+                            if map
+                                .get("roughness")
+                                .and_then(|v| v.extract::<f32>().ok())
+                                .is_some_and(|v| !(0.0..=1.0).contains(&v))
                             {
-                                log::warn!("spawn mesh: roughness out of range — clamped to [0, 1]");
+                                log::warn!(
+                                    "spawn mesh: roughness out of range — clamped to [0, 1]"
+                                );
                             }
                             let emissive_map_id = map
                                 .get("emissive_map")
@@ -128,7 +135,9 @@ impl SceneBridge {
                                 .and_then(|v| v.extract::<f32>().ok())
                                 .unwrap_or(1.0)
                                 .max(0.0);
-                            if map.get("emissive_intensity").and_then(|v| v.extract::<f32>().ok())
+                            if map
+                                .get("emissive_intensity")
+                                .and_then(|v| v.extract::<f32>().ok())
                                 .is_some_and(|v| v < 0.0)
                             {
                                 log::warn!("spawn mesh: emissive_intensity < 0 — clamped to 0.0");
@@ -162,9 +171,7 @@ impl SceneBridge {
                         }
                     }
                     "rigid_body" => {
-                        if let Ok(map) =
-                            val.extract::<HashMap<String, Bound<'_, PyAny>>>()
-                        {
+                        if let Ok(map) = val.extract::<HashMap<String, Bound<'_, PyAny>>>() {
                             let body_type = map
                                 .get("body_type")
                                 .and_then(|v| v.extract::<String>().ok())
@@ -190,9 +197,7 @@ impl SceneBridge {
                         }
                     }
                     "collider" => {
-                        if let Ok(map) =
-                            val.extract::<HashMap<String, Bound<'_, PyAny>>>()
-                        {
+                        if let Ok(map) = val.extract::<HashMap<String, Bound<'_, PyAny>>>() {
                             let shape = map
                                 .get("shape")
                                 .and_then(|v| v.extract::<String>().ok())
@@ -212,14 +217,16 @@ impl SceneBridge {
                                 .unwrap_or(false);
                             components.push((
                                 TypeId::of::<ColliderComponent>(),
-                                Box::new(ColliderComponent { shape, size, is_trigger }),
+                                Box::new(ColliderComponent {
+                                    shape,
+                                    size,
+                                    is_trigger,
+                                }),
                             ));
                         }
                     }
                     "light" => {
-                        if let Ok(map) =
-                            val.extract::<HashMap<String, Bound<'_, PyAny>>>()
-                        {
+                        if let Ok(map) = val.extract::<HashMap<String, Bound<'_, PyAny>>>() {
                             let light_type = map
                                 .get("type")
                                 .and_then(|v| v.extract::<String>().ok())
@@ -255,7 +262,11 @@ impl SceneBridge {
                                         .get("outer_angle")
                                         .and_then(|v| v.extract::<f32>().ok())
                                         .unwrap_or(30.0);
-                                    LightKind::Spot { direction, inner_angle, outer_angle }
+                                    LightKind::Spot {
+                                        direction,
+                                        inner_angle,
+                                        outer_angle,
+                                    }
                                 }
                                 _ => {
                                     // "directional" and any unknown type
@@ -286,14 +297,22 @@ impl SceneBridge {
 
         let scene = {
             let guard = scene_store().lock();
-            guard.as_ref().cloned().ok_or_else(|| PyErr::new::<PyRuntimeError, _>("No active scene"))?
+            guard
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| PyErr::new::<PyRuntimeError, _>("No active scene"))?
         };
 
         let handle = scene.queue_spawn(components);
         scene.drain_commands();
 
-        let eid = handle.get().ok_or_else(|| PyErr::new::<PyRuntimeError, _>("Spawn failed"))?;
-        Ok(EntityPy { id: eid.0, scene: Some(scene) })
+        let eid = handle
+            .get()
+            .ok_or_else(|| PyErr::new::<PyRuntimeError, _>("Spawn failed"))?;
+        Ok(EntityPy {
+            id: eid.0,
+            scene: Some(scene),
+        })
     }
 
     /// Emit a custom named event with keyword payload.
@@ -322,7 +341,10 @@ impl SceneBridge {
     fn unsubscribe(&self, event_name: &str, handler_id: u64) -> PyResult<()> {
         let scene = {
             let guard = scene_store().lock();
-            guard.as_ref().cloned().ok_or_else(|| PyErr::new::<PyRuntimeError, _>("No active scene"))?
+            guard
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| PyErr::new::<PyRuntimeError, _>("No active scene"))?
         };
         scene.unsubscribe(event_name, handler_id);
         Ok(())
@@ -332,7 +354,10 @@ impl SceneBridge {
     fn subscribe(&self, event_name: &str, handler: Py<PyAny>) -> PyResult<u64> {
         let scene = {
             let guard = scene_store().lock();
-            guard.as_ref().cloned().ok_or_else(|| PyErr::new::<PyRuntimeError, _>("No active scene"))?
+            guard
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| PyErr::new::<PyRuntimeError, _>("No active scene"))?
         };
 
         let id = scene.subscribe(event_name, move |_name, payload| {
@@ -363,9 +388,12 @@ impl SceneBridge {
         };
         if let Some(scene) = scene {
             let entity_id = EntityId(entity.id);
-            scene.components.insert(entity_id, crate::component::ScriptComponent {
-                class_name: class_name.clone(),
-            });
+            scene.components.insert(
+                entity_id,
+                crate::component::ScriptComponent {
+                    class_name: class_name.clone(),
+                },
+            );
         }
         Ok(())
     }

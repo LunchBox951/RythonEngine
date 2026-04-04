@@ -1,9 +1,9 @@
+use rython_core::math::{Vec2, Vec3};
 use rython_renderer::{
     norm_to_clip, rect_to_clip_verts, validate_wgsl, Camera, Color, CommandQueue, DrawBillboard,
     DrawCircle, DrawCommand, DrawImage, DrawLine, DrawMesh, DrawRect, DrawText, RendererConfig,
     RendererState, SceneSettings,
 };
-use rython_core::math::{Vec2, Vec3};
 
 // ─── T-REND-01: Renderer Initialization ──────────────────────────────────────
 
@@ -50,7 +50,11 @@ fn t_rend_02_empty_frame_renders_without_error() {
         // Headless render target: 64x64 texture using the surface colour format.
         let render_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("headless render target"),
-            size: wgpu::Extent3d { width: 64, height: 64, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -61,9 +65,11 @@ fn t_rend_02_empty_frame_renders_without_error() {
         let view = render_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Clear pass — exercises the render/submit path without a window surface.
-        let mut encoder = gpu.device.create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("clear encoder") },
-        );
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("clear encoder"),
+            });
         {
             let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("clear pass"),
@@ -117,11 +123,7 @@ fn t_rend_03_draw_command_z_sorting() {
         "commands must be sorted ascending by z: {z_values:?}"
     );
     // Command with z=1.0 is first (furthest back, drawn first)
-    assert_eq!(
-        sorted[0].z(),
-        1.0,
-        "lowest z must be drawn first"
-    );
+    assert_eq!(sorted[0].z(), 1.0, "lowest z must be drawn first");
 }
 
 // ─── T-REND-04: Normalized Coordinate Mapping ────────────────────────────────
@@ -162,14 +164,8 @@ fn t_rend_05_color_value_mapping() {
 
     assert_eq!(r, 1.0, "R=255 → 1.0");
     assert_eq!(g, 0.0, "G=0 → 0.0");
-    assert!(
-        (b - 128.0 / 255.0).abs() < 1e-5,
-        "B=128 → ~0.502, got {b}"
-    );
-    assert!(
-        (a - 200.0 / 255.0).abs() < 1e-5,
-        "A=200 → ~0.784, got {a}"
-    );
+    assert!((b - 128.0 / 255.0).abs() < 1e-5, "B=128 → ~0.502, got {b}");
+    assert!((a - 200.0 / 255.0).abs() < 1e-5, "A=200 → ~0.784, got {a}");
 }
 
 // ─── T-REND-06: Double-Buffered Command Queue ─────────────────────────────────
@@ -203,8 +199,16 @@ fn t_rend_06_double_buffered_command_queue() {
     queue.swap();
 
     // After swap: front has this frame's 100 commands; back is cleared
-    assert_eq!(queue.front_len(), 100, "after swap, front has exactly 100 commands");
-    assert_eq!(queue.back_len(), 0, "after swap, back is cleared for next frame");
+    assert_eq!(
+        queue.front_len(),
+        100,
+        "after swap, front has exactly 100 commands"
+    );
+    assert_eq!(
+        queue.back_len(),
+        0,
+        "after swap, back is cleared for next frame"
+    );
 
     // Renderer drains the front buffer
     let cmds = queue.take_sorted_front();
@@ -217,8 +221,8 @@ fn t_rend_06_double_buffered_command_queue() {
 #[test]
 #[ignore = "requires hardware GPU"]
 fn t_rend_07_gpu_texture_upload_from_background_decode() {
-    use std::sync::{Arc, Mutex};
     use rython_renderer::GpuUploadRequest;
+    use std::sync::{Arc, Mutex};
 
     pollster::block_on(async {
         use rython_renderer::GpuContext;
@@ -262,8 +266,8 @@ fn t_rend_07_gpu_texture_upload_from_background_decode() {
 #[test]
 #[ignore = "requires hardware GPU (Vulkan/Metal/DX12)"]
 fn t_rend_08_draw_image_with_loaded_texture() {
-    use std::sync::{Arc, Mutex};
     use rython_renderer::GpuUploadRequest;
+    use std::sync::{Arc, Mutex};
 
     pollster::block_on(async {
         use rython_renderer::GpuContext;
@@ -278,16 +282,18 @@ fn t_rend_08_draw_image_with_loaded_texture() {
         let tx2 = Arc::clone(&tx);
 
         let pixels: Vec<u8> = vec![
-            255, 0,   0,   255, // red
-            0,   255, 0,   255, // green
-            0,   0,   255, 255, // blue
-            255, 255, 0,   255, // yellow
+            255, 0, 0, 255, // red
+            0, 255, 0, 255, // green
+            0, 0, 255, 255, // blue
+            255, 255, 0, 255, // yellow
         ];
         gpu.process_uploads(vec![GpuUploadRequest {
             width: 2,
             height: 2,
             pixels,
-            on_ready: Box::new(move |tex| { tx2.lock().unwrap().send(tex).ok(); }),
+            on_ready: Box::new(move |tex| {
+                tx2.lock().unwrap().send(tex).ok();
+            }),
         }]);
         let img_texture = rx.recv().expect("on_ready must fire");
         let img_view = img_texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -308,7 +314,10 @@ fn t_rend_08_draw_image_with_loaded_texture() {
             usage: wgpu::BufferUsages::UNIFORM,
             mapped_at_creation: true,
         });
-        uniform_buf.slice(..).get_mapped_range_mut().copy_from_slice(uniform_bytes);
+        uniform_buf
+            .slice(..)
+            .get_mapped_range_mut()
+            .copy_from_slice(uniform_bytes);
         uniform_buf.unmap();
 
         // Bind group matching the image shader layout (uniform + texture + sampler).
@@ -316,16 +325,29 @@ fn t_rend_08_draw_image_with_loaded_texture() {
             label: Some("image bind group"),
             layout: &gpu.bind_group_layouts.image,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: uniform_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&img_view) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&img_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
             ],
         });
 
         // Headless render target.
         let render_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("image render target"),
-            size: wgpu::Extent3d { width: 64, height: 64, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -336,9 +358,11 @@ fn t_rend_08_draw_image_with_loaded_texture() {
         let rt_view = render_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Draw one textured quad via the image pipeline.
-        let mut encoder = gpu.device.create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("image test encoder") },
-        );
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("image test encoder"),
+            });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("image test pass"),
@@ -380,7 +404,11 @@ fn t_rend_09_draw_text_glyph_atlas() {
         let atlas_pixels: Vec<u8> = vec![255u8; 32 * 32 * 4];
         let atlas_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("glyph atlas"),
-            size: wgpu::Extent3d { width: 32, height: 32, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: 32,
+                height: 32,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -401,7 +429,11 @@ fn t_rend_09_draw_text_glyph_atlas() {
                 bytes_per_row: Some(4 * 32),
                 rows_per_image: Some(32),
             },
-            wgpu::Extent3d { width: 32, height: 32, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: 32,
+                height: 32,
+                depth_or_array_layers: 1,
+            },
         );
         let atlas_view = atlas_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -415,8 +447,8 @@ fn t_rend_09_draw_text_glyph_atlas() {
         // One full-screen glyph quad, UV covering the whole atlas, white colour.
         let uniform_data: [f32; 12] = [
             -1.0, -1.0, 2.0, 2.0, // rect: full clip-space quad
-            0.0,   0.0, 1.0, 1.0, // uv_rect: full atlas
-            1.0,   1.0, 1.0, 1.0, // color: white opaque
+            0.0, 0.0, 1.0, 1.0, // uv_rect: full atlas
+            1.0, 1.0, 1.0, 1.0, // color: white opaque
         ];
         let uniform_bytes: &[u8] = bytemuck::cast_slice(&uniform_data);
         let uniform_buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
@@ -425,7 +457,10 @@ fn t_rend_09_draw_text_glyph_atlas() {
             usage: wgpu::BufferUsages::UNIFORM,
             mapped_at_creation: true,
         });
-        uniform_buf.slice(..).get_mapped_range_mut().copy_from_slice(uniform_bytes);
+        uniform_buf
+            .slice(..)
+            .get_mapped_range_mut()
+            .copy_from_slice(uniform_bytes);
         uniform_buf.unmap();
 
         // Bind group matching the text shader layout (uniform + atlas texture + sampler).
@@ -433,16 +468,29 @@ fn t_rend_09_draw_text_glyph_atlas() {
             label: Some("text bind group"),
             layout: &gpu.bind_group_layouts.text,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: uniform_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&atlas_view) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&atlas_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
             ],
         });
 
         // Headless render target.
         let render_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("text render target"),
-            size: wgpu::Extent3d { width: 64, height: 64, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -453,9 +501,11 @@ fn t_rend_09_draw_text_glyph_atlas() {
         let rt_view = render_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Draw one glyph quad via the text pipeline.
-        let mut encoder = gpu.device.create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("text test encoder") },
-        );
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("text test encoder"),
+            });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("text test pass"),
@@ -492,11 +542,7 @@ fn t_rend_10_camera_view_matrix() {
 
     // Spec: forward vector ≈ (0, -0.447, 0.894)
     let fwd = camera.forward();
-    assert!(
-        fwd.x.abs() < 1e-5,
-        "forward.x should be ≈ 0, got {}",
-        fwd.x
-    );
+    assert!(fwd.x.abs() < 1e-5, "forward.x should be ≈ 0, got {}", fwd.x);
     assert!(
         (fwd.y - (-10.0_f32 / 500.0_f32.sqrt())).abs() < 1e-4,
         "forward.y ≈ -0.447, got {}",
@@ -619,10 +665,7 @@ fn t_rend_13_shader_hot_reload_resilience() {
 
     // Spec: shader compilation returns an error (not a panic)
     let result = validate_wgsl(malformed);
-    assert!(
-        result.is_err(),
-        "malformed WGSL must return Err, not Ok"
-    );
+    assert!(result.is_err(), "malformed WGSL must return Err, not Ok");
 
     let err = result.unwrap_err();
 
@@ -655,7 +698,10 @@ fn t_rend_13_shader_hot_reload_resilience() {
         ("shadow", SHADOW_WGSL),
     ] {
         let r = validate_wgsl(src);
-        assert!(r.is_ok(), "built-in shader '{name}' should pass validation: {r:?}");
+        assert!(
+            r.is_ok(),
+            "built-in shader '{name}' should pass validation: {r:?}"
+        );
     }
 }
 
@@ -673,7 +719,6 @@ fn t_rend_14_mesh_render_pipeline_with_depth_buffer() {
     pollster::block_on(async {
         use rython_renderer::GpuContext;
 
-
         let gpu = GpuContext::new_headless()
             .await
             .expect("GPU required for mesh pipeline test");
@@ -684,28 +729,84 @@ fn t_rend_14_mesh_render_pipeline_with_depth_buffer() {
         // Each face: 4 verts with a shared face normal, two CCW triangles.
         #[repr(C)]
         #[derive(Clone, Copy)]
-        struct Vert { pos: [f32; 3], norm: [f32; 3], uv: [f32; 2] }
+        struct Vert {
+            pos: [f32; 3],
+            norm: [f32; 3],
+            uv: [f32; 2],
+        }
         unsafe impl bytemuck::Pod for Vert {}
         unsafe impl bytemuck::Zeroable for Vert {}
 
         let face_data: [([f32; 3], [[f32; 3]; 4]); 6] = [
-            ([1.,0.,0.],  [[ 0.5,-0.5,-0.5],[ 0.5, 0.5,-0.5],[ 0.5, 0.5, 0.5],[ 0.5,-0.5, 0.5]]),
-            ([-1.,0.,0.], [[-0.5,-0.5, 0.5],[-0.5, 0.5, 0.5],[-0.5, 0.5,-0.5],[-0.5,-0.5,-0.5]]),
-            ([0.,1.,0.],  [[-0.5, 0.5, 0.5],[ 0.5, 0.5, 0.5],[ 0.5, 0.5,-0.5],[-0.5, 0.5,-0.5]]),
-            ([0.,-1.,0.], [[-0.5,-0.5,-0.5],[ 0.5,-0.5,-0.5],[ 0.5,-0.5, 0.5],[-0.5,-0.5, 0.5]]),
-            ([0.,0.,1.],  [[ 0.5,-0.5, 0.5],[ 0.5, 0.5, 0.5],[-0.5, 0.5, 0.5],[-0.5,-0.5, 0.5]]),
-            ([0.,0.,-1.], [[-0.5,-0.5,-0.5],[-0.5, 0.5,-0.5],[ 0.5, 0.5,-0.5],[ 0.5,-0.5,-0.5]]),
+            (
+                [1., 0., 0.],
+                [
+                    [0.5, -0.5, -0.5],
+                    [0.5, 0.5, -0.5],
+                    [0.5, 0.5, 0.5],
+                    [0.5, -0.5, 0.5],
+                ],
+            ),
+            (
+                [-1., 0., 0.],
+                [
+                    [-0.5, -0.5, 0.5],
+                    [-0.5, 0.5, 0.5],
+                    [-0.5, 0.5, -0.5],
+                    [-0.5, -0.5, -0.5],
+                ],
+            ),
+            (
+                [0., 1., 0.],
+                [
+                    [-0.5, 0.5, 0.5],
+                    [0.5, 0.5, 0.5],
+                    [0.5, 0.5, -0.5],
+                    [-0.5, 0.5, -0.5],
+                ],
+            ),
+            (
+                [0., -1., 0.],
+                [
+                    [-0.5, -0.5, -0.5],
+                    [0.5, -0.5, -0.5],
+                    [0.5, -0.5, 0.5],
+                    [-0.5, -0.5, 0.5],
+                ],
+            ),
+            (
+                [0., 0., 1.],
+                [
+                    [0.5, -0.5, 0.5],
+                    [0.5, 0.5, 0.5],
+                    [-0.5, 0.5, 0.5],
+                    [-0.5, -0.5, 0.5],
+                ],
+            ),
+            (
+                [0., 0., -1.],
+                [
+                    [-0.5, -0.5, -0.5],
+                    [-0.5, 0.5, -0.5],
+                    [0.5, 0.5, -0.5],
+                    [0.5, -0.5, -0.5],
+                ],
+            ),
         ];
-        let uvs: [[f32; 2]; 4] = [[0.,0.],[1.,0.],[1.,1.],[0.,1.]];
+        let uvs: [[f32; 2]; 4] = [[0., 0.], [1., 0.], [1., 1.], [0., 1.]];
 
         let mut verts: Vec<Vert> = Vec::with_capacity(24);
         let mut indices: Vec<u32> = Vec::with_capacity(36);
         for (norm, positions) in &face_data {
             let base = verts.len() as u32;
             for (i, pos) in positions.iter().enumerate() {
-                verts.push(Vert { pos: *pos, norm: *norm, uv: uvs[i] });
+                verts.push(Vert {
+                    pos: *pos,
+                    norm: *norm,
+                    uv: uvs[i],
+                });
             }
-            indices.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
+            indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
         }
 
         assert_eq!(verts.len(), 24, "procedural cube: 24 vertices");
@@ -715,7 +816,10 @@ fn t_rend_14_mesh_render_pipeline_with_depth_buffer() {
         state.upload_mesh("cube", verts_bytes, &indices);
 
         // Confirm the mesh is in the cache.
-        assert!(state.mesh_cache.contains_key("cube"), "mesh must be in cache after upload");
+        assert!(
+            state.mesh_cache.contains_key("cube"),
+            "mesh must be in cache after upload"
+        );
 
         // --- Create headless render targets ---
         let width = 64u32;
@@ -723,7 +827,11 @@ fn t_rend_14_mesh_render_pipeline_with_depth_buffer() {
 
         let color_tex = state.gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("color rt"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -735,9 +843,13 @@ fn t_rend_14_mesh_render_pipeline_with_depth_buffer() {
 
         // --- Clear the color target (required before mesh pass uses LoadOp::Load) ---
         {
-            let mut enc = state.gpu.device.create_command_encoder(
-                &wgpu::CommandEncoderDescriptor { label: Some("clear enc") },
-            );
+            let mut enc =
+                state
+                    .gpu
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("clear enc"),
+                    });
             {
                 let _p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("clear pass"),
@@ -759,7 +871,10 @@ fn t_rend_14_mesh_render_pipeline_with_depth_buffer() {
 
         // --- Create depth texture ---
         state.ensure_depth_texture(width, height);
-        assert!(state.depth_view().is_some(), "depth view must be available after ensure");
+        assert!(
+            state.depth_view().is_some(),
+            "depth view must be available after ensure"
+        );
 
         // --- Camera: position (3, 3, 3) looking at origin ---
         let mut camera = Camera::new();
@@ -785,9 +900,14 @@ fn t_rend_14_mesh_render_pipeline_with_depth_buffer() {
 
 fn make_rect(z: f32) -> DrawCommand {
     DrawCommand::Rect(DrawRect {
-        x: 0.0, y: 0.0, w: 0.1, h: 0.1,
+        x: 0.0,
+        y: 0.0,
+        w: 0.1,
+        h: 0.1,
         color: Color::rgb(255, 255, 255),
-        border: None, border_width: 0.0, z,
+        border: None,
+        border_width: 0.0,
+        z,
     })
 }
 
@@ -798,7 +918,11 @@ fn edge_command_queue_zero_capacity() {
     let queue = CommandQueue::new(0);
     queue.push(make_rect(0.0));
     assert_eq!(queue.back_len(), 0, "zero-capacity: nothing accepted");
-    assert_eq!(queue.dropped_count(), 1, "zero-capacity: command counted as dropped");
+    assert_eq!(
+        queue.dropped_count(),
+        1,
+        "zero-capacity: command counted as dropped"
+    );
     queue.swap();
     let cmds = queue.take_sorted_front();
     assert!(cmds.is_empty(), "zero-capacity: take returns empty");
@@ -819,7 +943,11 @@ fn edge_command_queue_multiple_swaps_no_push() {
     queue.swap(); // front=[rect], back=[]
     assert_eq!(queue.front_len(), 1);
     queue.swap(); // second swap: front gets empty back; back gets front then is cleared
-    assert_eq!(queue.front_len(), 0, "front must be empty after second swap with no new push");
+    assert_eq!(
+        queue.front_len(),
+        0,
+        "front must be empty after second swap with no new push"
+    );
 }
 
 #[test]
@@ -828,7 +956,11 @@ fn edge_command_queue_push_after_swap() {
     queue.push(make_rect(1.0));
     queue.swap(); // front=[rect(1)], back=[]
     queue.push(make_rect(2.0)); // back=[rect(2)], front unchanged
-    assert_eq!(queue.front_len(), 1, "front still has previous frame's command");
+    assert_eq!(
+        queue.front_len(),
+        1,
+        "front still has previous frame's command"
+    );
     assert_eq!(queue.back_len(), 1, "back has new command");
     let cmds = queue.take_sorted_front();
     assert_eq!(cmds[0].z(), 1.0, "renderer sees previous frame's command");
@@ -868,22 +1000,41 @@ fn edge_command_queue_nan_z_sorting() {
 fn edge_command_queue_mixed_variants_z_sort() {
     let queue = CommandQueue::new(64);
     queue.push(DrawCommand::Text(DrawText {
-        text: "hi".to_string(), font_id: String::new(),
-        x: 0.0, y: 0.0, color: Color::rgb(255, 255, 255), size: 16, z: 3.0,
+        text: "hi".to_string(),
+        font_id: String::new(),
+        x: 0.0,
+        y: 0.0,
+        color: Color::rgb(255, 255, 255),
+        size: 16,
+        z: 3.0,
     }));
     queue.push(DrawCommand::Circle(DrawCircle {
-        cx: 0.0, cy: 0.0, radius: 0.1,
-        color: Color::rgb(255, 0, 0), border: None, border_width: 0.0, z: 1.0,
+        cx: 0.0,
+        cy: 0.0,
+        radius: 0.1,
+        color: Color::rgb(255, 0, 0),
+        border: None,
+        border_width: 0.0,
+        z: 1.0,
     }));
     queue.push(DrawCommand::Line(DrawLine {
-        x0: 0.0, y0: 0.0, x1: 1.0, y1: 1.0,
-        color: Color::rgb(0, 255, 0), width: 1.0, z: 2.0,
+        x0: 0.0,
+        y0: 0.0,
+        x1: 1.0,
+        y1: 1.0,
+        color: Color::rgb(0, 255, 0),
+        width: 1.0,
+        z: 2.0,
     }));
     queue.push(make_rect(0.5));
     queue.swap();
     let cmds = queue.take_sorted_front();
     let zs: Vec<f32> = cmds.iter().map(|c| c.z()).collect();
-    assert_eq!(zs, vec![0.5, 1.0, 2.0, 3.0], "mixed variants sorted by z ascending");
+    assert_eq!(
+        zs,
+        vec![0.5, 1.0, 2.0, 3.0],
+        "mixed variants sorted by z ascending"
+    );
 }
 
 #[test]
@@ -907,7 +1058,11 @@ fn edge_command_queue_negative_z_sorting() {
     queue.swap();
     let cmds = queue.take_sorted_front();
     let zs: Vec<f32> = cmds.iter().map(|c| c.z()).collect();
-    assert_eq!(zs, vec![-10.0, -5.0, -1.0, 0.0, 3.0], "negative z values sorted ascending");
+    assert_eq!(
+        zs,
+        vec![-10.0, -5.0, -1.0, 0.0, 3.0],
+        "negative z values sorted ascending"
+    );
 }
 
 #[test]
@@ -918,14 +1073,21 @@ fn edge_command_queue_take_sorted_front_drains() {
     let first = queue.take_sorted_front();
     assert_eq!(first.len(), 1, "first take returns the command");
     let second = queue.take_sorted_front();
-    assert!(second.is_empty(), "second take on same frame returns empty — buffer was drained");
+    assert!(
+        second.is_empty(),
+        "second take on same frame returns empty — buffer was drained"
+    );
 }
 
 // ─── Color edge cases ─────────────────────────────────────────────────────────
 
 #[test]
 fn edge_color_rgb_sets_full_alpha() {
-    assert_eq!(Color::rgb(100, 200, 50).a, 255, "Color::rgb must set alpha=255");
+    assert_eq!(
+        Color::rgb(100, 200, 50).a,
+        255,
+        "Color::rgb must set alpha=255"
+    );
 }
 
 #[test]
@@ -968,12 +1130,18 @@ fn edge_color_copy() {
 fn edge_norm_to_clip_out_of_range() {
     // norm_to_clip(nx, ny) = [nx*2-1, -(ny*2-1)]
     let [cx, cy] = norm_to_clip(-0.5, -0.5);
-    assert!((cx - (-2.0)).abs() < 1e-6, "nx=-0.5 → clip_x=-2.0, got {cx}");
+    assert!(
+        (cx - (-2.0)).abs() < 1e-6,
+        "nx=-0.5 → clip_x=-2.0, got {cx}"
+    );
     assert!((cy - 2.0).abs() < 1e-6, "ny=-0.5 → clip_y=2.0, got {cy}");
 
     let [cx2, cy2] = norm_to_clip(1.5, 1.5);
     assert!((cx2 - 2.0).abs() < 1e-6, "nx=1.5 → clip_x=2.0, got {cx2}");
-    assert!((cy2 - (-2.0)).abs() < 1e-6, "ny=1.5 → clip_y=-2.0, got {cy2}");
+    assert!(
+        (cy2 - (-2.0)).abs() < 1e-6,
+        "ny=1.5 → clip_y=-2.0, got {cy2}"
+    );
 }
 
 #[test]
@@ -1003,7 +1171,10 @@ fn edge_camera_default_values() {
     assert_eq!(cam.fov_degrees, 90.0, "default FOV 90°");
     assert_eq!(cam.near, 0.1);
     assert_eq!(cam.far, 1000.0);
-    assert!((cam.aspect - 16.0 / 9.0).abs() < 1e-5, "default aspect 16:9");
+    assert!(
+        (cam.aspect - 16.0 / 9.0).abs() < 1e-5,
+        "default aspect 16:9"
+    );
 }
 
 #[test]
@@ -1018,7 +1189,10 @@ fn edge_camera_view_projection_combines_correctly() {
     let vp_arr = vp.to_cols_array();
     let exp_arr = expected.to_cols_array();
     for (i, (&a, &b)) in vp_arr.iter().zip(exp_arr.iter()).enumerate() {
-        assert!((a - b).abs() < 1e-5, "view_projection element {i}: {a} != {b}");
+        assert!(
+            (a - b).abs() < 1e-5,
+            "view_projection element {i}: {a} != {b}"
+        );
     }
 }
 
@@ -1037,26 +1211,73 @@ fn edge_camera_identity_position() {
 
 #[test]
 fn edge_draw_command_z_all_variants() {
-
-
     let cmds = [
-        DrawCommand::Rect(DrawRect { x: 0.0, y: 0.0, w: 0.1, h: 0.1,
-            color: Color::rgb(255, 255, 255), border: None, border_width: 0.0, z: 1.0 }),
-        DrawCommand::Circle(DrawCircle { cx: 0.0, cy: 0.0, radius: 0.1,
-            color: Color::rgb(255, 0, 0), border: None, border_width: 0.0, z: 2.0 }),
-        DrawCommand::Line(DrawLine { x0: 0.0, y0: 0.0, x1: 1.0, y1: 1.0,
-            color: Color::rgb(0, 255, 0), width: 1.0, z: 3.0 }),
-        DrawCommand::Image(DrawImage { asset_id: String::new(),
-            x: 0.0, y: 0.0, w: 1.0, h: 1.0, alpha: 1.0, z: 4.0 }),
-        DrawCommand::Text(DrawText { text: String::new(), font_id: String::new(),
-            x: 0.0, y: 0.0, color: Color::rgb(255, 255, 255), size: 16, z: 5.0 }),
-        DrawCommand::Mesh(DrawMesh { z: 6.0, ..Default::default() }),
-        DrawCommand::Billboard(DrawBillboard { asset_id: String::new(),
-            position: Vec3::ZERO, size: Vec2::ONE, color: Color::rgb(255, 255, 255), z: 7.0 }),
+        DrawCommand::Rect(DrawRect {
+            x: 0.0,
+            y: 0.0,
+            w: 0.1,
+            h: 0.1,
+            color: Color::rgb(255, 255, 255),
+            border: None,
+            border_width: 0.0,
+            z: 1.0,
+        }),
+        DrawCommand::Circle(DrawCircle {
+            cx: 0.0,
+            cy: 0.0,
+            radius: 0.1,
+            color: Color::rgb(255, 0, 0),
+            border: None,
+            border_width: 0.0,
+            z: 2.0,
+        }),
+        DrawCommand::Line(DrawLine {
+            x0: 0.0,
+            y0: 0.0,
+            x1: 1.0,
+            y1: 1.0,
+            color: Color::rgb(0, 255, 0),
+            width: 1.0,
+            z: 3.0,
+        }),
+        DrawCommand::Image(DrawImage {
+            asset_id: String::new(),
+            x: 0.0,
+            y: 0.0,
+            w: 1.0,
+            h: 1.0,
+            alpha: 1.0,
+            z: 4.0,
+        }),
+        DrawCommand::Text(DrawText {
+            text: String::new(),
+            font_id: String::new(),
+            x: 0.0,
+            y: 0.0,
+            color: Color::rgb(255, 255, 255),
+            size: 16,
+            z: 5.0,
+        }),
+        DrawCommand::Mesh(DrawMesh {
+            z: 6.0,
+            ..Default::default()
+        }),
+        DrawCommand::Billboard(DrawBillboard {
+            asset_id: String::new(),
+            position: Vec3::ZERO,
+            size: Vec2::ONE,
+            color: Color::rgb(255, 255, 255),
+            z: 7.0,
+        }),
     ];
     let expected_z = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
     for (cmd, &ez) in cmds.iter().zip(expected_z.iter()) {
-        assert_eq!(cmd.z(), ez, "z() accessor returned wrong value for {:?}", cmd);
+        assert_eq!(
+            cmd.z(),
+            ez,
+            "z() accessor returned wrong value for {:?}",
+            cmd
+        );
     }
 }
 
@@ -1081,7 +1302,11 @@ fn edge_shader_validate_valid_minimal() {
         }
     "#;
     let result = validate_wgsl(src);
-    assert!(result.is_ok(), "minimal valid WGSL should return Ok: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "minimal valid WGSL should return Ok: {:?}",
+        result.err()
+    );
 }
 
 // ─── RendererConfig edge cases ────────────────────────────────────────────────
@@ -1131,7 +1356,11 @@ fn qw1_1_draw_mesh_default_metallic_roughness() {
 
 #[test]
 fn qw1_2_draw_mesh_metallic_roughness_roundtrip() {
-    let cmd = DrawMesh { metallic: 0.8, roughness: 0.2, ..Default::default() };
+    let cmd = DrawMesh {
+        metallic: 0.8,
+        roughness: 0.2,
+        ..Default::default()
+    };
     assert!((cmd.metallic - 0.8).abs() < 1e-6);
     assert!((cmd.roughness - 0.2).abs() < 1e-6);
 }
@@ -1140,7 +1369,11 @@ fn qw1_2_draw_mesh_metallic_roughness_roundtrip() {
 fn qw1_3_draw_mesh_metallic_clamped_in_render() {
     // Clamping happens in render_meshes; verify field stores out-of-range values
     // and that clamp(0,1) of valid values preserves them.
-    let cmd = DrawMesh { metallic: 1.5, roughness: -0.1, ..Default::default() };
+    let cmd = DrawMesh {
+        metallic: 1.5,
+        roughness: -0.1,
+        ..Default::default()
+    };
     assert_eq!(cmd.metallic.clamp(0.0, 1.0), 1.0);
     assert_eq!(cmd.roughness.clamp(0.0, 1.0), 0.0);
 }
@@ -1157,7 +1390,10 @@ fn qw2_1_scene_settings_default_direction() {
 
 #[test]
 fn qw2_4_scene_settings_direction_stored_in_uniform() {
-    let s = SceneSettings { light_direction: [1.0, 0.0, 0.0], ..SceneSettings::default() };
+    let s = SceneSettings {
+        light_direction: [1.0, 0.0, 0.0],
+        ..SceneSettings::default()
+    };
     assert_eq!(s.light_direction[0], 1.0);
     assert_eq!(s.light_direction[1], 0.0);
     assert_eq!(s.light_direction[2], 0.0);

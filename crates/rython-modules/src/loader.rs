@@ -129,10 +129,13 @@ impl ModuleLoader {
         from: OwnerId,
         to: OwnerId,
     ) -> Result<(), EngineError> {
-        let entry = self.modules.get_mut(name).ok_or_else(|| EngineError::Module {
-            module: name.to_string(),
-            message: "module not found".to_string(),
-        })?;
+        let entry = self
+            .modules
+            .get_mut(name)
+            .ok_or_else(|| EngineError::Module {
+                module: name.to_string(),
+                message: "module not found".to_string(),
+            })?;
 
         if !entry.module.is_exclusive() {
             return Err(EngineError::Module {
@@ -153,15 +156,14 @@ impl ModuleLoader {
     }
 
     /// Relinquish exclusive ownership, leaving the module unowned.
-    pub fn relinquish_ownership(
-        &mut self,
-        name: &str,
-        owner: OwnerId,
-    ) -> Result<(), EngineError> {
-        let entry = self.modules.get_mut(name).ok_or_else(|| EngineError::Module {
-            module: name.to_string(),
-            message: "module not found".to_string(),
-        })?;
+    pub fn relinquish_ownership(&mut self, name: &str, owner: OwnerId) -> Result<(), EngineError> {
+        let entry = self
+            .modules
+            .get_mut(name)
+            .ok_or_else(|| EngineError::Module {
+                module: name.to_string(),
+                message: "module not found".to_string(),
+            })?;
 
         if !entry.module.is_exclusive() {
             return Err(EngineError::Module {
@@ -194,9 +196,7 @@ impl Default for ModuleLoader {
 
 /// Depth-first post-order topological sort over the dependency graph.
 /// Returns `Err(cycle_path)` if a cycle is detected.
-pub fn topological_sort(
-    deps: &HashMap<String, Vec<String>>,
-) -> Result<Vec<String>, Vec<String>> {
+pub fn topological_sort(deps: &HashMap<String, Vec<String>>) -> Result<Vec<String>, Vec<String>> {
     let mut visited: HashSet<String> = HashSet::new();
     let mut in_stack: HashSet<String> = HashSet::new();
     let mut order: Vec<String> = Vec::new();

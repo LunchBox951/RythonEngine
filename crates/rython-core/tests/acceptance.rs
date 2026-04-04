@@ -1,11 +1,13 @@
-use rython_core::{EngineError, EngineConfig, NamedEvent, ScriptError, TaskError};
 use rython_core::types::priorities;
+use rython_core::{EngineConfig, EngineError, NamedEvent, ScriptError, TaskError};
 
 // T-ERR-01: EngineError Wraps TaskError
 #[test]
 fn t_err_01_engine_error_wraps_task_error() {
-    let source: Box<dyn std::error::Error + Send + Sync + 'static> =
-        Box::new(std::io::Error::new(std::io::ErrorKind::Other, "test failure"));
+    let source: Box<dyn std::error::Error + Send + Sync + 'static> = Box::new(std::io::Error::new(
+        std::io::ErrorKind::Other,
+        "test failure",
+    ));
 
     let task_err = TaskError::Failed { source };
     let engine_err: EngineError = task_err.into();
@@ -15,12 +17,18 @@ fn t_err_01_engine_error_wraps_task_error() {
 
     // to_string() must contain the inner message
     let msg = engine_err.to_string();
-    assert!(msg.contains("test failure"), "expected 'test failure' in: {msg}");
+    assert!(
+        msg.contains("test failure"),
+        "expected 'test failure' in: {msg}"
+    );
 
     // The original error is accessible via std::error::Error::source()
     use std::error::Error;
     if let EngineError::Task(ref te) = engine_err {
-        assert!(te.source().is_some(), "TaskError::Failed should have a source");
+        assert!(
+            te.source().is_some(),
+            "TaskError::Failed should have a source"
+        );
     }
 }
 
@@ -45,11 +53,15 @@ fn t_err_02_engine_error_wraps_script_error() {
 fn t_err_05_script_error_python_exception() {
     let err = ScriptError::PythonException {
         script: "enemy.py".to_string(),
-        exception: "AttributeError: 'CollisionEvent' has no attribute 'damage'\n  line 15".to_string(),
+        exception: "AttributeError: 'CollisionEvent' has no attribute 'damage'\n  line 15"
+            .to_string(),
     };
     let msg = err.to_string();
     assert!(msg.contains("enemy.py"), "expected 'enemy.py' in: {msg}");
-    assert!(msg.contains("AttributeError"), "expected 'AttributeError' in: {msg}");
+    assert!(
+        msg.contains("AttributeError"),
+        "expected 'AttributeError' in: {msg}"
+    );
     assert!(msg.contains("line 15"), "expected 'line 15' in: {msg}");
 }
 
@@ -74,8 +86,14 @@ fn t_err_07_script_error_reload_failed() {
         reason: "SyntaxError: invalid syntax at line 5".to_string(),
     };
     let msg = err.to_string();
-    assert!(msg.contains("scripts/enemy.py"), "expected file path in: {msg}");
-    assert!(msg.contains("SyntaxError"), "expected error description in: {msg}");
+    assert!(
+        msg.contains("scripts/enemy.py"),
+        "expected file path in: {msg}"
+    );
+    assert!(
+        msg.contains("SyntaxError"),
+        "expected error description in: {msg}"
+    );
 }
 
 // T-ERR-08: Error propagation chain — Python to Engine
@@ -122,7 +140,10 @@ fn t_err_03_task_error_panicked() {
         message: "index out of bounds".to_string(),
     };
     let msg = err.to_string();
-    assert!(msg.contains("index out of bounds"), "expected panic message in: {msg}");
+    assert!(
+        msg.contains("index out of bounds"),
+        "expected panic message in: {msg}"
+    );
 }
 
 // T-ERR-04: TaskError::Cancelled and TimedOut are unit-like variants
@@ -149,8 +170,14 @@ fn t_err_09_engine_error_module() {
         message: "failed to initialise broadphase".to_string(),
     };
     let msg = err.to_string();
-    assert!(msg.contains("PhysicsModule"), "expected module name in: {msg}");
-    assert!(msg.contains("failed to initialise broadphase"), "expected message in: {msg}");
+    assert!(
+        msg.contains("PhysicsModule"),
+        "expected module name in: {msg}"
+    );
+    assert!(
+        msg.contains("failed to initialise broadphase"),
+        "expected message in: {msg}"
+    );
 }
 
 // T-ERR-10: EngineError string variants round-trip through to_string()
@@ -176,7 +203,10 @@ fn t_err_11_engine_error_io_from() {
     let engine_err: EngineError = io_err.into();
     assert!(matches!(engine_err, EngineError::Io(_)));
     let msg = engine_err.to_string();
-    assert!(msg.contains("scene.json not found"), "expected io message in: {msg}");
+    assert!(
+        msg.contains("scene.json not found"),
+        "expected io message in: {msg}"
+    );
 }
 
 // ─── T-EVT: NamedEvent edge cases ─────────────────────────────────────────────
@@ -234,7 +264,10 @@ fn t_evt_05_named_event_debug_contains_name() {
         payload: serde_json::Value::Bool(true),
     };
     let dbg = format!("{:?}", ev);
-    assert!(dbg.contains("jump"), "expected event name in Debug output: {dbg}");
+    assert!(
+        dbg.contains("jump"),
+        "expected event name in Debug output: {dbg}"
+    );
 }
 
 // ─── T-CFG: Config defaults and serde round-trip ──────────────────────────────
@@ -301,25 +334,25 @@ fn t_cfg_05_engine_config_partial_override() {
 #[test]
 fn t_typ_01_priority_constants_ordering() {
     assert!(priorities::MODULE_LIFECYCLE < priorities::ENGINE_SETUP);
-    assert!(priorities::ENGINE_SETUP     < priorities::PRE_UPDATE);
-    assert!(priorities::PRE_UPDATE       < priorities::GAME_EARLY);
-    assert!(priorities::GAME_EARLY       < priorities::GAME_UPDATE);
-    assert!(priorities::GAME_UPDATE      < priorities::GAME_LATE);
-    assert!(priorities::GAME_LATE        < priorities::RENDER_ENQUEUE);
-    assert!(priorities::RENDER_ENQUEUE   < priorities::RENDER_EXECUTE);
-    assert!(priorities::RENDER_EXECUTE   < priorities::IDLE);
+    assert!(priorities::ENGINE_SETUP < priorities::PRE_UPDATE);
+    assert!(priorities::PRE_UPDATE < priorities::GAME_EARLY);
+    assert!(priorities::GAME_EARLY < priorities::GAME_UPDATE);
+    assert!(priorities::GAME_UPDATE < priorities::GAME_LATE);
+    assert!(priorities::GAME_LATE < priorities::RENDER_ENQUEUE);
+    assert!(priorities::RENDER_ENQUEUE < priorities::RENDER_EXECUTE);
+    assert!(priorities::RENDER_EXECUTE < priorities::IDLE);
 }
 
 // T-TYP-02: Priority constants have expected absolute values
 #[test]
 fn t_typ_02_priority_constant_values() {
-    assert_eq!(priorities::MODULE_LIFECYCLE,  0);
-    assert_eq!(priorities::ENGINE_SETUP,      5);
-    assert_eq!(priorities::PRE_UPDATE,       10);
-    assert_eq!(priorities::GAME_EARLY,       15);
-    assert_eq!(priorities::GAME_UPDATE,      20);
-    assert_eq!(priorities::GAME_LATE,        25);
-    assert_eq!(priorities::RENDER_ENQUEUE,   30);
-    assert_eq!(priorities::RENDER_EXECUTE,   35);
-    assert_eq!(priorities::IDLE,             40);
+    assert_eq!(priorities::MODULE_LIFECYCLE, 0);
+    assert_eq!(priorities::ENGINE_SETUP, 5);
+    assert_eq!(priorities::PRE_UPDATE, 10);
+    assert_eq!(priorities::GAME_EARLY, 15);
+    assert_eq!(priorities::GAME_UPDATE, 20);
+    assert_eq!(priorities::GAME_LATE, 25);
+    assert_eq!(priorities::RENDER_ENQUEUE, 30);
+    assert_eq!(priorities::RENDER_EXECUTE, 35);
+    assert_eq!(priorities::IDLE, 40);
 }

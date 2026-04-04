@@ -44,10 +44,38 @@ fn generate_grid_vertices_indices() -> (Vec<u8>, Vec<u32>) {
         let px = -dz / len * GRID_LINE_HALF_WIDTH;
         let pz = dx / len * GRID_LINE_HALF_WIDTH;
 
-        verts.push(Vertex { position: [x0 - px, 0.0, z0 - pz], normal, uv: [0.0, 0.0], tangent: [1.0, 0.0, 0.0], bitangent: [0.0, 0.0, 1.0], _pad: [0.0; 2] });
-        verts.push(Vertex { position: [x0 + px, 0.0, z0 + pz], normal, uv: [1.0, 0.0], tangent: [1.0, 0.0, 0.0], bitangent: [0.0, 0.0, 1.0], _pad: [0.0; 2] });
-        verts.push(Vertex { position: [x1 - px, 0.0, z1 - pz], normal, uv: [0.0, 1.0], tangent: [1.0, 0.0, 0.0], bitangent: [0.0, 0.0, 1.0], _pad: [0.0; 2] });
-        verts.push(Vertex { position: [x1 + px, 0.0, z1 + pz], normal, uv: [1.0, 1.0], tangent: [1.0, 0.0, 0.0], bitangent: [0.0, 0.0, 1.0], _pad: [0.0; 2] });
+        verts.push(Vertex {
+            position: [x0 - px, 0.0, z0 - pz],
+            normal,
+            uv: [0.0, 0.0],
+            tangent: [1.0, 0.0, 0.0],
+            bitangent: [0.0, 0.0, 1.0],
+            _pad: [0.0; 2],
+        });
+        verts.push(Vertex {
+            position: [x0 + px, 0.0, z0 + pz],
+            normal,
+            uv: [1.0, 0.0],
+            tangent: [1.0, 0.0, 0.0],
+            bitangent: [0.0, 0.0, 1.0],
+            _pad: [0.0; 2],
+        });
+        verts.push(Vertex {
+            position: [x1 - px, 0.0, z1 - pz],
+            normal,
+            uv: [0.0, 1.0],
+            tangent: [1.0, 0.0, 0.0],
+            bitangent: [0.0, 0.0, 1.0],
+            _pad: [0.0; 2],
+        });
+        verts.push(Vertex {
+            position: [x1 + px, 0.0, z1 + pz],
+            normal,
+            uv: [1.0, 1.0],
+            tangent: [1.0, 0.0, 0.0],
+            bitangent: [0.0, 0.0, 1.0],
+            _pad: [0.0; 2],
+        });
 
         // Two triangles: 0,2,1 and 1,2,3
         indices.extend_from_slice(&[base, base + 2, base + 1, base + 1, base + 2, base + 3]);
@@ -111,7 +139,9 @@ pub fn show(
     }
     drop(egui_renderer);
 
-    let vt = viewport_texture.as_ref().unwrap();
+    let vt = viewport_texture
+        .as_ref()
+        .expect("viewport_texture was just set to Some above");
 
     // Update camera aspect ratio
     camera.aspect = px_w as f32 / px_h as f32;
@@ -127,7 +157,18 @@ pub fn show(
     let mut draw_meshes: Vec<DrawMesh> = ecs_commands
         .into_iter()
         .filter_map(|cmd| match cmd {
-            DrawCommand::DrawMesh { mesh_id, texture_id, normal_map_id, specular_map_id, specular_color, shininess, transform, metallic, roughness, .. } => Some(DrawMesh {
+            DrawCommand::DrawMesh {
+                mesh_id,
+                texture_id,
+                normal_map_id,
+                specular_map_id,
+                specular_color,
+                shininess,
+                transform,
+                metallic,
+                roughness,
+                ..
+            } => Some(DrawMesh {
                 mesh_id,
                 texture_id,
                 normal_map_id,

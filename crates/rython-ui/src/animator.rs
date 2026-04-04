@@ -74,7 +74,14 @@ pub struct Tween {
 
 impl Tween {
     pub fn new(from: f32, to: f32, duration: f32, easing: EasingFn) -> Self {
-        Self { from, to, duration, elapsed: 0.0, easing, done: false }
+        Self {
+            from,
+            to,
+            duration,
+            elapsed: 0.0,
+            easing,
+            done: false,
+        }
     }
 
     /// Sample at normalized time t in [0.0, 1.0].
@@ -94,7 +101,11 @@ impl Tween {
             self.elapsed = self.duration;
             self.done = true;
         }
-        let t = if self.duration > 0.0 { self.elapsed / self.duration } else { 1.0 };
+        let t = if self.duration > 0.0 {
+            self.elapsed / self.duration
+        } else {
+            1.0
+        };
         self.sample(t)
     }
 
@@ -125,7 +136,16 @@ impl ActiveTween {
         duration: f32,
         easing: EasingFn,
     ) -> Self {
-        Self { widget_id, property, from, to, duration, elapsed: 0.0, easing, done: false }
+        Self {
+            widget_id,
+            property,
+            from,
+            to,
+            duration,
+            elapsed: 0.0,
+            easing,
+            done: false,
+        }
     }
 
     fn advance(&mut self, dt: f32) -> f32 {
@@ -137,7 +157,11 @@ impl ActiveTween {
             self.elapsed = self.duration;
             self.done = true;
         }
-        let t = if self.duration > 0.0 { self.elapsed / self.duration } else { 1.0 };
+        let t = if self.duration > 0.0 {
+            self.elapsed / self.duration
+        } else {
+            1.0
+        };
         let eased = apply_easing(self.easing, t);
         self.from + (self.to - self.from) * eased
     }

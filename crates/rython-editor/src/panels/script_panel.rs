@@ -102,7 +102,7 @@ impl ScriptPanel {
             ui.label("No project open.");
             return;
         }
-        let root = project_root.unwrap();
+        let root = project_root.expect("project_root is Some — guarded by is_none() check above");
 
         // ── Script list ───────────────────────────────────────────────────────
         if self.scripts.is_empty() {
@@ -163,7 +163,9 @@ impl ScriptPanel {
                     let class_name = stem_to_class(&entry.filename);
                     let script_name = entry.filename.clone();
                     // Remove any existing association for this script, then add new one
-                    config.script_associations.retain(|a| a.script != script_name);
+                    config
+                        .script_associations
+                        .retain(|a| a.script != script_name);
                     config.script_associations.push(ScriptAssociation {
                         entity_tag,
                         script: script_name,
@@ -207,9 +209,7 @@ impl ScriptPanel {
                         .show(ui, |ui| {
                             ui.label("Name:");
                             let resp = ui.text_edit_singleline(&mut self.dialog_name);
-                            if resp.lost_focus()
-                                && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                            {
+                            if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                                 should_create = true;
                             }
                             ui.end_row();
@@ -326,7 +326,7 @@ fn stem(filename: &str) -> String {
 /// Derive a likely class name from a `.py` filename (PascalCase of stem).
 fn stem_to_class(filename: &str) -> String {
     let s = stem(filename);
-    s.split(|c: char| c == '_' || c == '-' || c == ' ')
+    s.split(['_', '-', ' '])
         .filter(|p| !p.is_empty())
         .map(|p| {
             let mut chars = p.chars();

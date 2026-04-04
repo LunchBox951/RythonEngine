@@ -3885,6 +3885,7 @@ dependencies = [
  "rython-core",
  "rython-modules",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
 ]
 

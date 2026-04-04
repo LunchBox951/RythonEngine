@@ -1,13 +1,15 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
 use super::{
-    get_elapsed_secs, job_handle::{JobHandlePy, JobState}, json_to_py_dict,
-    push_bg_request, push_par_request, push_seq_task,
-    recurring_callbacks_store, scene_store, task::{PythonBgRequest, PythonParRequest},
+    get_elapsed_secs,
+    job_handle::{JobHandlePy, JobState},
+    json_to_py_dict, push_bg_request, push_par_request, push_seq_task, recurring_callbacks_store,
+    scene_store,
+    task::{PythonBgRequest, PythonParRequest},
     timer_store, PendingTimer,
 };
 
@@ -30,7 +32,9 @@ impl SchedulerBridge {
     /// call whose elapsed time is >= (current_elapsed + delay_secs).
     fn on_timer(&self, delay_secs: f64, callback: Py<PyAny>) {
         let fire_at = get_elapsed_secs() + delay_secs;
-        timer_store().lock().push(PendingTimer { fire_at, callback });
+        timer_store()
+            .lock()
+            .push(PendingTimer { fire_at, callback });
     }
 
     /// Subscribe `callback` to `event_name` exactly once.  After the first
@@ -71,7 +75,10 @@ impl SchedulerBridge {
     /// future frame when `flush_python_bg_completions` is called.
     fn submit_background(&self, py: Python<'_>, callback: Py<PyAny>) -> PyResult<Py<JobHandlePy>> {
         let state = JobState::new();
-        push_bg_request(PythonBgRequest { callback, state: Arc::clone(&state) });
+        push_bg_request(PythonBgRequest {
+            callback,
+            state: Arc::clone(&state),
+        });
         Py::new(py, JobHandlePy { state })
     }
 
@@ -80,7 +87,10 @@ impl SchedulerBridge {
     /// returned `JobHandle` is already done by the end of `flush_python_par_tasks`.
     fn submit_parallel(&self, py: Python<'_>, callback: Py<PyAny>) -> PyResult<Py<JobHandlePy>> {
         let state = JobState::new();
-        push_par_request(PythonParRequest { callback, state: Arc::clone(&state) });
+        push_par_request(PythonParRequest {
+            callback,
+            state: Arc::clone(&state),
+        });
         Py::new(py, JobHandlePy { state })
     }
 

@@ -30,13 +30,13 @@ pub struct SceneSettings {
 impl Default for SceneSettings {
     fn default() -> Self {
         Self {
-            clear_color:       [0.15, 0.15, 0.15, 1.0],
-            light_direction:   [0.5, 1.0, 0.5],
-            light_color:       [1.0, 1.0, 1.0],
-            light_intensity:   1.0,
-            ambient_color:     [0.1, 0.1, 0.1],
+            clear_color: [0.15, 0.15, 0.15, 1.0],
+            light_direction: [0.5, 1.0, 0.5],
+            light_color: [1.0, 1.0, 1.0],
+            light_intensity: 1.0,
+            ambient_color: [0.1, 0.1, 0.1],
             ambient_intensity: 1.0,
-            shadow:            ShadowSettings::default(),
+            shadow: ShadowSettings::default(),
         }
     }
 }

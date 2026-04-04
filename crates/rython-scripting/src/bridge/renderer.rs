@@ -13,6 +13,7 @@ pub struct RendererBridge {}
 impl RendererBridge {
     /// Queue a text draw command for the current frame.
     #[pyo3(signature = (text, font_id = "default", x = 0.5, y = 0.1, size = 16, r = 255, g = 255, b = 255, z = 0.0))]
+    #[allow(clippy::too_many_arguments)]
     fn draw_text(
         &self,
         text: &str,
@@ -25,15 +26,17 @@ impl RendererBridge {
         b: u8,
         z: f32,
     ) {
-        draw_commands_store().lock().push(DrawCommand::Text(DrawText {
-            text: text.to_string(),
-            font_id: font_id.to_string(),
-            x,
-            y,
-            color: Color::rgb(r, g, b),
-            size,
-            z,
-        }));
+        draw_commands_store()
+            .lock()
+            .push(DrawCommand::Text(DrawText {
+                text: text.to_string(),
+                font_id: font_id.to_string(),
+                x,
+                y,
+                color: Color::rgb(r, g, b),
+                size,
+                z,
+            }));
     }
 
     /// Set the framebuffer clear color (linear RGBA, each component [0, 1]).
@@ -42,8 +45,12 @@ impl RendererBridge {
     #[pyo3(signature = (r, g, b, a = 1.0))]
     fn set_clear_color(&self, r: f32, g: f32, b: f32, a: f32) {
         let clamp_warn = |v: f32, name: &str| {
-            if v < 0.0 || v > 1.0 {
-                log::warn!("set_clear_color: {} out of range ({}) — clamped to [0, 1]", name, v);
+            if !(0.0..=1.0).contains(&v) {
+                log::warn!(
+                    "set_clear_color: {} out of range ({}) — clamped to [0, 1]",
+                    name,
+                    v
+                );
             }
             v.clamp(0.0, 1.0)
         };
@@ -85,7 +92,7 @@ impl RendererBridge {
     #[pyo3(signature = (r = 0.1, g = 0.1, b = 0.1, intensity = 1.0))]
     fn set_ambient_light(&self, r: f32, g: f32, b: f32, intensity: f32) {
         let mut s = scene_settings_store().lock();
-        s.ambient_color     = [r, g, b];
+        s.ambient_color = [r, g, b];
         s.ambient_intensity = intensity;
     }
 
@@ -102,7 +109,7 @@ impl RendererBridge {
     /// Invalid sizes are clamped to the nearest valid value with a warning.
     fn set_shadow_map_size(&self, size: u32) {
         let clamped = match size {
-            0..=512  => 512,
+            0..=512 => 512,
             513..=1024 => 1024,
             1025..=2048 => 2048,
             _ => 4096,
@@ -110,7 +117,8 @@ impl RendererBridge {
         if clamped != size {
             log::warn!(
                 "set_shadow_map_size: {} is not a valid shadow map size — clamped to {}",
-                size, clamped
+                size,
+                clamped
             );
         }
         scene_settings_store().lock().shadow.map_size = clamped;

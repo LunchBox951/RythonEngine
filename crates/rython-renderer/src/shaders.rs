@@ -484,7 +484,7 @@ pub fn validate_wgsl(source: &str) -> Result<(), ShaderError> {
             location: "<empty>".to_string(),
         });
     }
-    let has_vertex   = src.contains("@vertex");
+    let has_vertex = src.contains("@vertex");
     let has_fragment = src.contains("@fragment");
     if !has_vertex && !has_fragment {
         return Err(ShaderError {

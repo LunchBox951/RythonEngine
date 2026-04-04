@@ -1,12 +1,15 @@
-use std::collections::HashMap;
-use std::sync::Arc;
 use parking_lot::RwLock;
 use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 pub type HandlerId = u64;
 
 /// Handler for named (custom) events.
 pub type NamedHandler = Arc<dyn Fn(&str, &Value) + Send + Sync + 'static>;
+
+/// Handler for entity lifecycle events (spawned/despawned).
+type EntityHandler = Arc<dyn Fn(u64) + Send + Sync + 'static>;
 
 struct Subscription {
     id: HandlerId,
@@ -18,9 +21,9 @@ pub struct EventBus {
     /// event_name -> list of subscriptions
     named: RwLock<HashMap<String, Vec<Subscription>>>,
     /// entity_spawned subscribers
-    entity_spawned: RwLock<Vec<(HandlerId, Arc<dyn Fn(u64) + Send + Sync + 'static>)>>,
+    entity_spawned: RwLock<Vec<(HandlerId, EntityHandler)>>,
     /// entity_despawned subscribers
-    entity_despawned: RwLock<Vec<(HandlerId, Arc<dyn Fn(u64) + Send + Sync + 'static>)>>,
+    entity_despawned: RwLock<Vec<(HandlerId, EntityHandler)>>,
 }
 
 impl Default for EventBus {
@@ -35,10 +38,13 @@ impl Default for EventBus {
 }
 
 impl EventBus {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     fn alloc_id(&self) -> HandlerId {
-        self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        self.next_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Subscribe to a named event. Returns HandlerId for unsubscribing.
@@ -47,10 +53,14 @@ impl EventBus {
         F: Fn(&str, &Value) + Send + Sync + 'static,
     {
         let id = self.alloc_id();
-        self.named.write()
+        self.named
+            .write()
             .entry(event_name.to_string())
             .or_default()
-            .push(Subscription { id, handler: Arc::new(handler) });
+            .push(Subscription {
+                id,
+                handler: Arc::new(handler),
+            });
         id
     }
 
@@ -64,7 +74,9 @@ impl EventBus {
         // Snapshot handler Arcs while holding read lock, then drop lock before calling.
         // This prevents deadlock when a handler calls subscribe() (which needs a write lock).
         let named = self.named.read();
-        let Some(subs) = named.get(event_name) else { return };
+        let Some(subs) = named.get(event_name) else {
+            return;
+        };
         if subs.is_empty() {
             return;
         }
@@ -92,7 +104,9 @@ impl EventBus {
     }
 
     pub fn unsubscribe_entity_spawned(&self, handler_id: HandlerId) {
-        self.entity_spawned.write().retain(|(id, _)| *id != handler_id);
+        self.entity_spawned
+            .write()
+            .retain(|(id, _)| *id != handler_id);
     }
 
     pub fn emit_entity_spawned(&self, entity_id: u64) {
@@ -125,7 +139,9 @@ impl EventBus {
     }
 
     pub fn unsubscribe_entity_despawned(&self, handler_id: HandlerId) {
-        self.entity_despawned.write().retain(|(id, _)| *id != handler_id);
+        self.entity_despawned
+            .write()
+            .retain(|(id, _)| *id != handler_id);
     }
 
     pub fn emit_entity_despawned(&self, entity_id: u64) {

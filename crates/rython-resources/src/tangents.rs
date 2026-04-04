@@ -81,7 +81,8 @@ pub fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
             t[1] - dot_nt * nrm[1],
             t[2] - dot_nt * nrm[2],
         ];
-        let tlen = (tangent[0] * tangent[0] + tangent[1] * tangent[1] + tangent[2] * tangent[2]).sqrt();
+        let tlen =
+            (tangent[0] * tangent[0] + tangent[1] * tangent[1] + tangent[2] * tangent[2]).sqrt();
         if tlen > 1e-8 {
             tangent = [tangent[0] / tlen, tangent[1] / tlen, tangent[2] / tlen];
         } else {
@@ -97,11 +98,12 @@ pub fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
         ];
 
         let b_acc = tan2[i];
-        let handedness = if cross_nt[0] * b_acc[0] + cross_nt[1] * b_acc[1] + cross_nt[2] * b_acc[2] < 0.0 {
-            -1.0_f32
-        } else {
-            1.0_f32
-        };
+        let handedness =
+            if cross_nt[0] * b_acc[0] + cross_nt[1] * b_acc[1] + cross_nt[2] * b_acc[2] < 0.0 {
+                -1.0_f32
+            } else {
+                1.0_f32
+            };
 
         let bitangent = [
             cross_nt[0] * handedness,
@@ -116,7 +118,11 @@ pub fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
 
 /// Pick an arbitrary unit vector orthogonal to the given unit normal.
 fn arbitrary_tangent(nx: f32, ny: f32, nz: f32) -> [f32; 3] {
-    let (ax, ay, az) = if nx.abs() < 0.9 { (1.0, 0.0, 0.0) } else { (0.0, 1.0, 0.0) };
+    let (ax, ay, az) = if nx.abs() < 0.9 {
+        (1.0, 0.0, 0.0)
+    } else {
+        (0.0, 1.0, 0.0)
+    };
     let tx = ny * az - nz * ay;
     let ty = nz * ax - nx * az;
     let tz = nx * ay - ny * ax;
@@ -170,7 +176,10 @@ mod tests {
             let dot = v.tangent[0] * v.normal[0]
                 + v.tangent[1] * v.normal[1]
                 + v.tangent[2] * v.normal[2];
-            assert!(dot.abs() < 1e-4, "post-recompute: tangent not orthogonal: dot={dot:.6}");
+            assert!(
+                dot.abs() < 1e-4,
+                "post-recompute: tangent not orthogonal: dot={dot:.6}"
+            );
         }
     }
 
@@ -186,8 +195,12 @@ mod tests {
         let second: Vec<[f32; 3]> = mesh.vertices.iter().map(|v| v.tangent).collect();
 
         for (a, b) in first.iter().zip(second.iter()) {
-            let diff = ((a[0]-b[0]).powi(2) + (a[1]-b[1]).powi(2) + (a[2]-b[2]).powi(2)).sqrt();
-            assert!(diff < 1e-4, "tangents changed after second pass: diff={diff:.6}");
+            let diff =
+                ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+            assert!(
+                diff < 1e-4,
+                "tangents changed after second pass: diff={diff:.6}"
+            );
         }
     }
 

@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Run tests
+        run: cargo test --workspace
+
+  lint:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run clippy
+        run: cargo clippy --workspace -- -D warnings
+
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+  stubs:
+    name: Python Stub Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install stub package
+        run: pip install -e .
+
+      - name: Verify stubs import cleanly
+        run: python -c "import rython; print('Stubs OK:', rython.__all__)"
+
+      - name: Verify py.typed marker exists
+        run: test -f rython/py.typed
+
+      - name: Check stub modules match crate exports
+        run: |
+          # Each _*.py stub file in rython/ should correspond to a crate
+          stub_modules=$(find rython -maxdepth 1 -name '_*.py' ! -name '__init__.py' | sort)
+          echo "Stub modules found:"
+          echo "$stub_modules"
+          # Verify all stub files are syntactically valid Python
+          for f in $stub_modules; do
+            python -c "import ast; ast.parse(open('$f').read())" || exit 1
+          done
+          echo "All stub modules parse successfully"

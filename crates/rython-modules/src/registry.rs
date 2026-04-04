@@ -114,11 +114,7 @@ impl ModuleRegistry {
     }
 
     /// Relinquish exclusive ownership (returns module to unowned state).
-    pub fn relinquish_ownership(
-        &self,
-        name: &str,
-        owner: OwnerId,
-    ) -> Result<(), EngineError> {
+    pub fn relinquish_ownership(&self, name: &str, owner: OwnerId) -> Result<(), EngineError> {
         let mut map = self.inner.write();
         let entry = map.get_mut(name).ok_or_else(|| EngineError::Module {
             module: name.to_string(),
