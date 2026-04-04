@@ -433,7 +433,8 @@ impl PhysicsWorld {
                     entity
                 );
                 let last = self.entity_to_body[&entity].last_valid_position;
-                let rb_mut = self.rigid_body_set.get_mut(rb_handle).unwrap();
+                let rb_mut = self.rigid_body_set.get_mut(rb_handle)
+                    .expect("rigid body handle must be valid — obtained from entity_to_body map");
                 rb_mut.set_translation(vector![last[0], last[1], last[2]], true);
                 rb_mut.set_linvel(vector![0.0, 0.0, 0.0], true);
                 continue;
@@ -595,7 +596,7 @@ mod tests {
     ) -> EntityId {
         let h = scene.queue_spawn(vec![comp(t), comp(rb), comp(col)]);
         scene.drain_commands();
-        h.get().unwrap()
+        h.get().expect("entity spawn should succeed")
     }
 
     fn world() -> PhysicsWorld {
@@ -626,7 +627,7 @@ mod tests {
             w.sync_step(&scene);
         }
 
-        let t = scene.components.get::<TransformComponent>(e).unwrap();
+        let t = scene.components.get::<TransformComponent>(e).expect("entity should have a TransformComponent");
         // y = 100 - 0.5 * 9.81 * 1^2 = 95.095, tol ±0.5
         assert!((t.y - 95.095).abs() < 0.5, "y={} expected ~95.095", t.y);
         assert!(t.x.abs() < 0.01, "x should be 0");
@@ -656,8 +657,8 @@ mod tests {
             w.sync_step(&scene);
         }
 
-        let ta = scene.components.get::<TransformComponent>(a).unwrap();
-        let tb = scene.components.get::<TransformComponent>(b).unwrap();
+        let ta = scene.components.get::<TransformComponent>(a).expect("entity should have a TransformComponent");
+        let tb = scene.components.get::<TransformComponent>(b).expect("entity should have a TransformComponent");
         let disp_a = 100.0 - ta.y;
         let disp_b = 100.0 - tb.y;
 
@@ -679,7 +680,7 @@ mod tests {
             w.sync_step(&scene);
         }
 
-        let t = scene.components.get::<TransformComponent>(e).unwrap();
+        let t = scene.components.get::<TransformComponent>(e).expect("entity should have a TransformComponent");
         assert!((t.y - 10.0).abs() < 0.01, "y={} expected 10.0", t.y);
         assert!(t.x.abs() < 0.01);
         assert!(t.z.abs() < 0.01);
@@ -704,7 +705,7 @@ mod tests {
             w.sync_step(&scene);
         }
 
-        let t = scene.components.get::<TransformComponent>(e).unwrap();
+        let t = scene.components.get::<TransformComponent>(e).expect("entity should have a TransformComponent");
         assert!((t.x - 5.0).abs() < 0.01, "x={}", t.x);
         assert!((t.y - 5.0).abs() < 0.01, "y={}", t.y);
         assert!((t.z - 5.0).abs() < 0.01, "z={}", t.z);
@@ -731,11 +732,11 @@ mod tests {
         });
         w.sync_step(&scene);
 
-        let pos = w.get_body_position(e).unwrap();
+        let pos = w.get_body_position(e).expect("entity should have a registered physics body");
         assert!((pos[0] - 10.0).abs() < 0.01, "rapier x={} expected 10.0", pos[0]);
 
         // TransformComponent should still be at 10.0 (kinematic never pulled)
-        let t = scene.components.get::<TransformComponent>(e).unwrap();
+        let t = scene.components.get::<TransformComponent>(e).expect("entity should have a TransformComponent");
         assert!((t.x - 10.0).abs() < 0.01);
     }
 
@@ -762,15 +763,15 @@ mod tests {
         let mut prev_y = 10.0f32;
         for _ in 0..30 {
             w.sync_step(&scene);
-            let t = scene.components.get::<TransformComponent>(dyn_e).unwrap();
+            let t = scene.components.get::<TransformComponent>(dyn_e).expect("entity should have a TransformComponent");
             // Y should decrease (body falling)
             assert!(t.y <= prev_y + 0.01, "y={} should not increase", t.y);
             prev_y = t.y;
         }
 
         // TransformComponent should match rapier position
-        let ecs_y = scene.components.get::<TransformComponent>(dyn_e).unwrap().y;
-        let rapier_y = w.get_body_position(dyn_e).unwrap()[1];
+        let ecs_y = scene.components.get::<TransformComponent>(dyn_e).expect("entity should have a TransformComponent").y;
+        let rapier_y = w.get_body_position(dyn_e).expect("entity should have a registered physics body")[1];
         assert!((ecs_y - rapier_y).abs() < 0.001, "ecs_y={} rapier_y={}", ecs_y, rapier_y);
     }
 
@@ -795,7 +796,7 @@ mod tests {
         let events: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(vec![]));
         let ev = events.clone();
         scene.subscribe("collision", move |_, payload| {
-            ev.lock().unwrap().push(payload.clone());
+            ev.lock().expect("mutex should not be poisoned").push(payload.clone());
         });
 
         let mut w = PhysicsWorld::new(PhysicsConfig {
@@ -807,17 +808,17 @@ mod tests {
             w.sync_step(&scene);
         }
 
-        let evs = events.lock().unwrap();
+        let evs = events.lock().expect("mutex should not be poisoned");
         assert!(!evs.is_empty(), "expected CollisionEvent within 5 frames");
         let ev0 = &evs[0];
-        let ea = ev0["entity_a"].as_u64().unwrap();
-        let eb = ev0["entity_b"].as_u64().unwrap();
+        let ea = ev0["entity_a"].as_u64().expect("payload should have entity_a as u64");
+        let eb = ev0["entity_b"].as_u64().expect("payload should have entity_b as u64");
         let ids: std::collections::HashSet<u64> = [ea, eb].into();
         assert!(ids.contains(&a.0) && ids.contains(&b.0), "event must contain both entity IDs");
 
         // Normal approximately along X
-        let normal = ev0["normal"].as_array().unwrap();
-        let nx = normal[0].as_f64().unwrap().abs();
+        let normal = ev0["normal"].as_array().expect("payload should have normal as array");
+        let nx = normal[0].as_f64().expect("normal[0] should be f64").abs();
         assert!(nx > 0.5, "normal.x={} should be dominant (along X)", nx);
     }
 
@@ -842,7 +843,7 @@ mod tests {
 
         let count = Arc::new(Mutex::new(0u32));
         let c = count.clone();
-        scene.subscribe("collision", move |_, _| *c.lock().unwrap() += 1);
+        scene.subscribe("collision", move |_, _| *c.lock().expect("mutex should not be poisoned") += 1);
 
         let mut w = PhysicsWorld::new(PhysicsConfig {
             gravity: [0.0, 0.0, 0.0],
@@ -851,7 +852,7 @@ mod tests {
         for _ in 0..5 {
             w.sync_step(&scene);
         }
-        assert!(*count.lock().unwrap() > 0, "collision event expected");
+        assert!(*count.lock().expect("mutex should not be poisoned") > 0, "collision event expected");
     }
 
     // ── T-PHYS-09: Collision Layers — Non-Matching Mask ──────────────────────
@@ -875,7 +876,7 @@ mod tests {
 
         let count = Arc::new(Mutex::new(0u32));
         let c = count.clone();
-        scene.subscribe("collision", move |_, _| *c.lock().unwrap() += 1);
+        scene.subscribe("collision", move |_, _| *c.lock().expect("mutex should not be poisoned") += 1);
 
         let mut w = PhysicsWorld::new(PhysicsConfig {
             gravity: [0.0, 0.0, 0.0],
@@ -884,7 +885,7 @@ mod tests {
         for _ in 0..10 {
             w.sync_step(&scene);
         }
-        assert_eq!(*count.lock().unwrap(), 0, "no collision event expected");
+        assert_eq!(*count.lock().expect("mutex should not be poisoned"), 0, "no collision event expected");
     }
 
     // ── T-PHYS-10: Trigger Volume — Enter Event ───────────────────────────────
@@ -911,7 +912,7 @@ mod tests {
         let e = entered.clone();
         scene.subscribe("trigger", move |_, payload| {
             if payload["event_type"].as_str() == Some("enter") {
-                *e.lock().unwrap() = true;
+                *e.lock().expect("mutex should not be poisoned") = true;
             }
         });
 
@@ -920,7 +921,7 @@ mod tests {
             w.sync_step(&scene);
         }
 
-        assert!(*entered.lock().unwrap(), "trigger enter event expected");
+        assert!(*entered.lock().expect("mutex should not be poisoned"), "trigger enter event expected");
 
         // Body should pass through (no contact forces prevent it)
         let _ = dyn_e;
@@ -950,7 +951,7 @@ mod tests {
         let ex = exited.clone();
         scene.subscribe("trigger", move |_, payload| {
             if payload["event_type"].as_str() == Some("exit") {
-                *ex.lock().unwrap() = true;
+                *ex.lock().expect("mutex should not be poisoned") = true;
             }
         });
 
@@ -959,7 +960,7 @@ mod tests {
             w.sync_step(&scene);
         }
 
-        assert!(*exited.lock().unwrap(), "trigger exit event expected");
+        assert!(*exited.lock().expect("mutex should not be poisoned"), "trigger exit event expected");
     }
 
     // ── T-PHYS-11b: Solid Collision End Event ─────────────────────────────────
@@ -985,7 +986,7 @@ mod tests {
         let ended: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
         let en = ended.clone();
         scene.subscribe("collision_end", move |_, _| {
-            *en.lock().unwrap() = true;
+            *en.lock().expect("mutex should not be poisoned") = true;
         });
 
         let mut w = PhysicsWorld::new(PhysicsConfig {
@@ -1001,7 +1002,7 @@ mod tests {
             w.sync_step(&scene);
         }
 
-        assert!(*ended.lock().unwrap(), "collision_end event expected for solid bodies");
+        assert!(*ended.lock().expect("mutex should not be poisoned"), "collision_end event expected for solid bodies");
     }
 
     // ── T-PHYS-12: Apply Impulse ──────────────────────────────────────────────
@@ -1021,10 +1022,10 @@ mod tests {
         w.apply_impulse(e, [0.0, 100.0, 0.0]);
         w.sync_step(&scene);
 
-        let vel = w.get_linear_velocity(e).unwrap();
+        let vel = w.get_linear_velocity(e).expect("entity should have a registered physics body");
         assert!(vel[1] > 0.0, "vy={} should be > 0 after upward impulse", vel[1]);
 
-        let t = scene.components.get::<TransformComponent>(e).unwrap();
+        let t = scene.components.get::<TransformComponent>(e).expect("entity should have a TransformComponent");
         assert!(t.y > 0.0, "y={} should be > 0 after step", t.y);
     }
 
@@ -1048,7 +1049,7 @@ mod tests {
             w.sync_step(&scene);
         }
 
-        let t = scene.components.get::<TransformComponent>(e).unwrap();
+        let t = scene.components.get::<TransformComponent>(e).expect("entity should have a TransformComponent");
         // 5.0 * 1.0s = 5.0, tol ±0.1
         assert!((t.x - 5.0).abs() < 0.1, "x={} expected ~5.0", t.x);
     }
@@ -1073,7 +1074,7 @@ mod tests {
             w.sync_step(&scene);
         }
 
-        let t = scene.components.get::<TransformComponent>(e).unwrap();
+        let t = scene.components.get::<TransformComponent>(e).expect("entity should have a TransformComponent");
         assert!(t.y.abs() < 0.01, "y={} should remain 0 with XZ lock", t.y);
         // X and Z should move
         let total_xz = (t.x * t.x + t.z * t.z).sqrt();
@@ -1100,7 +1101,7 @@ mod tests {
             w.sync_step(&scene);
         }
 
-        let t = scene.components.get::<TransformComponent>(e).unwrap();
+        let t = scene.components.get::<TransformComponent>(e).expect("entity should have a TransformComponent");
         assert!(t.z.abs() < 0.01, "z={} should remain 0 with XY lock", t.z);
         let total_xy = (t.x * t.x + t.y * t.y).sqrt();
         assert!(total_xy > 0.01, "body should move in XY plane");
@@ -1114,7 +1115,7 @@ mod tests {
         // Spawn with no physics components
         let h = scene.queue_spawn(vec![comp(transform(0.0, 0.0, 0.0))]);
         scene.drain_commands();
-        let e = h.get().unwrap();
+        let e = h.get().expect("entity spawn should succeed");
 
         let mut w = world();
         w.sync_step(&scene);
@@ -1129,7 +1130,7 @@ mod tests {
         assert_eq!(w.body_count(), 1, "body should exist after attach");
 
         // Verify body type is dynamic
-        let pos = w.get_body_position(e).unwrap();
+        let pos = w.get_body_position(e).expect("entity should have a registered physics body");
         assert!(!pos[0].is_nan());
     }
 
@@ -1169,11 +1170,11 @@ mod tests {
         // Should not panic; NaN detected and reset
         w.sync_step(&scene);
 
-        let t = scene.components.get::<TransformComponent>(e).unwrap();
+        let t = scene.components.get::<TransformComponent>(e).expect("entity should have a TransformComponent");
         assert!(!t.x.is_nan() && !t.y.is_nan() && !t.z.is_nan(), "TransformComponent must not be NaN");
 
         // Position should be reset to last valid (0,0,0)
-        let pos = w.get_body_position(e).unwrap();
+        let pos = w.get_body_position(e).expect("entity should have a registered physics body");
         assert!(!pos[0].is_nan());
     }
 
@@ -1208,7 +1209,7 @@ mod tests {
         scene.subscribe(&format!("collision:{}", player.0), move |_, payload| {
             if let Some(arr) = payload["normal"].as_array() {
                 if let Some(y) = arr.get(1).and_then(|v| v.as_f64()) {
-                    *pny.lock().unwrap() = Some(y);
+                    *pny.lock().expect("mutex should not be poisoned") = Some(y);
                 }
             }
         });
@@ -1217,7 +1218,7 @@ mod tests {
         scene.subscribe(&format!("collision:{}", floor.0), move |_, payload| {
             if let Some(arr) = payload["normal"].as_array() {
                 if let Some(y) = arr.get(1).and_then(|v| v.as_f64()) {
-                    *fny.lock().unwrap() = Some(y);
+                    *fny.lock().expect("mutex should not be poisoned") = Some(y);
                 }
             }
         });
@@ -1225,13 +1226,13 @@ mod tests {
         let mut w = world();
         for _ in 0..120 {
             w.sync_step(&scene);
-            if player_normal_y.lock().unwrap().is_some() {
+            if player_normal_y.lock().expect("mutex should not be poisoned").is_some() {
                 break;
             }
         }
 
-        let pny = player_normal_y.lock().unwrap().expect("player collision:{id} event not fired");
-        let fny = floor_normal_y.lock().unwrap().expect("floor collision:{id} event not fired");
+        let pny = player_normal_y.lock().expect("mutex should not be poisoned").expect("player collision:{id} event not fired");
+        let fny = floor_normal_y.lock().expect("mutex should not be poisoned").expect("floor collision:{id} event not fired");
 
         assert!(
             pny > 0.7,
@@ -1261,9 +1262,9 @@ mod tests {
         let sched = NoopSched;
         let mut m = PhysicsModule::with_default_config();
         assert!(m.world.is_none());
-        m.on_load(&sched).unwrap();
+        m.on_load(&sched).expect("module on_load should succeed");
         assert!(m.world.is_some());
-        m.on_unload(&sched).unwrap();
+        m.on_unload(&sched).expect("module on_unload should succeed");
         assert!(m.world.is_none());
         assert_eq!(m.name(), "physics");
     }
@@ -1310,14 +1311,14 @@ mod tests {
 
         let ga = got_a.clone();
         scene.subscribe(&format!("collision:{}", a.0), move |_, payload| {
-            if ga.lock().unwrap().is_none() {
-                ga.lock().unwrap().replace(payload.clone());
+            if ga.lock().expect("mutex should not be poisoned").is_none() {
+                ga.lock().expect("mutex should not be poisoned").replace(payload.clone());
             }
         });
         let gb = got_b.clone();
         scene.subscribe(&format!("collision:{}", b.0), move |_, payload| {
-            if gb.lock().unwrap().is_none() {
-                gb.lock().unwrap().replace(payload.clone());
+            if gb.lock().expect("mutex should not be poisoned").is_none() {
+                gb.lock().expect("mutex should not be poisoned").replace(payload.clone());
             }
         });
 
@@ -1327,15 +1328,15 @@ mod tests {
             w.sync_step(&scene);
         }
 
-        let pa = got_a.lock().unwrap();
-        let pb = got_b.lock().unwrap();
+        let pa = got_a.lock().expect("mutex should not be poisoned");
+        let pb = got_b.lock().expect("mutex should not be poisoned");
         assert!(pa.is_some(), "collision:{} not fired", a.0);
         assert!(pb.is_some(), "collision:{} not fired", b.0);
 
         // Both payloads must contain both entity IDs.
         let ids_a: std::collections::HashSet<u64> = [
-            pa.as_ref().unwrap()["entity_a"].as_u64().unwrap(),
-            pa.as_ref().unwrap()["entity_b"].as_u64().unwrap(),
+            pa.as_ref().expect("collision:a payload should exist")["entity_a"].as_u64().expect("entity_a should be u64"),
+            pa.as_ref().expect("collision:a payload should exist")["entity_b"].as_u64().expect("entity_b should be u64"),
         ]
         .into();
         assert!(
@@ -1345,8 +1346,8 @@ mod tests {
         );
 
         let ids_b: std::collections::HashSet<u64> = [
-            pb.as_ref().unwrap()["entity_a"].as_u64().unwrap(),
-            pb.as_ref().unwrap()["entity_b"].as_u64().unwrap(),
+            pb.as_ref().expect("collision:b payload should exist")["entity_a"].as_u64().expect("entity_a should be u64"),
+            pb.as_ref().expect("collision:b payload should exist")["entity_b"].as_u64().expect("entity_b should be u64"),
         ]
         .into();
         assert!(
@@ -1382,11 +1383,11 @@ mod tests {
 
         let ea = ended_a.clone();
         scene.subscribe(&format!("collision_end:{}", a.0), move |_, _| {
-            *ea.lock().unwrap() = true;
+            *ea.lock().expect("mutex should not be poisoned") = true;
         });
         let eb = ended_b.clone();
         scene.subscribe(&format!("collision_end:{}", b.0), move |_, _| {
-            *eb.lock().unwrap() = true;
+            *eb.lock().expect("mutex should not be poisoned") = true;
         });
 
         let mut w =
@@ -1399,8 +1400,8 @@ mod tests {
             w.sync_step(&scene);
         }
 
-        assert!(*ended_a.lock().unwrap(), "collision_end:{} not fired", a.0);
-        assert!(*ended_b.lock().unwrap(), "collision_end:{} not fired", b.0);
+        assert!(*ended_a.lock().expect("mutex should not be poisoned"), "collision_end:{} not fired", a.0);
+        assert!(*ended_b.lock().expect("mutex should not be poisoned"), "collision_end:{} not fired", b.0);
     }
 
     // ── T-PHYS-23: Per-entity trigger_enter and trigger_exit events ───────────
@@ -1427,19 +1428,19 @@ mod tests {
 
         let et = entered_trigger.clone();
         scene.subscribe(&format!("trigger_enter:{}", trigger.0), move |_, _| {
-            *et.lock().unwrap() = true;
+            *et.lock().expect("mutex should not be poisoned") = true;
         });
         let eb = entered_body.clone();
         scene.subscribe(&format!("trigger_enter:{}", body.0), move |_, _| {
-            *eb.lock().unwrap() = true;
+            *eb.lock().expect("mutex should not be poisoned") = true;
         });
         let xt = exited_trigger.clone();
         scene.subscribe(&format!("trigger_exit:{}", trigger.0), move |_, _| {
-            *xt.lock().unwrap() = true;
+            *xt.lock().expect("mutex should not be poisoned") = true;
         });
         let xb = exited_body.clone();
         scene.subscribe(&format!("trigger_exit:{}", body.0), move |_, _| {
-            *xb.lock().unwrap() = true;
+            *xb.lock().expect("mutex should not be poisoned") = true;
         });
 
         let mut w = world();
@@ -1447,10 +1448,10 @@ mod tests {
             w.sync_step(&scene);
         }
 
-        assert!(*entered_trigger.lock().unwrap(), "trigger_enter:{} not fired", trigger.0);
-        assert!(*entered_body.lock().unwrap(), "trigger_enter:{} not fired", body.0);
-        assert!(*exited_trigger.lock().unwrap(), "trigger_exit:{} not fired", trigger.0);
-        assert!(*exited_body.lock().unwrap(), "trigger_exit:{} not fired", body.0);
+        assert!(*entered_trigger.lock().expect("mutex should not be poisoned"), "trigger_enter:{} not fired", trigger.0);
+        assert!(*entered_body.lock().expect("mutex should not be poisoned"), "trigger_enter:{} not fired", body.0);
+        assert!(*exited_trigger.lock().expect("mutex should not be poisoned"), "trigger_exit:{} not fired", trigger.0);
+        assert!(*exited_body.lock().expect("mutex should not be poisoned"), "trigger_exit:{} not fired", body.0);
     }
 
     // ── T-PHYS-24: Sensor overlap emits trigger, not collision ────────────────
@@ -1479,11 +1480,11 @@ mod tests {
 
         let tf = trigger_fired.clone();
         scene.subscribe("trigger", move |_, _| {
-            *tf.lock().unwrap() = true;
+            *tf.lock().expect("mutex should not be poisoned") = true;
         });
         let cf = collision_fired.clone();
         scene.subscribe("collision", move |_, _| {
-            *cf.lock().unwrap() = true;
+            *cf.lock().expect("mutex should not be poisoned") = true;
         });
 
         let mut w =
@@ -1492,9 +1493,9 @@ mod tests {
             w.sync_step(&scene);
         }
 
-        assert!(*trigger_fired.lock().unwrap(), "trigger event expected for sensor overlap");
+        assert!(*trigger_fired.lock().expect("mutex should not be poisoned"), "trigger event expected for sensor overlap");
         assert!(
-            !*collision_fired.lock().unwrap(),
+            !*collision_fired.lock().expect("mutex should not be poisoned"),
             "collision event must NOT fire for sensor overlap"
         );
     }
@@ -1527,23 +1528,23 @@ mod tests {
 
         let na = normal_a.clone();
         scene.subscribe(&format!("collision:{}", a.0), move |_, payload| {
-            if na.lock().unwrap().is_none() {
+            if na.lock().expect("mutex should not be poisoned").is_none() {
                 if let Some(arr) = payload["normal"].as_array() {
                     let nx = arr[0].as_f64().unwrap_or(0.0);
                     let ny = arr[1].as_f64().unwrap_or(0.0);
                     let nz = arr[2].as_f64().unwrap_or(0.0);
-                    *na.lock().unwrap() = Some([nx, ny, nz]);
+                    *na.lock().expect("mutex should not be poisoned") = Some([nx, ny, nz]);
                 }
             }
         });
         let nb = normal_b.clone();
         scene.subscribe(&format!("collision:{}", b.0), move |_, payload| {
-            if nb.lock().unwrap().is_none() {
+            if nb.lock().expect("mutex should not be poisoned").is_none() {
                 if let Some(arr) = payload["normal"].as_array() {
                     let nx = arr[0].as_f64().unwrap_or(0.0);
                     let ny = arr[1].as_f64().unwrap_or(0.0);
                     let nz = arr[2].as_f64().unwrap_or(0.0);
-                    *nb.lock().unwrap() = Some([nx, ny, nz]);
+                    *nb.lock().expect("mutex should not be poisoned") = Some([nx, ny, nz]);
                 }
             }
         });
@@ -1556,13 +1557,13 @@ mod tests {
 
         for _ in 0..60 {
             w.sync_step(&scene);
-            if normal_a.lock().unwrap().is_some() && normal_b.lock().unwrap().is_some() {
+            if normal_a.lock().expect("mutex should not be poisoned").is_some() && normal_b.lock().expect("mutex should not be poisoned").is_some() {
                 break;
             }
         }
 
-        let na = normal_a.lock().unwrap().expect("collision:{a} per-entity event not fired");
-        let nb = normal_b.lock().unwrap().expect("collision:{b} per-entity event not fired");
+        let na = normal_a.lock().expect("mutex should not be poisoned").expect("collision:{a} per-entity event not fired");
+        let nb = normal_b.lock().expect("mutex should not be poisoned").expect("collision:{b} per-entity event not fired");
 
         // a is on the left: its per-entity normal must point leftward (-X, toward a).
         assert!(
@@ -1595,7 +1596,7 @@ mod tests {
         for _ in 0..30 {
             w.sync_step(&scene);
         }
-        let y_before = scene.components.get::<TransformComponent>(e).unwrap().y;
+        let y_before = scene.components.get::<TransformComponent>(e).expect("entity should have a TransformComponent").y;
         assert!((y_before - 10.0).abs() < 0.01, "y={} should be 10.0 with zero gravity", y_before);
 
         // Enable gravity mid-simulation.
@@ -1603,7 +1604,7 @@ mod tests {
         for _ in 0..60 {
             w.sync_step(&scene);
         }
-        let y_after = scene.components.get::<TransformComponent>(e).unwrap().y;
+        let y_after = scene.components.get::<TransformComponent>(e).expect("entity should have a TransformComponent").y;
         assert!(
             y_after < y_before - 1.0,
             "y={} should have fallen after enabling gravity",
