@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Delete|Rename|Move|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -lc 'python3 .claude/remake_agent.py >/dev/null 2>&1 &'"
+          }
+        ]
+      }
+    ]
+  }
+}
