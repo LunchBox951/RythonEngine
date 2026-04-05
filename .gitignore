@@ -27,6 +27,9 @@ saves/
 *.swo
 *~
 
+# Build cache
+.cache/
+
 # OS
 .DS_Store
 Thumbs.db
