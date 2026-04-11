@@ -79,6 +79,7 @@ class FrameRunner:
     def start(self):
         """Register the frame counter as a recurring callback."""
         import rython
+        self._max_frame = max((f for f, _ in self._checkpoints), default=0)
         rython.scheduler.register_recurring(self._tick)
 
     def _tick(self):
@@ -97,6 +98,5 @@ class FrameRunner:
                     )
                 else:
                     self._suite.record_pass(fn.__name__)
-        max_frame = max((f for f, _ in self._checkpoints), default=0)
-        if self._frame > max_frame and self._on_done:
+        if self._frame > self._max_frame and self._on_done:
             self._on_done()
