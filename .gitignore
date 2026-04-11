@@ -30,3 +30,6 @@ saves/
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude worktrees
+.claude/worktrees/*
