@@ -1,16 +1,3 @@
-# os-eco
-.canopy/
-.mulch/
-.overstory/
-.seeds/
-.gitattributes
-start-coordinator
-
-# AI session context
-.claude/
-AGENTS.md
-CLAUDE.md
-
 # Rust
 /target/
 *.rlib
