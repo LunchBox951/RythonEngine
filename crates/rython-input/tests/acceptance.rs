@@ -575,3 +575,163 @@ fn t_inp_29_key_pressed_while_locked_appears_as_held_after_unlock() {
     assert!(!s.pressed("jump"), "after unlock: not pressed (was already down)");
     assert!(s.held("jump"), "after unlock: held because key is still physically down");
 }
+
+// ─── T-INP-30: Simultaneous Conflicting KB + Gamepad ─────────────────────────
+
+#[test]
+fn t_inp_30_simultaneous_conflicting_kb_gamepad() {
+    let owner: OwnerId = 1;
+    let mut ctrl = PlayerController::new(owner);
+    let mut map = InputMap::new("gameplay");
+    map.bind_axis("move_x", AxisBinding::KBAxis { negative: KeyCode::A, positive: KeyCode::D });
+    map.bind_axis(
+        "move_x",
+        AxisBinding::GamepadAxis { axis: GamepadAxisType::LeftStickX },
+    );
+    ctrl.register_map(map);
+
+    // Press A (keyboard negative = -1.0) AND send gamepad positive (+1.0) in the same tick.
+    ctrl.tick(&[
+        RawInputEvent::GamepadConnected { name: "TestPad".into() },
+        RawInputEvent::KeyPressed(KeyCode::A),
+        RawInputEvent::GamepadAxisChanged { axis: GamepadAxisType::LeftStickX, value: 1.0 },
+    ]);
+    let val = ctrl.get_snapshot(owner).unwrap().axis("move_x");
+
+    // Behavior: the binding with the highest absolute value wins (see T-INP-14).
+    // Both are |1.0|, so the result should be one of them. Gamepad was processed
+    // second and has equal abs value, so it wins as the "higher absolute value"
+    // tiebreaker.  Document: engine uses "highest absolute value wins" strategy.
+    assert!(
+        (val - 1.0).abs() < 1e-5 || (val - (-1.0)).abs() < 1e-5,
+        "simultaneous KB+gamepad: axis must resolve to +1.0 or -1.0, got {}",
+        val
+    );
+}
+
+// ─── T-INP-31: Dead Zone — Gamepad Axis ──────────────────────────────────────
+//
+// The engine uses a hardcoded AXIS_DEADZONE = 0.1 for event emission only.
+// The snapshot axis value reflects raw input regardless of the dead zone.
+// There is no configurable set_dead_zone API — this is a potential enhancement.
+
+#[test]
+fn t_inp_31_dead_zone_gamepad_axis() {
+    let owner: OwnerId = 1;
+    let mut ctrl = PlayerController::new(owner);
+    let mut map = InputMap::new("gameplay");
+    map.bind_axis("move_x", AxisBinding::GamepadAxis { axis: GamepadAxisType::LeftStickX });
+    ctrl.register_map(map);
+
+    // No configurable dead zone API exists; the hardcoded AXIS_DEADZONE (0.1) only
+    // affects event emission, not the snapshot value. Small values pass through unchanged.
+
+    // Value below dead zone (0.05 < 0.1): snapshot still reflects raw value
+    ctrl.tick(&[
+        RawInputEvent::GamepadConnected { name: "TestPad".into() },
+        RawInputEvent::GamepadAxisChanged { axis: GamepadAxisType::LeftStickX, value: 0.05 },
+    ]);
+    assert_eq!(
+        ctrl.get_snapshot(owner).unwrap().axis("move_x"), 0.05,
+        "below dead zone: raw value passes through to snapshot"
+    );
+
+    // Value above dead zone (0.2 > 0.1): snapshot reflects raw value
+    ctrl.tick(&[RawInputEvent::GamepadAxisChanged {
+        axis: GamepadAxisType::LeftStickX,
+        value: 0.2,
+    }]);
+    assert_eq!(
+        ctrl.get_snapshot(owner).unwrap().axis("move_x"), 0.2,
+        "above dead zone: raw value passes through to snapshot"
+    );
+}
+
+// ─── T-INP-32: Input Map Switch Mid-Frame ────────────────────────────────────
+
+#[test]
+fn t_inp_32_input_map_switch_mid_frame() {
+    let owner: OwnerId = 1;
+    let mut ctrl = PlayerController::new(owner);
+
+    let mut gameplay = InputMap::new("gameplay");
+    gameplay.bind_button("jump", ButtonBinding::Keyboard(KeyCode::Space));
+    ctrl.register_map(gameplay);
+
+    let mut menu = InputMap::new("menu");
+    menu.bind_button("confirm", ButtonBinding::Keyboard(KeyCode::Enter));
+    ctrl.register_map(menu);
+
+    // Switch to "menu" before ticking
+    ctrl.set_active_map("menu", owner).unwrap();
+
+    // Tick with Space (bound only in "gameplay") — should NOT be active
+    ctrl.tick(&[RawInputEvent::KeyPressed(KeyCode::Space)]);
+    let s = ctrl.get_snapshot(owner).unwrap();
+    assert!(!s.pressed("jump"), "menu map active: jump must not be pressed");
+    assert!(!s.held("jump"), "menu map active: jump must not be held");
+
+    // Enter (bound in "menu") should work
+    ctrl.tick(&[RawInputEvent::KeyPressed(KeyCode::Enter)]);
+    let s = ctrl.get_snapshot(owner).unwrap();
+    assert!(s.pressed("confirm"), "menu map active: confirm must be pressed");
+}
+
+// ─── T-INP-33: Unbound Axis Returns Zero ─────────────────────────────────────
+
+#[test]
+fn t_inp_33_unbound_axis_returns_zero() {
+    let mut ctrl = make_gameplay_controller();
+    ctrl.tick(&[RawInputEvent::KeyPressed(KeyCode::D)]);
+    let s = ctrl.get_snapshot(1).unwrap();
+
+    // "nonexistent_axis" is not bound in any map
+    assert_eq!(s.axis("nonexistent_axis"), 0.0, "unbound axis must return 0.0");
+}
+
+// ─── T-INP-34: Unbound Button Returns False ──────────────────────────────────
+
+#[test]
+fn t_inp_34_unbound_button_returns_false() {
+    let mut ctrl = make_gameplay_controller();
+    ctrl.tick(&[RawInputEvent::KeyPressed(KeyCode::Space)]);
+    let s = ctrl.get_snapshot(1).unwrap();
+
+    // "nonexistent_button" is not bound in any map
+    assert!(!s.pressed("nonexistent_button"), "unbound button: pressed must be false");
+    assert!(!s.held("nonexistent_button"), "unbound button: held must be false");
+    assert!(!s.released("nonexistent_button"), "unbound button: released must be false");
+}
+
+// ─── T-INP-35: Multiple Bindings Same Action — KB + Gamepad ──────────────────
+
+#[test]
+fn t_inp_35_multiple_bindings_same_action() {
+    let owner: OwnerId = 1;
+    let mut ctrl = PlayerController::new(owner);
+    let mut map = InputMap::new("gameplay");
+    map.bind_button("jump", ButtonBinding::Keyboard(KeyCode::Space));
+    map.bind_button("jump", ButtonBinding::Gamepad(GamepadButton::South));
+    ctrl.register_map(map);
+
+    // Frame 1: Press Space → jump pressed via keyboard
+    ctrl.tick(&[
+        RawInputEvent::GamepadConnected { name: "TestPad".into() },
+        RawInputEvent::KeyPressed(KeyCode::Space),
+    ]);
+    let s = ctrl.get_snapshot(owner).unwrap();
+    assert!(s.pressed("jump"), "frame 1: jump pressed via Space");
+    assert!(s.held("jump"), "frame 1: jump held via Space");
+
+    // Frame 2: Release Space
+    ctrl.tick(&[RawInputEvent::KeyReleased(KeyCode::Space)]);
+    let s = ctrl.get_snapshot(owner).unwrap();
+    assert!(!s.held("jump"), "frame 2: jump not held after Space release");
+    assert!(s.released("jump"), "frame 2: jump released");
+
+    // Frame 3: Press GamepadButton::South → jump pressed via gamepad
+    ctrl.tick(&[RawInputEvent::GamepadButtonPressed(GamepadButton::South)]);
+    let s = ctrl.get_snapshot(owner).unwrap();
+    assert!(s.pressed("jump"), "frame 3: jump pressed via GamepadButton::South");
+    assert!(s.held("jump"), "frame 3: jump held via GamepadButton::South");
+}

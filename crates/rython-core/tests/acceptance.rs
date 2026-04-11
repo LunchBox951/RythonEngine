@@ -323,3 +323,167 @@ fn t_typ_02_priority_constant_values() {
     assert_eq!(priorities::RENDER_EXECUTE,   35);
     assert_eq!(priorities::IDLE,             40);
 }
+
+// ─── T-CFG-06..08: Malformed JSON edge cases ─────────────────────────────────
+
+// T-CFG-06: Malformed JSON — wrong type for target_fps (string instead of number)
+#[test]
+fn t_cfg_06_malformed_json_wrong_type() {
+    let json = r#"{"scheduler": {"target_fps": "sixty"}}"#;
+    let result = serde_json::from_str::<EngineConfig>(json);
+    assert!(result.is_err(), "target_fps as string must fail deserialization");
+}
+
+// T-CFG-07: Unknown keys in JSON are silently ignored (serde default behavior)
+#[test]
+fn t_cfg_07_malformed_json_unknown_keys_ignored() {
+    let json = r#"{"unknown_field": true, "scheduler": {"target_fps": 90}}"#;
+    let cfg: EngineConfig = serde_json::from_str(json).expect("unknown keys should be ignored");
+    assert_eq!(cfg.scheduler.target_fps, 90, "known field must have the provided value");
+    // Remaining fields should be defaults
+    assert_eq!(cfg.scheduler.spin_threshold_us, 1000);
+    assert!(cfg.scheduler.parallel_threads.is_none());
+    assert_eq!(cfg.window.width, 1280);
+    assert_eq!(cfg.window.height, 720);
+    assert_eq!(cfg.window.title, "RythonEngine");
+}
+
+// T-CFG-08: Completely invalid JSON string
+#[test]
+fn t_cfg_08_malformed_json_completely_invalid() {
+    let result = serde_json::from_str::<EngineConfig>("not json at all");
+    assert!(result.is_err(), "non-JSON input must fail deserialization");
+}
+
+// ─── T-ERR-12..13: Error variant coverage and source chain ───────────────────
+
+// T-ERR-12: Every EngineError variant has a non-empty Display string with relevant info
+#[test]
+fn t_err_12_engine_error_display_all_variants() {
+    let task_err = TaskError::Failed {
+        source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, "task inner")),
+    };
+
+    let variants: Vec<EngineError> = vec![
+        task_err.into(),
+        EngineError::Script(ScriptError::PythonException {
+            script: "test.py".to_string(),
+            exception: "RuntimeError".to_string(),
+        }),
+        EngineError::Module {
+            module: "TestMod".to_string(),
+            message: "init failed".to_string(),
+        },
+        EngineError::Resource("missing asset".to_string()),
+        EngineError::Renderer("GPU lost".to_string()),
+        EngineError::Physics("solver diverged".to_string()),
+        EngineError::Audio("device unavailable".to_string()),
+        EngineError::Config("bad value".to_string()),
+        EngineError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "file missing")),
+    ];
+
+    let expected_substrings = [
+        "task inner",
+        "test.py",
+        "TestMod",
+        "missing asset",
+        "GPU lost",
+        "solver diverged",
+        "device unavailable",
+        "bad value",
+        "file missing",
+    ];
+
+    for (err, substr) in variants.iter().zip(expected_substrings.iter()) {
+        let msg = err.to_string();
+        assert!(!msg.is_empty(), "Display must not be empty for {:?}", err);
+        assert!(
+            msg.contains(substr),
+            "expected '{substr}' in Display of {:?}, got: {msg}",
+            err
+        );
+    }
+}
+
+// T-ERR-13: Error source chain traversal — walk at least 2 levels deep
+#[test]
+fn t_err_13_error_source_chain_traversal() {
+    use std::error::Error;
+
+    // Build a chain: EngineError::Task -> TaskError::Failed -> io::Error
+    let io_err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "connection lost");
+    let task_err = TaskError::Failed {
+        source: Box::new(io_err),
+    };
+    let engine_err: EngineError = task_err.into();
+
+    // Level 0: EngineError itself
+    let msg_0 = engine_err.to_string();
+    assert!(!msg_0.is_empty(), "EngineError Display must not be empty");
+
+    // Level 1: TaskError::Failed (via source())
+    let source_1 = engine_err.source().expect("EngineError::Task must have a source");
+    let msg_1 = source_1.to_string();
+    assert!(
+        msg_1.contains("connection lost"),
+        "TaskError::Failed source should surface the inner message: {msg_1}"
+    );
+
+    // Level 2: io::Error (via source() on TaskError::Failed)
+    let source_2 = source_1.source().expect("TaskError::Failed must have a source");
+    let msg_2 = source_2.to_string();
+    assert!(
+        msg_2.contains("connection lost"),
+        "inner io::Error message should be accessible: {msg_2}"
+    );
+
+    // Verify chain depth is at least 2
+    let mut depth = 0u32;
+    let mut current: Option<&dyn Error> = Some(&engine_err);
+    while let Some(err) = current {
+        current = err.source();
+        if current.is_some() {
+            depth += 1;
+        }
+    }
+    assert!(depth >= 2, "error source chain must be at least 2 levels deep, got {depth}");
+}
+
+// ─── T-EVT-06..07: NamedEvent edge cases ─────────────────────────────────────
+
+// T-EVT-06: NamedEvent with an empty string name is valid (no panic)
+#[test]
+fn t_evt_06_named_event_empty_name() {
+    let ev = NamedEvent {
+        name: String::new(),
+        payload: serde_json::json!({"key": "value"}),
+    };
+    assert_eq!(ev.name, "", "empty name must be preserved");
+    assert!(ev.payload.is_object(), "payload must remain intact");
+    assert_eq!(ev.payload["key"], "value");
+}
+
+// T-EVT-07: NamedEvent with a large JSON array payload clones correctly
+#[test]
+fn t_evt_07_named_event_large_payload() {
+    let large_array: Vec<i32> = (0..1000).collect();
+    let ev = NamedEvent {
+        name: "big_event".to_string(),
+        payload: serde_json::json!(large_array),
+    };
+
+    let cloned = ev.clone();
+
+    let original_arr = ev.payload.as_array().expect("payload must be an array");
+    let cloned_arr = cloned.payload.as_array().expect("cloned payload must be an array");
+    assert_eq!(original_arr.len(), 1000, "original array must have 1000 elements");
+    assert_eq!(
+        cloned_arr.len(),
+        original_arr.len(),
+        "cloned payload length must match original"
+    );
+    // Spot-check a few values
+    assert_eq!(original_arr[0], 0);
+    assert_eq!(original_arr[999], 999);
+    assert_eq!(cloned_arr[500], 500);
+}

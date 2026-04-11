@@ -523,7 +523,57 @@ class MultiErrorScript:
 
 #[test]
 #[ignore = "timing-sensitive: requires dev-reload feature and file watcher"]
-fn t_script_14_hot_reload_file_change_detection() {}
+fn t_script_14_hot_reload_file_change_detection() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    let sys = ScriptSystem::new(Arc::clone(&scene));
+    setup(&scene);
+
+    Python::attach(|py| {
+        // Create a temp file with version 1 of a script class
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let script_path = tmp.path().join("hot_reload_14.py");
+        std::fs::write(
+            &script_path,
+            b"class HotReload14:\n    VERSION = 1\n    def __init__(self, entity):\n        self.entity = entity\n",
+        )
+        .unwrap();
+
+        // Load the script file into Python and register the class
+        let code_v1 = std::fs::read_to_string(&script_path).unwrap();
+        let cstr_v1 = CString::new(code_v1).unwrap();
+        py.run(cstr_v1.as_c_str(), None, None).unwrap();
+
+        let main = py.import("__main__").unwrap();
+        register_script_class("HotReload14", main.getattr("HotReload14").unwrap().unbind());
+
+        let entity = spawn_with_script(&scene, "HotReload14");
+        sys.flush(py);
+
+        // Verify V1 is active
+        let v1: i64 = main.getattr("HotReload14").unwrap().getattr("VERSION").unwrap().extract().unwrap();
+        assert_eq!(v1, 1, "version 1 should be loaded initially");
+
+        // Simulate file change: write version 2 to the same file
+        std::fs::write(
+            &script_path,
+            b"class HotReload14:\n    VERSION = 2\n    def __init__(self, entity):\n        self.entity = entity\n",
+        )
+        .unwrap();
+
+        // Re-read and re-execute the updated file (simulating what the file watcher does)
+        let code_v2 = std::fs::read_to_string(&script_path).unwrap();
+        let cstr_v2 = CString::new(code_v2).unwrap();
+        py.run(cstr_v2.as_c_str(), None, None).unwrap();
+
+        let class_v2 = main.getattr("HotReload14").unwrap().unbind();
+        sys.reload_entity_script(py, entity, class_v2).expect("reload v2");
+
+        // Verify V2 is now active
+        let v2: i64 = main.getattr("HotReload14").unwrap().getattr("VERSION").unwrap().extract().unwrap();
+        assert_eq!(v2, 2, "version 2 should be loaded after file change");
+    });
+}
 
 // ─── T-SCRIPT-15: Hot-Reload — Handler Rebinding ─────────────────────────────
 
@@ -581,7 +631,60 @@ class HotScriptV2:
 
 #[test]
 #[ignore = "requires dev-reload feature and file watcher"]
-fn t_script_16_hot_reload_syntax_error_resilience() {}
+fn t_script_16_hot_reload_syntax_error_resilience() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    let sys = ScriptSystem::new(Arc::clone(&scene));
+    setup(&scene);
+
+    Python::attach(|py| {
+        // Create a temp file with valid Python syntax
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let script_path = tmp.path().join("resilience_16.py");
+        std::fs::write(
+            &script_path,
+            b"class Resilience16:\n    VERSION = 1\n    def __init__(self, entity):\n        self.entity = entity\n    def on_collision(self, other, normal):\n        pass\n",
+        )
+        .unwrap();
+
+        // Load and register the valid class
+        let code_v1 = std::fs::read_to_string(&script_path).unwrap();
+        let cstr_v1 = CString::new(code_v1).unwrap();
+        py.run(cstr_v1.as_c_str(), None, None).unwrap();
+
+        let main = py.import("__main__").unwrap();
+        register_script_class("Resilience16", main.getattr("Resilience16").unwrap().unbind());
+
+        let entity = spawn_with_script(&scene, "Resilience16");
+        let dummy = spawn_empty(&scene);
+        sys.flush(py);
+
+        // Verify the valid script works (collision dispatches without error)
+        sys.queue_collision(entity, dummy, [0.0, 1.0, 0.0]);
+        sys.flush(py);
+        let errors_before = sys.drain_errors();
+        assert!(errors_before.is_empty(), "valid script should produce no errors");
+
+        // Write invalid Python syntax to the same file
+        std::fs::write(&script_path, b"class Resilience16:\n    def __init__(self BROKEN\n").unwrap();
+
+        // Attempt to reload from the broken file — py.run should fail
+        let code_bad = std::fs::read_to_string(&script_path).unwrap();
+        let cstr_bad = CString::new(code_bad).unwrap();
+        let reload_result = py.run(cstr_bad.as_c_str(), None, None);
+
+        // The reload should fail due to syntax error
+        assert!(reload_result.is_err(), "loading invalid syntax should return an error");
+
+        // The old valid script should still be active — test by dispatching another collision
+        sys.queue_collision(entity, dummy, [1.0, 0.0, 0.0]);
+        sys.flush(py);
+
+        // The old instance should still be present and handle events
+        let instance = sys.get_instance(entity);
+        assert!(instance.is_some(), "old script instance should still be active after failed reload");
+    });
+}
 
 // ─── T-SCRIPT-17: Hot-Reload — Entity State Preserved ────────────────────────
 
@@ -1759,5 +1862,188 @@ handle_52 = rython.scheduler.submit_parallel(failing_task_52)
             error.unwrap().contains("boom 52"),
             "error message must include original exception text"
         );
+    });
+}
+
+// ─── T-SCRIPT-53: Recursive Event Emission ──────────────────────────────────
+
+#[test]
+fn t_script_53_recursive_event_emission() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+
+depth_a_53 = 0
+depth_b_53 = 0
+
+def on_event_a_53(**kwargs):
+    global depth_a_53
+    depth_a_53 += 1
+    # Handler for event_a emits event_b
+    rython.scene.emit('event_b_53', src='a')
+
+def on_event_b_53(**kwargs):
+    global depth_b_53
+    depth_b_53 += 1
+    # Handler for event_b emits event_c (no handler, terminates chain)
+    rython.scene.emit('event_c_53', src='b')
+
+rython.scene.subscribe('event_a_53', on_event_a_53)
+rython.scene.subscribe('event_b_53', on_event_b_53)
+
+# Kick off the chain
+rython.scene.emit('event_a_53', src='root')
+",
+            None, None,
+        ).expect("recursive event emission must not crash");
+
+        let main = py.import("__main__").unwrap();
+        let a: i64 = main.getattr("depth_a_53").unwrap().extract().unwrap();
+        let b: i64 = main.getattr("depth_b_53").unwrap().extract().unwrap();
+        assert_eq!(a, 1, "event_a handler must fire once");
+        assert_eq!(b, 1, "event_b handler must fire once (triggered by event_a handler)");
+    });
+}
+
+// ─── T-SCRIPT-54: Stale Entity Ref After Despawn ────────────────────────────
+
+#[test]
+fn t_script_54_stale_entity_ref_after_despawn() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        let code = format!(
+            "\
+import rython
+entity_54 = rython.scene.spawn(transform=rython.Transform(x=5.0, y=10.0, z=15.0))
+eid_54 = entity_54.id
+"
+        );
+        let cstr = CString::new(code).unwrap();
+        py.run(cstr.as_c_str(), None, None).expect("spawn entity");
+
+        let main = py.import("__main__").unwrap();
+        let eid: u64 = main.getattr("eid_54").unwrap().extract().unwrap();
+
+        // Despawn the entity through the ECS
+        scene.queue_despawn(rython_ecs::EntityId(eid));
+        scene.drain_commands();
+
+        // Accessing transform on a despawned entity must not crash — should return defaults
+        py.run(
+            c"
+tx_54 = entity_54.transform.x
+ty_54 = entity_54.transform.y
+tz_54 = entity_54.transform.z
+",
+            None, None,
+        ).expect("stale entity transform access must not crash");
+
+        let tx: f64 = main.getattr("tx_54").unwrap().extract().unwrap();
+        let ty: f64 = main.getattr("ty_54").unwrap().extract().unwrap();
+        let tz: f64 = main.getattr("tz_54").unwrap().extract().unwrap();
+
+        // After despawn, the entity is gone — transform returns default (zero) values
+        assert!(
+            (tx - 0.0).abs() < 1e-5 && (ty - 0.0).abs() < 1e-5 && (tz - 0.0).abs() < 1e-5,
+            "despawned entity transform should return defaults, got ({tx}, {ty}, {tz})"
+        );
+    });
+}
+
+// ─── T-SCRIPT-55: Throttle Hz=1 Boundary ────────────────────────────────────
+
+#[test]
+fn t_script_55_throttle_hz_one_boundary() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+
+call_count_55 = 0
+
+@rython.throttle(hz=1)
+def throttled_fn_55():
+    global call_count_55
+    call_count_55 += 1
+",
+            None, None,
+        ).expect("throttle setup");
+
+        let main = py.import("__main__").unwrap();
+
+        // Simulate 120 frames at 60 fps (2 seconds of game time)
+        let dt = 1.0 / 60.0;
+        for frame in 0..120 {
+            let t = (frame as f64) * dt;
+            set_elapsed_secs(t);
+            py.run(c"throttled_fn_55()", None, None).expect("throttle call");
+        }
+
+        let count: i64 = main.getattr("call_count_55").unwrap().extract().unwrap();
+        // At hz=1, should fire approximately once per second → ~2 times over 2 seconds
+        // Allow some tolerance for boundary effects (first call fires immediately at t=0)
+        assert!(
+            count >= 2 && count <= 3,
+            "throttle(hz=1) over 2 seconds should fire ~2-3 times, got {count}"
+        );
+        assert!(
+            count < 120,
+            "throttle must prevent firing every frame; got {count} (expected << 120)"
+        );
+    });
+}
+
+// ─── T-SCRIPT-56: Event Unsubscribe During Dispatch ─────────────────────────
+
+#[test]
+fn t_script_56_event_unsubscribe_during_dispatch() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+
+fire_count_56 = 0
+hid_56 = None
+
+def self_removing_handler_56(**kwargs):
+    global fire_count_56, hid_56
+    fire_count_56 += 1
+    # Unsubscribe ourselves during dispatch
+    rython.scene.unsubscribe('self_remove_56', hid_56)
+
+hid_56 = rython.scene.subscribe('self_remove_56', self_removing_handler_56)
+",
+            None, None,
+        ).expect("event unsubscribe setup");
+
+        let main = py.import("__main__").unwrap();
+
+        // First emit — handler fires and unsubscribes itself
+        py.run(c"rython.scene.emit('self_remove_56')", None, None)
+            .expect("first emit must not crash");
+        let count: i64 = main.getattr("fire_count_56").unwrap().extract().unwrap();
+        assert_eq!(count, 1, "handler must fire once on first emit");
+
+        // Second emit — handler should be gone
+        py.run(c"rython.scene.emit('self_remove_56')", None, None)
+            .expect("second emit must not crash");
+        let count: i64 = main.getattr("fire_count_56").unwrap().extract().unwrap();
+        assert_eq!(count, 1, "handler must not fire again after unsubscribing during dispatch");
     });
 }

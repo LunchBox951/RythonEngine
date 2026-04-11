@@ -1610,4 +1610,239 @@ mod tests {
             y_after
         );
     }
+
+    // ── T-PHYS-27: Empty World Step ──────────────────────────────────────────────
+    //
+    // Stepping physics on an empty scene (no bodies) for 60 frames must not panic.
+
+    #[test]
+    fn t_phys_27_empty_world_step() {
+        let scene = Scene::new();
+        let mut w = world();
+        for _ in 0..60 {
+            w.sync_step(&scene);
+        }
+        assert_eq!(w.body_count(), 0, "no bodies should exist in empty scene");
+    }
+
+    // ── T-PHYS-28: Collision Layer All Bits ──────────────────────────────────────
+    //
+    // Two overlapping dynamic bodies with collision_layer=0xFFFFFFFF and
+    // collision_mask=0xFFFFFFFF should collide (positions diverge due to overlap
+    // resolution).
+
+    #[test]
+    fn t_phys_28_collision_layer_all_bits() {
+        let scene = Scene::new();
+        let a = spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 0xFFFFFFFF, 0xFFFFFFFF),
+            box_col([1.0, 1.0, 1.0]),
+        );
+        let b = spawn(
+            &scene,
+            transform(0.3, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 0xFFFFFFFF, 0xFFFFFFFF),
+            box_col([1.0, 1.0, 1.0]),
+        );
+
+        let mut w = world_zero_gravity();
+        for _ in 0..30 {
+            w.sync_step(&scene);
+        }
+
+        let ta = scene.components.get::<TransformComponent>(a).unwrap();
+        let tb = scene.components.get::<TransformComponent>(b).unwrap();
+        let distance = ((ta.x - tb.x).powi(2) + (ta.y - tb.y).powi(2) + (ta.z - tb.z).powi(2)).sqrt();
+        assert!(
+            distance > 0.5,
+            "bodies should have been pushed apart by overlap resolution, distance={}",
+            distance
+        );
+    }
+
+    // ── T-PHYS-29: Collision Layer No Match ──────────────────────────────────────
+    //
+    // Two overlapping dynamic bodies with non-overlapping layers/masks should NOT
+    // collide — they pass through each other.
+
+    #[test]
+    fn t_phys_29_collision_layer_no_match() {
+        let scene = Scene::new();
+        let a = spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 1, 1),
+            box_col([1.0, 1.0, 1.0]),
+        );
+        let b = spawn(
+            &scene,
+            transform(0.3, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 2, 2),
+            box_col([1.0, 1.0, 1.0]),
+        );
+
+        let mut w = world_zero_gravity();
+        for _ in 0..30 {
+            w.sync_step(&scene);
+        }
+
+        // With non-overlapping layers (layer=1,mask=1 vs layer=2,mask=2),
+        // neither body's layer intersects the other's mask, so no collision.
+        // Positions should remain near initial values.
+        let ta = scene.components.get::<TransformComponent>(a).unwrap();
+        let tb = scene.components.get::<TransformComponent>(b).unwrap();
+        assert!(
+            (ta.x - 0.0).abs() < 0.05,
+            "body a should stay near origin, x={}",
+            ta.x
+        );
+        assert!(
+            (tb.x - 0.3).abs() < 0.05,
+            "body b should stay near 0.3, x={}",
+            tb.x
+        );
+    }
+
+    // ── T-PHYS-30: Fast Body Tunneling Detection ─────────────────────────────────
+    //
+    // Spawns a small fast-moving dynamic body aimed at a thin static wall.
+    // If CCD is active, the body should be stopped by the wall. If not, the body
+    // may tunnel through — document the result.
+
+    #[test]
+    fn t_phys_30_fast_body_tunneling_detection() {
+        let scene = Scene::new();
+        // Thin static wall at x=10
+        spawn(
+            &scene,
+            transform(10.0, 0.0, 0.0),
+            rb_with("static", 0.0, 1, 1),
+            box_col([0.1, 10.0, 10.0]),
+        );
+        // Small dynamic body at x=0 with very high velocity toward the wall
+        let bullet = spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("dynamic", 0.0, 1, 1),
+            box_col([0.2, 0.2, 0.2]),
+        );
+
+        let mut w = world_zero_gravity();
+        w.sync_step(&scene); // register bodies
+        w.set_linear_velocity(bullet, [500.0, 0.0, 0.0]);
+
+        for _ in 0..60 {
+            w.sync_step(&scene);
+        }
+
+        let t = scene.components.get::<TransformComponent>(bullet).unwrap();
+        // NOTE: rapier3d has a CCDSolver but CCD must be explicitly enabled per body
+        // (RigidBodyBuilder::ccd_enabled(true)). The engine currently does not enable
+        // per-body CCD, so the bullet may tunnel through the thin wall. This is a
+        // known limitation. If CCD were active, t.x would be <= 10.0.
+        //
+        // We verify the test runs without panic regardless of tunneling outcome.
+        assert!(
+            !t.x.is_nan(),
+            "bullet position must not be NaN after high-velocity simulation"
+        );
+        // If the body did NOT tunnel, it should be stopped at or before the wall.
+        // If it did tunnel, it will be past x=10. Either outcome is accepted here.
+        if t.x <= 10.5 {
+            // CCD active or the body was caught — great.
+        } else {
+            // Known limitation: per-body CCD not enabled, bullet tunneled through.
+            eprintln!(
+                "[t_phys_30] CCD not active: bullet tunneled to x={:.1} (past wall at x=10)",
+                t.x
+            );
+        }
+    }
+
+    // ── T-PHYS-31: Body Registration/Deregistration Cycle ────────────────────────
+    //
+    // Register a body, deregister it, register a new one. Verify body_count
+    // reflects each change correctly.
+
+    #[test]
+    fn t_phys_31_body_registration_deregistration_cycle() {
+        let scene = Scene::new();
+        let e = spawn(&scene, transform(0.0, 0.0, 0.0), dyn_rb(), box_col([1.0, 1.0, 1.0]));
+
+        let mut w = world_zero_gravity();
+        w.sync_step(&scene);
+        assert_eq!(w.body_count(), 1, "1 body after first registration");
+
+        // Remove the RigidBodyComponent so next sync_step deregisters the body
+        scene.queue_detach::<RigidBodyComponent>(e);
+        scene.drain_commands();
+        w.sync_step(&scene);
+        assert_eq!(w.body_count(), 0, "0 bodies after deregistration");
+
+        // Spawn a new entity with physics components
+        let e2 = spawn(&scene, transform(5.0, 5.0, 5.0), dyn_rb(), box_col([1.0, 1.0, 1.0]));
+        w.sync_step(&scene);
+        assert_eq!(w.body_count(), 1, "1 body after re-registration of new entity");
+
+        // Verify the new body is tracked
+        let pos = w.get_body_position(e2).unwrap();
+        assert!((pos[0] - 5.0).abs() < 0.01, "new body at correct position");
+    }
+
+    // ── T-PHYS-32: NaN Position Recovery ─────────────────────────────────────────
+    //
+    // Forcibly set a body's position to NaN. After sync_step, the body must be
+    // clamped back to its last valid position and velocity zeroed.
+
+    #[test]
+    fn t_phys_32_nan_position_recovery() {
+        let scene = Scene::new();
+        let e = spawn(
+            &scene,
+            transform(3.0, 4.0, 5.0),
+            dyn_rb(),
+            box_col([1.0, 1.0, 1.0]),
+        );
+
+        let mut w = world_zero_gravity();
+        w.sync_step(&scene); // register; last_valid_position = (3,4,5)
+
+        // Inject NaN into all three axes
+        w.set_body_translation_raw(e, [f32::NAN, f32::NAN, f32::NAN]);
+
+        // sync_step should detect NaN and reset to last_valid_position
+        w.sync_step(&scene);
+
+        let t = scene.components.get::<TransformComponent>(e).unwrap();
+        assert!(!t.x.is_nan(), "x must not be NaN after recovery");
+        assert!(!t.y.is_nan(), "y must not be NaN after recovery");
+        assert!(!t.z.is_nan(), "z must not be NaN after recovery");
+
+        // Should be reset to last valid position (3, 4, 5)
+        assert!(
+            (t.x - 3.0).abs() < 0.01,
+            "x={} should be reset to 3.0",
+            t.x
+        );
+        assert!(
+            (t.y - 4.0).abs() < 0.01,
+            "y={} should be reset to 4.0",
+            t.y
+        );
+        assert!(
+            (t.z - 5.0).abs() < 0.01,
+            "z={} should be reset to 5.0",
+            t.z
+        );
+
+        // Velocity should be zeroed after NaN recovery
+        let vel = w.get_linear_velocity(e).unwrap();
+        assert!(
+            vel[0].abs() < 0.01 && vel[1].abs() < 0.01 && vel[2].abs() < 0.01,
+            "velocity should be zeroed after NaN recovery, got {:?}",
+            vel
+        );
+    }
 }

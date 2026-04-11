@@ -923,4 +923,208 @@ mod tests {
         assert!(!hidden_text, "hidden button must NOT emit draw commands");
         _ = btn;
     }
+
+    // ── T-UI-41: Deep Nesting — Three Levels ─────────────────────────────────
+
+    #[test]
+    fn t_ui_41_deep_nesting_three_levels() {
+        let mut ui = ui();
+        let outer = ui.create_panel(0.1, 0.2, 0.8, 0.8);
+        ui.set_layout(outer, LayoutDir::Vertical, 0.02, 0.01);
+
+        let inner = ui.create_panel(0.0, 0.0, 0.6, 0.4);
+        ui.add_child(outer, inner);
+        ui.set_layout(inner, LayoutDir::Vertical, 0.02, 0.01);
+
+        let btn = ui.create_button("Deep", 0.0, 0.0, 0.2, 0.05);
+        ui.add_child(inner, btn);
+
+        ui.compute_layout();
+
+        let w_outer = ui.get_widget(outer);
+        let w_inner = ui.get_widget(inner);
+        let w_btn = ui.get_widget(btn);
+
+        // inner panel offset = outer.abs + outer.padding
+        let expected_inner_y = w_outer.abs_y + 0.01;
+        assert!(
+            (w_inner.abs_y - expected_inner_y).abs() < 1e-4,
+            "inner panel abs_y={} expected={}",
+            w_inner.abs_y,
+            expected_inner_y
+        );
+
+        // button offset = inner.abs + inner.padding
+        let expected_btn_y = w_inner.abs_y + 0.01;
+        assert!(
+            (w_btn.abs_y - expected_btn_y).abs() < 1e-4,
+            "button abs_y={} expected={} (accounts for both parent offsets)",
+            w_btn.abs_y,
+            expected_btn_y
+        );
+    }
+
+    // ── T-UI-42: Deep Nesting — Mixed Layouts ────────────────────────────────
+
+    #[test]
+    fn t_ui_42_deep_nesting_mixed_layouts() {
+        let mut ui = ui();
+        let outer = ui.create_panel(0.1, 0.1, 0.8, 0.8);
+        ui.set_layout(outer, LayoutDir::Vertical, 0.02, 0.01);
+
+        let inner = ui.create_panel(0.0, 0.0, 0.6, 0.1);
+        ui.add_child(outer, inner);
+        ui.set_layout(inner, LayoutDir::Horizontal, 0.03, 0.0);
+
+        let btn1 = ui.create_button("L", 0.0, 0.0, 0.1, 0.05);
+        ui.add_child(inner, btn1);
+        let btn2 = ui.create_button("R", 0.0, 0.0, 0.1, 0.05);
+        ui.add_child(inner, btn2);
+
+        ui.compute_layout();
+
+        let w_outer = ui.get_widget(outer);
+        let w_inner = ui.get_widget(inner);
+        let w_btn1 = ui.get_widget(btn1);
+        let w_btn2 = ui.get_widget(btn2);
+
+        // Inner panel is offset vertically within the outer panel (padding)
+        let expected_inner_y = w_outer.abs_y + 0.01;
+        assert!(
+            (w_inner.abs_y - expected_inner_y).abs() < 1e-4,
+            "inner panel should be offset by outer padding"
+        );
+
+        // btn1 and btn2 should be side-by-side (horizontal layout within inner)
+        assert!(
+            (w_btn1.abs_y - w_btn2.abs_y).abs() < 1e-4,
+            "btn1 and btn2 must share the same abs_y (side-by-side), got {} vs {}",
+            w_btn1.abs_y,
+            w_btn2.abs_y
+        );
+
+        // btn2 should be to the right of btn1 by (btn_w + spacing)
+        let expected_btn2_x = w_btn1.abs_x + 0.1 + 0.03;
+        assert!(
+            (w_btn2.abs_x - expected_btn2_x).abs() < 1e-4,
+            "btn2 abs_x={} expected={} (btn1.abs_x + btn_w + spacing)",
+            w_btn2.abs_x,
+            expected_btn2_x
+        );
+    }
+
+    // ── T-UI-43: Remove Widget Mid-Animation ─────────────────────────────────
+
+    #[test]
+    fn t_ui_43_remove_widget_mid_animation() {
+        let mut ui = ui();
+        let label = ui.create_label("Anim", 0.0, 0.5, 0.1, 0.05);
+
+        ui.start_tween(label, "position_x", 0.0, 1.0, 1.0, EasingFn::Linear);
+
+        // Advance partway through animation
+        ui.tick(0.3);
+
+        // Remove the widget while the animation is still active
+        ui.remove_widget(label);
+
+        // Tick again — must not panic even though the target widget is gone
+        ui.tick(0.5);
+        ui.tick(0.5);
+
+        // Widget is gone
+        assert_eq!(ui.widget_count(), 0, "widget must be removed");
+    }
+
+    // ── T-UI-44: Overlapping Widgets Click Z-Order ───────────────────────────
+
+    #[test]
+    fn t_ui_44_overlapping_widgets_click_zorder() {
+        let mut ui = ui();
+        let btn_bottom = ui.create_button("Bottom", 0.4, 0.4, 0.2, 0.06);
+        let btn_top = ui.create_button("Top", 0.4, 0.4, 0.2, 0.06);
+
+        // Manually set z so btn_top is above btn_bottom
+        ui.get_widget_mut(btn_bottom).z = 100.0;
+        ui.get_widget_mut(btn_top).z = 101.0;
+        ui.compute_layout();
+
+        let bottom_clicked = Arc::new(Mutex::new(false));
+        let top_clicked = Arc::new(Mutex::new(false));
+
+        let bc = Arc::clone(&bottom_clicked);
+        ui.set_on_click(btn_bottom, Arc::new(move || { *bc.lock().unwrap() = true; }));
+
+        let tc = Arc::clone(&top_clicked);
+        ui.set_on_click(btn_top, Arc::new(move || { *tc.lock().unwrap() = true; }));
+
+        // Click at the shared position — only the top widget should receive it
+        let cb = ui.on_mouse_click(0.5, 0.43);
+        assert!(cb.is_some(), "click should be consumed by the top button");
+        if let Some(cb) = cb { cb(); }
+
+        assert!(*top_clicked.lock().unwrap(), "top button's handler must fire");
+        assert!(!*bottom_clicked.lock().unwrap(), "bottom button's handler must NOT fire");
+    }
+
+    // ── T-UI-45: Focus Traversal Across Parents ──────────────────────────────
+
+    #[test]
+    fn t_ui_45_focus_traversal_across_parents() {
+        let mut ui = ui();
+        let panel1 = ui.create_panel(0.0, 0.0, 0.5, 0.5);
+        let btn1 = ui.create_button_child("P1-A", panel1, 0.0, 0.0, 0.2, 0.05);
+        let btn2 = ui.create_button_child("P1-B", panel1, 0.0, 0.1, 0.2, 0.05);
+
+        let panel2 = ui.create_panel(0.5, 0.0, 0.5, 0.5);
+        let btn3 = ui.create_button_child("P2-A", panel2, 0.0, 0.0, 0.2, 0.05);
+        let btn4 = ui.create_button_child("P2-B", panel2, 0.0, 0.1, 0.2, 0.05);
+
+        ui.set_tab_order(vec![btn1, btn2, btn3, btn4]);
+        ui.focus(btn1);
+
+        assert!(ui.get_widget(btn1).focused);
+
+        // Tab through all 4 buttons across different panels
+        let next = ui.on_tab();
+        assert_eq!(next, Some(btn2), "first tab: btn1 → btn2");
+        assert!(ui.get_widget(btn2).focused);
+
+        let next = ui.on_tab();
+        assert_eq!(next, Some(btn3), "second tab: btn2 → btn3 (crosses panel boundary)");
+        assert!(ui.get_widget(btn3).focused);
+        assert!(!ui.get_widget(btn2).focused, "btn2 should lose focus");
+
+        let next = ui.on_tab();
+        assert_eq!(next, Some(btn4), "third tab: btn3 → btn4");
+        assert!(ui.get_widget(btn4).focused);
+
+        // Wrap around back to btn1
+        let next = ui.on_tab();
+        assert_eq!(next, Some(btn1), "fourth tab: btn4 → btn1 (wrap)");
+        assert!(ui.get_widget(btn1).focused);
+        assert!(!ui.get_widget(btn4).focused, "btn4 should lose focus after wrap");
+    }
+
+    // ── T-UI-46: Widget Removal Cascades to Children ─────────────────────────
+
+    #[test]
+    fn t_ui_46_widget_removal_cascade_children() {
+        let mut ui = ui();
+        let panel = ui.create_panel(0.0, 0.0, 1.0, 1.0);
+        let btn1 = ui.create_button_child("A", panel, 0.0, 0.0, 0.1, 0.05);
+        let btn2 = ui.create_button_child("B", panel, 0.0, 0.1, 0.1, 0.05);
+        let btn3 = ui.create_button_child("C", panel, 0.0, 0.2, 0.1, 0.05);
+
+        assert_eq!(ui.widget_count(), 4, "panel + 3 children");
+
+        // Remove the panel — all children must cascade
+        ui.remove_widget(panel);
+
+        assert_eq!(ui.widget_count(), 0, "all widgets must be removed when panel is removed");
+
+        // Verify none of the child IDs are accessible
+        // (get_widget would panic on a missing ID; widget_count confirms they are gone)
+        _ = (btn1, btn2, btn3);
+    }
 }

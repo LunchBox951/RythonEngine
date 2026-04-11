@@ -1163,6 +1163,139 @@ mod tests {
         assert!((av - 0.2).abs() < 1e-6, "ambient: expected 0.2, got {av}");
     }
 
+    // ── T-AUD-41: exceed max_sources returns Ok (graceful rejection) ────────
+
+    #[test]
+    fn t_aud_41_exceed_max_sources_graceful() {
+        let mut m = manager_with(AudioConfig {
+            max_sources: 2,
+            ..Default::default()
+        });
+        let h1 = m
+            .play(PlayRequest {
+                path: "a.wav".into(),
+                category: AudioCategory::Sfx,
+                position: None,
+                looping: false,
+            })
+            .unwrap();
+        let h2 = m
+            .play(PlayRequest {
+                path: "b.wav".into(),
+                category: AudioCategory::Sfx,
+                position: None,
+                looping: false,
+            })
+            .unwrap();
+        assert_eq!(m.active_count, 2);
+        assert_ne!(h1.id(), 0);
+        assert_ne!(h2.id(), 0);
+
+        // 3rd play — exceeds max_sources, should return Ok with a non-zero handle
+        let h3 = m
+            .play(PlayRequest {
+                path: "c.wav".into(),
+                category: AudioCategory::Sfx,
+                position: None,
+                looping: false,
+            })
+            .unwrap();
+        assert_ne!(h3.id(), 0, "silent allocation must still return non-zero handle");
+        assert_eq!(m.active_count, 2, "active_count must stay at max_sources");
+    }
+
+    // ── T-AUD-42: zero-distance spatial (exactly at listener) ────────────────
+
+    #[test]
+    fn t_aud_42_zero_distance_spatial() {
+        let m = manager();
+        // Listener defaults to origin — Vec3::ZERO should be within range
+        assert!(
+            m.is_within_range(Vec3::ZERO),
+            "position at listener origin must be within range"
+        );
+        // Epsilon distance from listener — still within range
+        assert!(
+            m.is_within_range(Vec3::new(0.0001, 0.0, 0.0)),
+            "epsilon distance from listener must be within range"
+        );
+    }
+
+    // ── T-AUD-43: rapid play/stop cycle ──────────────────────────────────────
+
+    #[test]
+    fn t_aud_43_rapid_play_stop_cycle() {
+        let mut m = manager();
+        for _ in 0..100 {
+            let h = m
+                .play(PlayRequest {
+                    path: "sound.wav".into(),
+                    category: AudioCategory::Sfx,
+                    position: None,
+                    looping: false,
+                })
+                .unwrap();
+            m.stop(h).unwrap();
+        }
+        assert_eq!(m.active_count, 0, "active_count must be 0 after all play/stop cycles");
+    }
+
+    // ── T-AUD-44: volume above 1.0 via direct config (no clamping) ──────────
+
+    #[test]
+    fn t_aud_44_volume_clamping_above_one() {
+        // effective_volume does raw multiplication — no clamping.
+        // set_master_volume clamps, but direct config assignment does not.
+        let m = manager_with(AudioConfig {
+            master_volume: 1.5,
+            sfx_volume: 1.0,
+            ..Default::default()
+        });
+        let vol = m.effective_volume(AudioCategory::Sfx);
+        // effective_volume returns master * category with no clamping
+        assert!(
+            (vol - 1.5).abs() < f32::EPSILON,
+            "effective_volume should return raw product 1.5, got {vol}"
+        );
+    }
+
+    // ── T-AUD-45: negative volume via direct config ──────────────────────────
+
+    #[test]
+    fn t_aud_45_volume_clamping_negative() {
+        let m = manager_with(AudioConfig {
+            master_volume: -0.5,
+            sfx_volume: 1.0,
+            ..Default::default()
+        });
+        let vol = m.effective_volume(AudioCategory::Sfx);
+        // effective_volume returns raw product — no clamping on direct config
+        assert!(
+            (vol - (-0.5)).abs() < f32::EPSILON,
+            "effective_volume should return raw product -0.5, got {vol}"
+        );
+    }
+
+    // ── T-AUD-46: AudioCategory::from_str all valid values ───────────────────
+
+    #[test]
+    fn t_aud_46_category_from_str_all_valid() {
+        assert!(AudioCategory::from_str("sfx").is_some());
+        assert!(AudioCategory::from_str("dialogue").is_some());
+        assert!(AudioCategory::from_str("music").is_some());
+        assert!(AudioCategory::from_str("ambient").is_some());
+    }
+
+    // ── T-AUD-47: AudioCategory::from_str invalid inputs ─────────────────────
+
+    #[test]
+    fn t_aud_47_category_from_str_invalid() {
+        assert!(AudioCategory::from_str("").is_none(), "empty string");
+        assert!(AudioCategory::from_str("SFX").is_none(), "uppercase");
+        assert!(AudioCategory::from_str("unknown").is_none(), "unknown category");
+        assert!(AudioCategory::from_str("sfx ").is_none(), "trailing space");
+    }
+
     // ── Hardware tests — require a real audio device ──────────────────────────
 
     #[test]

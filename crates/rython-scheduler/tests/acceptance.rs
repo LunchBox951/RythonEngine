@@ -953,3 +953,178 @@ fn t_sched_04_phase_order() {
     assert!(s < p, "sequential must finish before parallel completes");
     // background may run concurrently but is submitted after parallel
 }
+
+// ─── T-SCHED-26: Recurring Panic on Nth Invocation ──────────────────────────
+
+#[test]
+fn t_sched_26_recurring_panic_on_nth_invocation() {
+    let mut sched = TaskScheduler::new(&SchedulerConfig {
+        target_fps: 1000,
+        parallel_threads: None,
+        spin_threshold_us: 0,
+    });
+
+    let counter = Arc::new(AtomicU32::new(0));
+    let c = Arc::clone(&counter);
+
+    // Recurring task that panics on the 6th invocation
+    sched.register_recurring_sequential(
+        Box::new(move || {
+            let n = c.fetch_add(1, Ordering::Relaxed) + 1;
+            if n == 6 {
+                panic!("deliberate panic on invocation 6");
+            }
+            true // keep running
+        }),
+        priorities::GAME_UPDATE,
+        1,
+    );
+
+    // A separate task at a different priority to verify it still runs
+    let other_ran = Arc::new(AtomicU32::new(0));
+    let o = Arc::clone(&other_ran);
+    sched.register_recurring_sequential(
+        Box::new(move || {
+            o.fetch_add(1, Ordering::Relaxed);
+            true
+        }),
+        priorities::GAME_LATE,
+        2,
+    );
+
+    // Run 10 ticks — the panicking task fires on tick 6
+    for _ in 0..10 {
+        let result = sched.tick();
+        assert!(result.is_ok(), "scheduler must survive a recurring task panic");
+    }
+
+    // The panicking task ran at least 6 times (including the panic invocation)
+    assert!(
+        counter.load(Ordering::Relaxed) >= 6,
+        "panicking task should have run at least 6 times, got {}",
+        counter.load(Ordering::Relaxed)
+    );
+
+    // The other recurring task must have run every tick
+    assert_eq!(
+        other_ran.load(Ordering::Relaxed),
+        10,
+        "other priority task must not be starved by the panic"
+    );
+}
+
+// ─── T-SCHED-27: Group Mixed Success and Failure ─────────────────────────────
+
+#[test]
+fn t_sched_27_group_mixed_success_failure() {
+    let mut sched = TaskScheduler::new(&SchedulerConfig {
+        target_fps: 1000,
+        parallel_threads: None,
+        spin_threshold_us: 0,
+    });
+
+    let cb_fired = Arc::new(AtomicBool::new(false));
+    let ok_count = Arc::new(AtomicU32::new(0));
+    let err_count = Arc::new(AtomicU32::new(0));
+
+    let cf = Arc::clone(&cb_fired);
+    let oc = Arc::clone(&ok_count);
+    let ec = Arc::clone(&err_count);
+
+    let group_id = sched.create_group(
+        Box::new(move |results| {
+            cf.store(true, Ordering::Relaxed);
+            for res in &results {
+                match res {
+                    Ok(boxed) => {
+                        // Members return Result<i32, String>; downcast and classify
+                        if let Some(inner) = boxed.downcast_ref::<Result<i32, String>>() {
+                            match inner {
+                                Ok(_) => { oc.fetch_add(1, Ordering::Relaxed); }
+                                Err(_) => { ec.fetch_add(1, Ordering::Relaxed); }
+                            }
+                        }
+                    }
+                    Err(_) => { ec.fetch_add(1, Ordering::Relaxed); }
+                }
+            }
+            assert_eq!(results.len(), 3, "group should receive exactly 3 results");
+            Ok(())
+        }),
+        1,
+    );
+
+    // Two members that succeed (return Ok)
+    sched.group_add_background(group_id, || -> Result<i32, String> { Ok(42) });
+    sched.group_add_background(group_id, || -> Result<i32, String> { Ok(99) });
+
+    // One member that returns an error value
+    sched.group_add_background(group_id, || -> Result<i32, String> {
+        Err("deliberate member failure".to_string())
+    });
+
+    sched.group_seal(group_id);
+
+    // Tick until callback fires
+    for _ in 0..30 {
+        sched.tick().unwrap();
+        if cb_fired.load(Ordering::Relaxed) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    assert!(cb_fired.load(Ordering::Relaxed), "group callback must fire");
+    assert_eq!(ok_count.load(Ordering::Relaxed), 2, "two members should report success");
+    assert_eq!(err_count.load(Ordering::Relaxed), 1, "one member should report failure");
+}
+
+// ─── T-SCHED-28: Priority Starvation Check ──────────────────────────────────
+
+#[test]
+fn t_sched_28_priority_starvation_check() {
+    let mut sched = TaskScheduler::new(&SchedulerConfig {
+        target_fps: 1000,
+        parallel_threads: None,
+        spin_threshold_us: 0,
+    });
+
+    let high_prio_count = Arc::new(AtomicU32::new(0));
+    let idle_ran = Arc::new(AtomicBool::new(false));
+
+    // Submit 100 tasks at priority 0 (MODULE_LIFECYCLE — highest priority)
+    for _ in 0..100 {
+        let c = Arc::clone(&high_prio_count);
+        sched.submit_sequential(
+            Box::new(move || {
+                c.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }),
+            priorities::MODULE_LIFECYCLE,
+            1,
+        );
+    }
+
+    // Submit 1 task at priority 40 (IDLE — lowest priority)
+    let ir = Arc::clone(&idle_ran);
+    sched.submit_sequential(
+        Box::new(move || {
+            ir.store(true, Ordering::Relaxed);
+            Ok(())
+        }),
+        priorities::IDLE,
+        1,
+    );
+
+    sched.tick().unwrap();
+
+    assert_eq!(
+        high_prio_count.load(Ordering::Relaxed),
+        100,
+        "all 100 high-priority tasks must run"
+    );
+    assert!(
+        idle_ran.load(Ordering::Relaxed),
+        "the IDLE-priority task must also run — no starvation"
+    );
+}

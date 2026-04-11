@@ -1550,4 +1550,107 @@ mod tests {
         assert_eq!(next_pow2(65536), 65536);
         assert_eq!(next_pow2(65537), 131072);
     }
+
+    // ── T-RES-17: corrupted file handling ────────────────────────────────────
+
+    #[test]
+    #[ignore]
+    fn t_res_17_corrupted_file_handling() {
+        let path = std::env::temp_dir().join("rython_test_t17_corrupt.png");
+        std::fs::write(&path, b"this is not a valid PNG file at all").expect("write corrupt file");
+        let path_str = path.to_str().unwrap();
+
+        let mgr = make_manager(256.0);
+        let h = mgr.load_image(path_str);
+        assert!(poll_until_done(&mgr, &[&h], 500), "handle must settle within timeout");
+        assert_eq!(
+            h.state(),
+            HandleState::Failed,
+            "corrupted file must result in Failed, not panic"
+        );
+        assert!(h.error().is_some(), "failed handle must carry an error message");
+    }
+
+    // ── T-RES-18: eviction under budget pressure ─────────────────────────────
+
+    #[test]
+    #[ignore]
+    fn t_res_18_eviction_under_budget() {
+        // Budget is tiny: 0.0001 MB ≈ 104 bytes. A 64×64 RGBA image = 16384 bytes
+        // which far exceeds this budget.
+        let mgr = make_manager(0.0001);
+        let pixels: Vec<(u8, u8, u8, u8)> = vec![(255, 0, 0, 255); 64 * 64];
+        let path = write_test_png("t18", &pixels, 64, 64);
+        let h = mgr.load_image(&path);
+        assert!(poll_until_done(&mgr, &[&h], 500));
+        assert_eq!(h.state(), HandleState::Ready);
+
+        // The asset data (64×64 RGBA = 16384 bytes) exceeds 0.0001 MB (~104 bytes).
+        // Eviction only happens for entries with no live handles (strong_count == 1).
+        // Since we hold `h`, it cannot be evicted — used_bytes stays above budget.
+        let used = mgr.memory_used_mb();
+        let budget = mgr.memory_budget_mb();
+        assert!(
+            used > budget,
+            "used memory ({used} MB) should exceed the tiny budget ({budget} MB) because the live handle prevents eviction"
+        );
+    }
+
+    // ── T-RES-19: reload after eviction ──────────────────────────────────────
+
+    #[test]
+    #[ignore]
+    fn t_res_19_reload_after_eviction() {
+        let path = write_test_png("t19", &[(0, 255, 0, 255); 4], 2, 2);
+
+        // Use a tiny budget so eviction fires once the handle is dropped.
+        let mgr = make_manager(0.001);
+        let h1 = mgr.load_image(&path);
+        assert!(poll_until_done(&mgr, &[&h1], 500));
+        assert!(h1.is_ready());
+
+        // Drop the handle so the cache entry becomes evictable.
+        drop(h1);
+
+        // Force eviction by loading something else (triggers evict_if_over_budget).
+        let dummy_path = write_test_png("t19_dummy", &[(0, 0, 0, 255); 4], 2, 2);
+        let _dummy = mgr.load_image(&dummy_path);
+        assert!(poll_until_done(&mgr, &[&_dummy], 500));
+
+        // Reload the original path — should produce a new handle that becomes Ready.
+        let h2 = mgr.load_image(&path);
+        assert!(poll_until_done(&mgr, &[&h2], 500));
+        assert!(h2.is_ready(), "reloaded asset must reach Ready state");
+    }
+
+    // ── T-RES-20: concurrent load of same path deduplicates ──────────────────
+
+    #[test]
+    #[ignore]
+    fn t_res_20_concurrent_load_same_path() {
+        let path = write_test_png("t20", &[(128, 128, 128, 255); 4], 2, 2);
+        let mgr = make_manager(256.0);
+        let h1 = mgr.load_image(&path);
+        let h2 = mgr.load_image(&path);
+        assert!(h1.ptr_eq(&h2), "same path loaded twice must share the same handle");
+        assert!(poll_until_done(&mgr, &[&h1, &h2], 500));
+        assert!(h1.is_ready());
+        assert!(h2.is_ready());
+    }
+
+    // ── T-RES-21: load nonexistent file → Failed ─────────────────────────────
+
+    #[test]
+    #[ignore]
+    fn t_res_21_load_nonexistent_file() {
+        let mgr = make_manager(256.0);
+        let h = mgr.load_image("/tmp/rython_test_absolutely_does_not_exist_12345.png");
+        assert!(poll_until_done(&mgr, &[&h], 500), "handle must settle within timeout");
+        assert_eq!(h.state(), HandleState::Failed);
+        let err = h.error().expect("failed handle must carry an error message");
+        assert!(
+            !err.is_empty(),
+            "error message must not be empty"
+        );
+    }
 }

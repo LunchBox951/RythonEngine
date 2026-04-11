@@ -914,3 +914,146 @@ fn t_mod_32_registry_concurrent_access() {
         assert!(registry.contains(&format!("Mod{i}")), "Mod{i} must be in registry");
     }
 }
+
+// ─── T-MOD-31: Multi-Owner Transfer A → B → C ───────────────────────────────
+
+#[test]
+fn t_mod_31_multi_owner_transfer_a_b_c() {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let sched = NoopScheduler;
+    let mut loader = ModuleLoader::new();
+
+    let owner_a: OwnerId = 10;
+    let owner_b: OwnerId = 20;
+    let owner_c: OwnerId = 30;
+
+    loader.register(
+        TrackingModule::new("TransferMod", vec![], Arc::clone(&log), Arc::clone(&log))
+            .exclusive(),
+        Some(owner_a),
+    );
+
+    loader.load_all(&sched).unwrap();
+    assert_eq!(loader.exclusive_owner("TransferMod"), Some(owner_a));
+
+    // Transfer A → B
+    loader.transfer_ownership("TransferMod", owner_a, owner_b).unwrap();
+    assert_eq!(
+        loader.exclusive_owner("TransferMod"),
+        Some(owner_b),
+        "owner must be B after first transfer"
+    );
+
+    // Old owner A cannot transfer anymore
+    assert!(
+        loader.transfer_ownership("TransferMod", owner_a, owner_c).is_err(),
+        "A is no longer the owner and must not be able to transfer"
+    );
+
+    // Transfer B → C
+    loader.transfer_ownership("TransferMod", owner_b, owner_c).unwrap();
+    assert_eq!(
+        loader.exclusive_owner("TransferMod"),
+        Some(owner_c),
+        "owner must be C after second transfer"
+    );
+
+    // B cannot transfer anymore
+    assert!(
+        loader.transfer_ownership("TransferMod", owner_b, owner_a).is_err(),
+        "B is no longer the owner and must not be able to transfer"
+    );
+
+    // C is the final owner and can still operate
+    loader.relinquish_ownership("TransferMod", owner_c).unwrap();
+    assert_eq!(
+        loader.exclusive_owner("TransferMod"),
+        None,
+        "module should have no owner after C relinquishes"
+    );
+}
+
+// ─── T-MOD-32: Load Failure Propagation ──────────────────────────────────────
+
+#[test]
+fn t_mod_32_load_failure_propagation() {
+    struct FailOnLoad;
+    impl Module for FailOnLoad {
+        fn name(&self) -> &str { "FailOnLoad" }
+        fn on_load(&mut self, _: &dyn SchedulerHandle) -> Result<(), EngineError> {
+            Err(EngineError::Module {
+                module: "FailOnLoad".into(),
+                message: "deliberate load failure".into(),
+            })
+        }
+        fn on_unload(&mut self, _: &dyn SchedulerHandle) -> Result<(), EngineError> { Ok(()) }
+    }
+
+    let sched = NoopScheduler;
+    let mut loader = ModuleLoader::new();
+    loader.register(Box::new(FailOnLoad), None);
+
+    let result = loader.load_all(&sched);
+    assert!(result.is_err(), "load_all must return Err when on_load fails");
+
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("FailOnLoad"),
+        "error must mention the failing module name: {msg}"
+    );
+
+    // The module must NOT be in loaded state
+    assert!(
+        loader.get_state("FailOnLoad") != Some(ModuleState::Loaded),
+        "module must not be in Loaded state after on_load failure"
+    );
+}
+
+// ─── T-MOD-33: Unload Failure Does Not Corrupt Module System ─────────────────
+
+#[test]
+fn t_mod_33_unload_failure_does_not_corrupt() {
+    struct FailOnUnload;
+    impl Module for FailOnUnload {
+        fn name(&self) -> &str { "FailOnUnload" }
+        fn on_load(&mut self, _: &dyn SchedulerHandle) -> Result<(), EngineError> { Ok(()) }
+        fn on_unload(&mut self, _: &dyn SchedulerHandle) -> Result<(), EngineError> {
+            Err(EngineError::Module {
+                module: "FailOnUnload".into(),
+                message: "deliberate unload failure".into(),
+            })
+        }
+    }
+
+    let load_log = Arc::new(Mutex::new(Vec::<String>::new()));
+    let unload_log = Arc::new(Mutex::new(Vec::<String>::new()));
+    let sched = NoopScheduler;
+    let mut loader = ModuleLoader::new();
+
+    // Register the failing module and a healthy module
+    loader.register(Box::new(FailOnUnload), None);
+    loader.register(
+        TrackingModule::new("Healthy", vec![], Arc::clone(&load_log), Arc::clone(&unload_log)),
+        None,
+    );
+
+    loader.load_all(&sched).unwrap();
+    assert!(loader.is_loaded("FailOnUnload"), "FailOnUnload must load successfully");
+    assert!(loader.is_loaded("Healthy"), "Healthy must load successfully");
+
+    // Attempt to unload FailOnUnload — should return Err
+    let result = loader.unload_by_name("FailOnUnload", &sched);
+    assert!(result.is_err(), "unload must propagate on_unload error");
+
+    // The module system must remain usable: Healthy can still be unloaded
+    let healthy_result = loader.unload_by_name("Healthy", &sched);
+    assert!(
+        healthy_result.is_ok(),
+        "unloading Healthy must still work after FailOnUnload's error: {:?}",
+        healthy_result.err()
+    );
+    assert!(
+        unload_log.lock().unwrap().contains(&"Healthy".to_string()),
+        "Healthy's on_unload must have been called"
+    );
+}

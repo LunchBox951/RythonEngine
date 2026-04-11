@@ -1297,3 +1297,188 @@ fn t_ecs_63_spawn_handle_none_before_some_after() {
     assert!(id.is_some(), "handle is Some after drain");
     assert!(scene.entity_exists(id.unwrap()));
 }
+
+// ── T-ECS-64: Depth Guard — At Limit Succeeds, One More Rejected ────────────
+
+#[test]
+fn t_ecs_64_depth_guard_at_limit() {
+    use crate::hierarchy::MAX_HIERARCHY_DEPTH;
+
+    let scene = Scene::new();
+
+    // ancestor_chain iterates `0..MAX_HIERARCHY_DEPTH` (i.e. 64 parent hops max).
+    // A chain of MAX_HIERARCHY_DEPTH entities means MAX_HIERARCHY_DEPTH-1 hops
+    // from deepest to root, which fits within the loop → not exceeded.
+    let count = MAX_HIERARCHY_DEPTH; // 64 entities, 63 hops
+    let mut handles = Vec::new();
+    for _ in 0..count {
+        handles.push(scene.queue_spawn(vec![comp(TransformComponent::default())]));
+    }
+    scene.drain_commands();
+    let ids: Vec<EntityId> = handles.iter().map(|h| h.get().unwrap()).collect();
+
+    // Link: ids[0] <- ids[1] <- ... <- ids[count-1]
+    for i in 1..ids.len() {
+        scene.queue_set_parent(ids[i], ids[i - 1]);
+    }
+    scene.drain_commands();
+
+    // The deepest entity (63 hops to root) should NOT exceed the guard.
+    let deepest = ids[count - 1];
+    let (chain, exceeded) = scene.hierarchy.ancestor_chain(deepest);
+    assert!(!exceeded, "depth exactly at limit should NOT be exceeded");
+    assert_eq!(chain.len(), count, "chain should include all {} entities", count);
+
+    // Now add one more level — this makes the chain 65 entities (64 hops),
+    // which exceeds the loop's 64 iterations and triggers the guard.
+    let extra_h = scene.queue_spawn(vec![comp(TransformComponent::default())]);
+    scene.drain_commands();
+    let extra = extra_h.get().unwrap();
+    scene.queue_set_parent(extra, deepest);
+    scene.drain_commands();
+
+    let (_, exceeded_now) = scene.hierarchy.ancestor_chain(extra);
+    assert!(exceeded_now, "depth one past limit must be exceeded");
+}
+
+// ── T-ECS-65: for_each Zero Results ──────────────────────────────────────────
+
+#[test]
+fn t_ecs_65_for_each_zero_results() {
+    let scene = Scene::new();
+    for _ in 0..5 {
+        scene.queue_spawn_anon(vec![comp(TransformComponent::default())]);
+    }
+    scene.drain_commands();
+    assert_eq!(scene.entity_count(), 5);
+
+    // None of them have MeshComponent — callback should never fire
+    let mut count = 0u32;
+    scene.components.for_each::<MeshComponent, _>(|_eid, _m| {
+        count += 1;
+    });
+    assert_eq!(count, 0, "for_each on absent component type must invoke callback zero times");
+}
+
+// ── T-ECS-66: entities_with Nonexistent Component ────────────────────────────
+
+#[test]
+fn t_ecs_66_entities_with_nonexistent_component() {
+    let scene = Scene::new();
+    for _ in 0..5 {
+        scene.queue_spawn_anon(vec![comp(TransformComponent::default())]);
+    }
+    scene.drain_commands();
+
+    // No entity has LightComponent
+    let result = scene.components.entities_with::<LightComponent>();
+    assert!(result.is_empty(), "entities_with for absent component type must return empty");
+}
+
+// ── T-ECS-67: entities_with Matching Returns Correct Count ───────────────────
+
+#[test]
+fn t_ecs_67_entities_with_matching_returns_correct() {
+    let scene = Scene::new();
+
+    // Spawn 10 entities: 3 with TagComponent, 7 without
+    let mut tagged_ids = Vec::new();
+    for i in 0..10 {
+        if i < 3 {
+            let h = scene.queue_spawn(vec![
+                comp(TransformComponent::default()),
+                comp(TagComponent { tags: vec![format!("entity_{}", i)] }),
+            ]);
+            scene.drain_commands();
+            tagged_ids.push(h.get().unwrap());
+        } else {
+            scene.queue_spawn_anon(vec![comp(TransformComponent::default())]);
+            scene.drain_commands();
+        }
+    }
+    assert_eq!(scene.entity_count(), 10);
+
+    let with_tag = scene.components.entities_with::<TagComponent>();
+    assert_eq!(with_tag.len(), 3, "exactly 3 entities should have TagComponent");
+    for id in &tagged_ids {
+        assert!(with_tag.contains(id), "tagged entity {:?} should be in result", id);
+    }
+}
+
+// ── T-ECS-68: Component Overwrite Preserves Data ─────────────────────────────
+
+#[test]
+fn t_ecs_68_component_overwrite_full_data() {
+    let scene = Scene::new();
+    let h = scene.queue_spawn(vec![comp(TransformComponent {
+        x: 1.0, y: 2.0, z: 3.0, ..Default::default()
+    })]);
+    scene.drain_commands();
+    let entity = h.get().unwrap();
+
+    // Verify initial values
+    let t = scene.components.get::<TransformComponent>(entity).unwrap();
+    assert_eq!(t.x, 1.0);
+    assert_eq!(t.y, 2.0);
+    assert_eq!(t.z, 3.0);
+
+    // Overwrite with new TransformComponent at (4,5,6)
+    scene.queue_attach(entity, TransformComponent {
+        x: 4.0, y: 5.0, z: 6.0, ..Default::default()
+    });
+    scene.drain_commands();
+
+    let t2 = scene.components.get::<TransformComponent>(entity).unwrap();
+    assert_eq!(t2.x, 4.0, "x should be overwritten to 4.0");
+    assert_eq!(t2.y, 5.0, "y should be overwritten to 5.0");
+    assert_eq!(t2.z, 6.0, "z should be overwritten to 6.0");
+
+    // Verify no duplicate — count should still be 1 for this entity
+    assert_eq!(scene.components.count::<TransformComponent>(), 1, "no duplicate component");
+}
+
+// ── T-ECS-69: Despawn Parent Orphans Children (detailed) ─────────────────────
+
+#[test]
+fn t_ecs_69_despawn_parent_orphans_children_detailed() {
+    let scene = Scene::new();
+    let hp = scene.queue_spawn(vec![comp(TransformComponent { x: 10.0, ..Default::default() })]);
+    let hc1 = scene.queue_spawn(vec![comp(TransformComponent { x: 20.0, ..Default::default() })]);
+    let hc2 = scene.queue_spawn(vec![comp(TransformComponent { x: 30.0, ..Default::default() })]);
+    scene.drain_commands();
+    let parent = hp.get().unwrap();
+    let c1 = hc1.get().unwrap();
+    let c2 = hc2.get().unwrap();
+
+    scene.queue_set_parent(c1, parent);
+    scene.queue_set_parent(c2, parent);
+    scene.drain_commands();
+
+    // Verify hierarchy is established
+    assert_eq!(scene.hierarchy.get_parent(c1), Some(parent));
+    assert_eq!(scene.hierarchy.get_parent(c2), Some(parent));
+    assert_eq!(scene.hierarchy.get_children(parent).len(), 2);
+
+    // Despawn the parent
+    scene.queue_despawn(parent);
+    scene.drain_commands();
+
+    // Parent is gone
+    assert!(!scene.entity_exists(parent));
+    assert!(!scene.components.has::<TransformComponent>(parent));
+
+    // Children still exist with their components intact
+    assert!(scene.entity_exists(c1));
+    assert!(scene.entity_exists(c2));
+    let tc1 = scene.components.get::<TransformComponent>(c1).unwrap();
+    assert_eq!(tc1.x, 20.0, "child 1 component data intact");
+    let tc2 = scene.components.get::<TransformComponent>(c2).unwrap();
+    assert_eq!(tc2.x, 30.0, "child 2 component data intact");
+
+    // Children have no parent (orphaned, not cascade-despawned)
+    assert_eq!(scene.hierarchy.get_parent(c1), None, "child 1 orphaned");
+    assert_eq!(scene.hierarchy.get_parent(c2), None, "child 2 orphaned");
+
+    // Parent's children list is gone
+    assert!(scene.hierarchy.get_children(parent).is_empty());
+}

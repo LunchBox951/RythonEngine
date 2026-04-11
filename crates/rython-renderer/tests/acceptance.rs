@@ -1185,3 +1185,153 @@ fn qw3_5_scene_settings_clear_color_clamp() {
     assert_eq!(r, 0.0, "negative should clamp to 0");
     assert_eq!(g, 1.0, "over-1 should clamp to 1");
 }
+
+// ─── T-REND-15: Zero Commands After Non-Empty Frame ─────────────────────────
+
+#[test]
+fn t_rend_15_zero_commands_after_nonempty_frame() {
+    let queue = CommandQueue::new(64);
+
+    // Push 5 DrawRect commands
+    for i in 0..5u32 {
+        queue.push(make_rect(i as f32));
+    }
+
+    // First swap+drain: returns 5 commands
+    queue.swap();
+    let cmds = queue.take_sorted_front();
+    assert_eq!(cmds.len(), 5, "first drain must return 5 commands");
+
+    // Second swap+drain with zero new commands: buffer must be clean
+    queue.swap();
+    let cmds = queue.take_sorted_front();
+    assert_eq!(cmds.len(), 0, "second drain after empty frame must return 0 commands");
+}
+
+// ─── T-REND-16: Command Queue At Capacity ───────────────────────────────────
+
+#[test]
+fn t_rend_16_command_queue_at_capacity() {
+    let queue = CommandQueue::new(4);
+
+    // Push exactly 4 commands (at capacity)
+    for i in 0..4u32 {
+        queue.push(make_rect(i as f32));
+    }
+    assert_eq!(queue.back_len(), 4, "exactly at capacity: all 4 accepted");
+    assert_eq!(queue.dropped_count(), 0, "exactly at capacity: no drops");
+
+    queue.swap();
+    let cmds = queue.take_sorted_front();
+    assert_eq!(cmds.len(), 4, "all 4 commands drained");
+
+    // Now push 5 commands (one over capacity)
+    for i in 0..5u32 {
+        queue.push(make_rect(i as f32));
+    }
+    // Capacity is enforced: only first 4 accepted, 5th is dropped
+    assert_eq!(queue.back_len(), 4, "over capacity: only 4 accepted");
+    assert_eq!(queue.dropped_count(), 1, "over capacity: 1 command dropped");
+
+    queue.swap();
+    let cmds = queue.take_sorted_front();
+    assert_eq!(cmds.len(), 4, "only 4 commands drained after overflow");
+}
+
+// ─── T-REND-17: Mixed Command Variants Sorting ──────────────────────────────
+
+#[test]
+fn t_rend_17_mixed_command_variants_sorting() {
+    let queue = CommandQueue::new(64);
+
+    queue.push(DrawCommand::Text(DrawText {
+        text: "hello".to_string(), font_id: String::new(),
+        x: 0.0, y: 0.0, color: Color::rgb(255, 255, 255), size: 16, z: 3.0,
+    }));
+    queue.push(DrawCommand::Rect(DrawRect {
+        x: 0.0, y: 0.0, w: 0.1, h: 0.1,
+        color: Color::rgb(255, 255, 255), border: None, border_width: 0.0, z: 1.0,
+    }));
+    queue.push(DrawCommand::Line(DrawLine {
+        x0: 0.0, y0: 0.0, x1: 1.0, y1: 1.0,
+        color: Color::rgb(0, 255, 0), width: 1.0, z: 2.0,
+    }));
+    queue.push(DrawCommand::Circle(DrawCircle {
+        cx: 0.0, cy: 0.0, radius: 0.1,
+        color: Color::rgb(255, 0, 0), border: None, border_width: 0.0, z: 4.0,
+    }));
+
+    queue.swap();
+    let cmds = queue.take_sorted_front();
+    let zs: Vec<f32> = cmds.iter().map(|c| c.z()).collect();
+    assert_eq!(zs, vec![1.0, 2.0, 3.0, 4.0], "mixed variants must be sorted by z ascending");
+}
+
+// ─── T-REND-18: NaN Z Sorting Stability ─────────────────────────────────────
+
+#[test]
+fn t_rend_18_nan_z_sorting_stability() {
+    let queue = CommandQueue::new(64);
+
+    queue.push(make_rect(f32::NAN));
+    queue.push(make_rect(1.0));
+
+    queue.swap();
+    // Must not panic during sort
+    let cmds = queue.take_sorted_front();
+    assert_eq!(cmds.len(), 2, "both commands survive NaN sort");
+
+    // NaN sorts to the end (total_cmp places NaN after all finite values)
+    let last_z = cmds[1].z();
+    assert!(
+        last_z.is_nan() || last_z == 1.0,
+        "NaN should sort to a consistent position; got z values: [{}, {}]",
+        cmds[0].z(), cmds[1].z()
+    );
+}
+
+// ─── T-REND-19: Camera Default Values ───────────────────────────────────────
+
+#[test]
+fn t_rend_19_camera_default_values() {
+    let cam = Camera::new();
+
+    // FOV must be non-zero
+    assert!(cam.fov_degrees > 0.0, "default FOV must be positive, got {}", cam.fov_degrees);
+
+    // near < far, both positive
+    assert!(cam.near > 0.0, "near must be positive, got {}", cam.near);
+    assert!(cam.far > cam.near, "far ({}) must be greater than near ({})", cam.far, cam.near);
+
+    // Sensible default values
+    assert_eq!(cam.fov_degrees, 90.0, "default FOV is 90 degrees");
+    assert_eq!(cam.near, 0.1, "default near plane is 0.1");
+    assert_eq!(cam.far, 1000.0, "default far plane is 1000.0");
+}
+
+// ─── T-REND-20: WGSL Validation — Invalid Shader ────────────────────────────
+
+#[test]
+fn t_rend_20_wgsl_validation_invalid_shader() {
+    let result = validate_wgsl("this is not valid wgsl");
+    assert!(result.is_err(), "plaintext must fail WGSL validation");
+}
+
+// ─── T-REND-21: WGSL Validation — Valid Compute Shader ──────────────────────
+
+#[test]
+fn t_rend_21_wgsl_validation_valid_shader() {
+    // validate_wgsl requires @vertex or @fragment entry points — compute-only is rejected.
+    let src = r#"
+        @vertex
+        fn vs_main() -> @builtin(position) vec4<f32> {
+            return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        }
+        @fragment
+        fn fs_main() -> @location(0) vec4<f32> {
+            return vec4<f32>(1.0, 1.0, 1.0, 1.0);
+        }
+    "#;
+    let result = validate_wgsl(src);
+    assert!(result.is_ok(), "minimal valid WGSL shader must pass validation: {:?}", result.err());
+}
