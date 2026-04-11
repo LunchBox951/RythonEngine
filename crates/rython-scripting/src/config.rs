@@ -10,6 +10,7 @@ pub enum ScriptingConfig {
     },
     Release {
         bundle_path: String,
+        entry_point: Option<String>,
     },
 }
 

@@ -85,13 +85,21 @@ impl Module for ScriptingModule {
                         })?;
                     }
                 }
-                ScriptingConfig::Release { bundle_path } => {
+                ScriptingConfig::Release { bundle_path, entry_point } => {
                     load_bundle(py, bundle_path).map_err(|e| {
                         EngineError::Script(rython_core::ScriptError::PythonException {
                             script: "bundle".to_string(),
                             exception: e.to_string(),
                         })
                     })?;
+                    if let Some(ep) = entry_point {
+                        call_entry_point(py, ep).map_err(|e| {
+                            EngineError::Script(rython_core::ScriptError::PythonException {
+                                script: ep.clone(),
+                                exception: e.to_string(),
+                            })
+                        })?;
+                    }
                 }
             }
 

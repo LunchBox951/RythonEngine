@@ -5,11 +5,13 @@ pub mod config;
 pub mod errors;
 pub mod events;
 pub mod math;
+pub mod project;
 pub mod scheduler_trait;
 pub mod types;
 
 pub use components::Component;
 pub use config::{EngineConfig, SchedulerConfig, WindowConfig};
+pub use project::{ProjectConfig, ScriptAssociation};
 pub use errors::{EngineError, ScriptError, TaskError};
 pub use events::{Event, HandlerId, NamedEvent};
 pub use math::*;

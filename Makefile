@@ -2,7 +2,11 @@ SCRIPT_DIR ?= scripts
 SCRIPT ?=
 OUT ?= bundle.zip
 
-.PHONY: run build release test test-rust test-python bundle clean stubs
+PLATFORM  ?= windows
+ARCH      ?= x86_64
+GAME      ?= game
+
+.PHONY: run build release dist dist-linux dist-windows dist-macos test test-rust test-python bundle clean stubs
 
 run:
 	cargo run -p rython-cli -- --script-dir $(SCRIPT_DIR) $(if $(SCRIPT),--entry-point $(SCRIPT))
@@ -12,6 +16,22 @@ build:
 
 release:
 	cargo build --release
+
+dist: release
+	python3 scripts/package.py \
+	    --platform $(PLATFORM) \
+	    --arch     $(ARCH) \
+	    --game     $(GAME) \
+	    --out      dist/$(PLATFORM)-$(ARCH)
+
+dist-linux:
+	$(MAKE) dist PLATFORM=linux ARCH=$(ARCH) GAME=$(GAME)
+
+dist-windows:
+	$(MAKE) dist PLATFORM=windows ARCH=$(ARCH) GAME=$(GAME)
+
+dist-macos:
+	$(MAKE) dist PLATFORM=macos ARCH=$(ARCH) GAME=$(GAME)
 
 test: test-rust test-python
 

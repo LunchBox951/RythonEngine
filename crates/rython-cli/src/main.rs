@@ -11,7 +11,7 @@ use winit::keyboard::{KeyCode as WinitKeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use rython_audio::AudioManager;
-use rython_core::{EngineConfig, WindowConfig};
+use rython_core::{EngineConfig, ProjectConfig, WindowConfig};
 use rython_ecs::{LightSystem, RenderSystem, Scene, TransformSystem};
 use rython_engine::{Engine, EngineBuilder};
 use rython_input::{AxisBinding, ButtonBinding, InputActionEvent, InputMap, PlayerController};
@@ -35,6 +35,7 @@ struct CliArgs {
     entry_point: Option<String>,
     config_path: Option<String>,
     headless: bool,
+    project_path: Option<String>,
 }
 
 fn parse_args_from(mut iter: impl Iterator<Item = String>) -> CliArgs {
@@ -43,6 +44,7 @@ fn parse_args_from(mut iter: impl Iterator<Item = String>) -> CliArgs {
         entry_point: None,
         config_path: None,
         headless: false,
+        project_path: None,
     };
 
     while let Some(arg) = iter.next() {
@@ -51,6 +53,7 @@ fn parse_args_from(mut iter: impl Iterator<Item = String>) -> CliArgs {
                 println!("Usage: rython [OPTIONS]");
                 println!();
                 println!("Options:");
+                println!("  --project <DIR>         Game project directory containing project.json (release mode)");
                 println!("  --script-dir <DIR>      Directory containing Python scripts (default: ./scripts)");
                 println!("  --entry-point <MODULE>  Python module to import and call init()");
                 println!("  --config <FILE>         Engine config JSON file");
@@ -71,6 +74,11 @@ fn parse_args_from(mut iter: impl Iterator<Item = String>) -> CliArgs {
             "--config" => {
                 if let Some(val) = iter.next() {
                     args.config_path = Some(val);
+                }
+            }
+            "--project" => {
+                if let Some(val) = iter.next() {
+                    args.project_path = Some(val);
                 }
             }
             "--headless" => {
@@ -915,6 +923,82 @@ mod tests {
     }
 }
 
+// ── Mode resolution ───────────────────────────────────────────────────────────
+
+/// Resolves whether to run in Dev or Release mode, and sets PYTHONHOME if
+/// a bundled Python runtime is found adjacent to the binary.
+///
+/// MUST be called before any PyO3 GIL acquisition: `auto-initialize` fires
+/// lazily on first GIL access, so PYTHONHOME must be in the environment
+/// before that point to take effect.
+///
+/// Priority:
+///   1. `--project <dir>` was given explicitly
+///   2. `project.json` + `python/` exist adjacent to the binary (release dist)
+///   3. Fall back to Dev mode using `--script-dir` / `--entry-point`
+fn resolve_mode(args: &CliArgs) -> Result<(ScriptingConfig, EngineConfig), String> {
+    let project_dir: Option<std::path::PathBuf> = if let Some(ref p) = args.project_path {
+        Some(std::path::PathBuf::from(p))
+    } else {
+        let exe = std::env::current_exe()
+            .map_err(|e| format!("could not determine exe path: {e}"))?;
+        let exe_dir = exe
+            .parent()
+            .ok_or_else(|| "exe has no parent directory".to_string())?;
+        if exe_dir.join("project.json").exists() && exe_dir.join("python").is_dir() {
+            Some(exe_dir.to_path_buf())
+        } else {
+            None
+        }
+    };
+
+    if let Some(proj_dir) = project_dir {
+        let proj_json = std::fs::read_to_string(proj_dir.join("project.json"))
+            .map_err(|e| format!("failed to read project.json: {e}"))?;
+        let project: ProjectConfig = serde_json::from_str(&proj_json)
+            .map_err(|e| format!("failed to parse project.json: {e}"))?;
+
+        // Set PYTHONHOME before the GIL is ever acquired. At this point the
+        // process is single-threaded, so set_var is safe.
+        let python_home = proj_dir.join("python");
+        unsafe {
+            std::env::set_var("PYTHONHOME", &python_home);
+            std::env::set_var("PYTHONNOUSERSITE", "1");
+            std::env::set_var("PYTHONPATH", "");
+        }
+
+        let bundle_path = proj_dir.join("game.bundle").to_string_lossy().into_owned();
+        Ok((
+            ScriptingConfig::Release {
+                bundle_path,
+                entry_point: project.entry_point,
+            },
+            project.engine_config,
+        ))
+    } else {
+        let engine_config = args
+            .config_path
+            .as_deref()
+            .map(|p| {
+                std::fs::read_to_string(p)
+                    .map_err(|e| format!("failed to read config {p}: {e}"))
+                    .and_then(|s| {
+                        serde_json::from_str::<EngineConfig>(&s)
+                            .map_err(|e| format!("invalid engine config {p}: {e}"))
+                    })
+            })
+            .transpose()?
+            .unwrap_or_default();
+        Ok((
+            ScriptingConfig::Dev {
+                script_dir: args.script_dir.clone(),
+                entry_point: args.entry_point.clone(),
+            },
+            engine_config,
+        ))
+    }
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() {
@@ -922,16 +1006,12 @@ fn main() {
 
     let cli = parse_args();
 
-    let engine_config = cli
-        .config_path
-        .as_ref()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str::<EngineConfig>(&s).ok())
-        .unwrap_or_default();
-
-    let scripting_config = ScriptingConfig::Dev {
-        script_dir: cli.script_dir,
-        entry_point: cli.entry_point,
+    let (scripting_config, engine_config) = match resolve_mode(&cli) {
+        Ok(pair) => pair,
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
     };
 
     if cli.headless {
