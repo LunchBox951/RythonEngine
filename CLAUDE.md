@@ -133,6 +133,21 @@ The `rython/` directory contains **pure-Python stubs** (PEP 561). They are a dev
 
 ---
 
+## Versioning
+
+RythonEngine follows [Semantic Versioning](https://semver.org/) (`MAJOR.MINOR.PATCH`):
+
+- **MAJOR** — user-approved milestones only. Do not bump the major version without explicit user confirmation. A major bump signals a significant, intentional release boundary (e.g. stable API, public launch, architectural overhaul).
+- **MINOR** — backwards-compatible new features or capabilities added to the engine or Python API surface.
+- **PATCH** — backwards-compatible bug fixes, performance improvements, or internal refactors with no API impact.
+
+**Rules:**
+- Never bump `MAJOR` unilaterally — always ask the user before doing so.
+- Reset `PATCH` to `0` when bumping `MINOR`. Reset both `MINOR` and `PATCH` to `0` when bumping `MAJOR`.
+- Version is set in the workspace root `Cargo.toml`. All crates inherit it via `workspace.package.version`.
+
+---
+
 ## Build & Test
 
 ```bash
