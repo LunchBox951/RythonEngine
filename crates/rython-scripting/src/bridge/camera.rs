@@ -106,6 +106,43 @@ impl CameraPy {
         self.target_z
     }
 
+    #[setter]
+    fn set_pos_x(&mut self, val: f32) {
+        self.pos_x = val;
+    }
+    #[setter]
+    fn set_pos_y(&mut self, val: f32) {
+        self.pos_y = val;
+    }
+    #[setter]
+    fn set_pos_z(&mut self, val: f32) {
+        self.pos_z = val;
+    }
+    #[setter]
+    fn set_rot_pitch(&mut self, val: f32) {
+        self.rot_pitch = val;
+    }
+    #[setter]
+    fn set_rot_yaw(&mut self, val: f32) {
+        self.rot_yaw = val;
+    }
+    #[setter]
+    fn set_rot_roll(&mut self, val: f32) {
+        self.rot_roll = val;
+    }
+    #[setter]
+    fn set_target_x(&mut self, val: f32) {
+        self.target_x = val;
+    }
+    #[setter]
+    fn set_target_y(&mut self, val: f32) {
+        self.target_y = val;
+    }
+    #[setter]
+    fn set_target_z(&mut self, val: f32) {
+        self.target_z = val;
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "Camera(pos=({}, {}, {}), pitch={:.3}, yaw={:.3}, roll={:.3})",
