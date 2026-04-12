@@ -40,7 +40,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y libasound2-dev libwayland-dev libxkbcommon-dev python3-dev
+          sudo apt-get install -y libasound2-dev libwayland-dev libxkbcommon-dev libudev-dev python3-dev
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -55,7 +55,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y libasound2-dev libwayland-dev libxkbcommon-dev python3-dev xvfb
+          sudo apt-get install -y libasound2-dev libwayland-dev libxkbcommon-dev libudev-dev python3-dev xvfb
       - name: Run Rust tests
         # xvfb-run provides a virtual framebuffer so tests that touch winit/wgpu
         # window creation don't panic on a headless runner.
