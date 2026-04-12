@@ -1,5 +1,5 @@
-SCRIPT_DIR ?= scripts
-SCRIPT ?=
+SCRIPT_DIR ?= .
+SCRIPT ?= game.scripts.main
 OUT ?= bundle.zip
 
 PLATFORM  ?= windows
