@@ -168,6 +168,56 @@ def test_theme_no_args():
     rython.ui.set_theme()
 
 
+# ── Hardening: bad-id paths must raise, not crash the engine ─────────────────
+
+
+def test_add_child_invalid_parent_raises():
+    # Regression: previously panicked in rython-ui manager.rs via HashMap
+    # index, which crossed the PyO3 boundary and aborted the process.
+    child = rython.ui.create_label("orphan", 0.0, 0.0, 0.1, 0.05)
+    try:
+        rython.ui.add_child(9_999_999, child)
+    except RuntimeError:
+        return  # expected
+    raise AssertionError("add_child with invalid parent must raise RuntimeError")
+
+
+def test_add_child_invalid_child_raises():
+    panel = rython.ui.create_panel(0.0, 0.0, 1.0, 1.0)
+    try:
+        rython.ui.add_child(panel, 9_999_999)
+    except RuntimeError:
+        return
+    raise AssertionError("add_child with invalid child must raise RuntimeError")
+
+
+def test_set_layout_invalid_id_is_noop():
+    # No-op on unknown id; must not crash.
+    rython.ui.set_layout(9_999_999, "vertical", 0.0, 0.0)
+
+
+def test_set_layout_invalid_direction_raises():
+    panel = rython.ui.create_panel(0.0, 0.0, 1.0, 1.0)
+    try:
+        rython.ui.set_layout(panel, "diagonal", 0.0, 0.0)
+    except RuntimeError:
+        return
+    raise AssertionError("Unknown layout direction must raise RuntimeError")
+
+
+def test_add_child_cycle_raises():
+    # Cycle detection — previously unguarded, would have stack-overflowed
+    # on is_visible() walking the tree.
+    a = rython.ui.create_panel(0.0, 0.0, 1.0, 1.0)
+    b = rython.ui.create_panel(0.0, 0.0, 1.0, 1.0)
+    rython.ui.add_child(a, b)  # b is now a child of a
+    try:
+        rython.ui.add_child(b, a)  # would create cycle
+    except RuntimeError:
+        return
+    raise AssertionError("Adding a parent as its own descendant must raise")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 
@@ -204,6 +254,12 @@ def init():
         test_theme_text_and_font,
         test_theme_panel_and_border,
         test_theme_no_args,
+        # Hardening regression tests
+        test_add_child_invalid_parent_raises,
+        test_add_child_invalid_child_raises,
+        test_set_layout_invalid_id_is_noop,
+        test_set_layout_invalid_direction_raises,
+        test_add_child_cycle_raises,
     ]
 
     for fn in tests:

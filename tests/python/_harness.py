@@ -98,5 +98,12 @@ class FrameRunner:
                     )
                 else:
                     self._suite.record_pass(fn.__name__)
-        if self._frame > self._max_frame and self._on_done:
-            self._on_done()
+        if self._frame > self._max_frame and self._on_done is not None:
+            # Clear the callback immediately so it only fires once, even if
+            # this recurring tick continues running for a few more frames
+            # before request_quit() actually stops the engine. Previously
+            # _on_done re-fired every subsequent frame, producing multiple
+            # RYTHON_TEST_END blocks that the runner silently dropped.
+            done = self._on_done
+            self._on_done = None
+            done()

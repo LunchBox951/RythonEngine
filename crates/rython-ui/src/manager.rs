@@ -62,10 +62,13 @@ impl UIManager {
     fn insert_child(&mut self, parent_id: WidgetId, mut widget: Widget) -> WidgetId {
         let id = widget.id;
         widget.parent = Some(parent_id);
+        let parent_z = self.widgets.get(&parent_id).map(|p| p.z).unwrap_or(0.0);
         // Children always render/hit-test above their parent container
-        widget.z = self.widgets[&parent_id].z + 1.0;
+        widget.z = parent_z + 1.0;
         self.widgets.insert(id, widget);
-        self.widgets.get_mut(&parent_id).unwrap().children.push(id);
+        if let Some(parent) = self.widgets.get_mut(&parent_id) {
+            parent.children.push(id);
+        }
         id
     }
 
@@ -153,18 +156,56 @@ impl UIManager {
     // ─── Widget tree ──────────────────────────────────────────────────────────
 
     /// Attach `child` as a child of `parent`. The child is removed from root_order.
-    pub fn add_child(&mut self, parent_id: WidgetId, child_id: WidgetId) {
+    /// Returns an error if either id is unknown, or if the operation would create a
+    /// parent/child cycle (including self-parenting).
+    pub fn add_child(&mut self, parent_id: WidgetId, child_id: WidgetId) -> Result<(), String> {
+        if parent_id == child_id {
+            return Err(format!("add_child: widget {parent_id} cannot be its own child"));
+        }
+        if !self.widgets.contains_key(&parent_id) {
+            return Err(format!("add_child: unknown parent widget id {parent_id}"));
+        }
+        if !self.widgets.contains_key(&child_id) {
+            return Err(format!("add_child: unknown child widget id {child_id}"));
+        }
+        // Reject if parent is a descendant of child (would create a cycle).
+        if self.is_ancestor(child_id, parent_id) {
+            return Err(format!(
+                "add_child: cycle detected — {parent_id} is already a descendant of {child_id}"
+            ));
+        }
+        // Remove from previous parent's children list, if any.
+        if let Some(prev_parent) = self.widgets.get(&child_id).and_then(|w| w.parent) {
+            if let Some(p) = self.widgets.get_mut(&prev_parent) {
+                p.children.retain(|&id| id != child_id);
+            }
+        }
         // Remove from root_order if it was there
         self.root_order.retain(|&id| id != child_id);
-        let parent_z = self.widgets[&parent_id].z;
-        // Children always render/hit-test above their parent container
-        self.widgets.get_mut(&child_id).unwrap().z = parent_z + 1.0;
-        self.widgets.get_mut(&child_id).unwrap().parent = Some(parent_id);
-        self.widgets
-            .get_mut(&parent_id)
-            .unwrap()
-            .children
-            .push(child_id);
+        let parent_z = self.widgets.get(&parent_id).map(|p| p.z).unwrap_or(0.0);
+        if let Some(child) = self.widgets.get_mut(&child_id) {
+            child.z = parent_z + 1.0;
+            child.parent = Some(parent_id);
+        }
+        if let Some(parent) = self.widgets.get_mut(&parent_id) {
+            parent.children.push(child_id);
+        }
+        Ok(())
+    }
+
+    /// True if `ancestor` is an ancestor of `node` (or equal to it).
+    fn is_ancestor(&self, ancestor: WidgetId, mut node: WidgetId) -> bool {
+        // Iterative walk with a depth cap to protect against corrupted trees.
+        for _ in 0..1024 {
+            if node == ancestor {
+                return true;
+            }
+            match self.widgets.get(&node).and_then(|w| w.parent) {
+                Some(parent) => node = parent,
+                None => return false,
+            }
+        }
+        false
     }
 
     /// Create a Button as a direct child of `parent_id` with relative position.
@@ -200,28 +241,35 @@ impl UIManager {
     }
 
     /// True if the widget and all its ancestors are visible.
+    /// Iterative with a depth cap so a corrupted tree cannot stack-overflow.
     pub fn is_visible(&self, id: WidgetId) -> bool {
-        let widget = match self.widgets.get(&id) {
-            Some(w) => w,
-            None => return false,
-        };
-        if !widget.visible {
-            return false;
+        let mut current = id;
+        for _ in 0..Self::MAX_LAYOUT_DEPTH {
+            let widget = match self.widgets.get(&current) {
+                Some(w) => w,
+                None => return false,
+            };
+            if !widget.visible {
+                return false;
+            }
+            match widget.parent {
+                Some(parent_id) => current = parent_id,
+                None => return true,
+            }
         }
-        match widget.parent {
-            Some(parent_id) => self.is_visible(parent_id),
-            None => true,
-        }
+        false
     }
 
     // ─── Layout ───────────────────────────────────────────────────────────────
 
     /// Configure layout direction, spacing, and padding for a container widget.
+    /// No-op if `id` does not exist.
     pub fn set_layout(&mut self, id: WidgetId, dir: LayoutDir, spacing: f32, padding: f32) {
-        let w = self.widgets.get_mut(&id).unwrap();
-        w.layout = dir;
-        w.spacing = spacing;
-        w.padding = padding;
+        if let Some(w) = self.widgets.get_mut(&id) {
+            w.layout = dir;
+            w.spacing = spacing;
+            w.padding = padding;
+        }
     }
 
     /// Recompute absolute positions for all widgets in the tree.
@@ -230,66 +278,77 @@ impl UIManager {
         for i in 0..self.root_order.len() {
             let id = self.root_order[i];
             // Root widgets: abs position = their own x/y
-            {
-                let w = self.widgets.get_mut(&id).unwrap();
+            if let Some(w) = self.widgets.get_mut(&id) {
                 w.abs_x = w.x;
                 w.abs_y = w.y;
+            } else {
+                continue;
             }
-            self.layout_children(id);
+            self.layout_children(id, 0);
         }
     }
 
-    fn layout_children(&mut self, id: WidgetId) {
-        let (abs_x, abs_y, layout, spacing, padding, children) = {
-            let w = &self.widgets[&id];
-            (
+    /// Maximum widget-tree depth before `layout_children` bails out.
+    /// Protects against stack overflow from cyclic or pathologically deep trees.
+    const MAX_LAYOUT_DEPTH: usize = 256;
+
+    fn layout_children(&mut self, id: WidgetId, depth: usize) {
+        if depth >= Self::MAX_LAYOUT_DEPTH {
+            return;
+        }
+        let (abs_x, abs_y, layout, spacing, padding, children) = match self.widgets.get(&id) {
+            Some(w) => (
                 w.abs_x,
                 w.abs_y,
                 w.layout,
                 w.spacing,
                 w.padding,
                 w.children.clone(),
-            )
+            ),
+            None => return,
         };
 
         match layout {
             LayoutDir::None => {
                 for child_id in children {
-                    let (cx, cy) = {
-                        let c = &self.widgets[&child_id];
-                        (c.x, c.y)
+                    let (cx, cy) = match self.widgets.get(&child_id) {
+                        Some(c) => (c.x, c.y),
+                        None => continue,
                     };
-                    {
-                        let c = self.widgets.get_mut(&child_id).unwrap();
+                    if let Some(c) = self.widgets.get_mut(&child_id) {
                         c.abs_x = abs_x + cx;
                         c.abs_y = abs_y + cy;
                     }
-                    self.layout_children(child_id);
+                    self.layout_children(child_id, depth + 1);
                 }
             }
             LayoutDir::Vertical => {
                 let mut cursor_y = abs_y + padding;
                 for child_id in children {
-                    let child_h = self.widgets[&child_id].h;
-                    {
-                        let c = self.widgets.get_mut(&child_id).unwrap();
+                    let child_h = match self.widgets.get(&child_id) {
+                        Some(c) => c.h,
+                        None => continue,
+                    };
+                    if let Some(c) = self.widgets.get_mut(&child_id) {
                         c.abs_x = abs_x + padding;
                         c.abs_y = cursor_y;
                     }
-                    self.layout_children(child_id);
+                    self.layout_children(child_id, depth + 1);
                     cursor_y += child_h + spacing;
                 }
             }
             LayoutDir::Horizontal => {
                 let mut cursor_x = abs_x + padding;
                 for child_id in children {
-                    let child_w = self.widgets[&child_id].w;
-                    {
-                        let c = self.widgets.get_mut(&child_id).unwrap();
+                    let child_w = match self.widgets.get(&child_id) {
+                        Some(c) => c.w,
+                        None => continue,
+                    };
+                    if let Some(c) = self.widgets.get_mut(&child_id) {
                         c.abs_x = cursor_x;
                         c.abs_y = abs_y + padding;
                     }
-                    self.layout_children(child_id);
+                    self.layout_children(child_id, depth + 1);
                     cursor_x += child_w + spacing;
                 }
             }
@@ -303,8 +362,11 @@ impl UIManager {
     }
 
     /// Effective background/fill color for a widget (explicit or theme default).
+    /// Returns transparent black if `id` does not exist.
     pub fn effective_color(&self, id: WidgetId) -> Color {
-        let w = &self.widgets[&id];
+        let Some(w) = self.widgets.get(&id) else {
+            return Color::new(0, 0, 0, 0);
+        };
         w.color.unwrap_or_else(|| match w.kind {
             WidgetKind::Button | WidgetKind::TextInput => self.theme.button_color,
             WidgetKind::Panel | WidgetKind::ScrollView => self.theme.panel_color,
@@ -313,9 +375,11 @@ impl UIManager {
     }
 
     /// Effective text color for a widget (explicit or theme default).
+    /// Returns the theme default if `id` does not exist.
     pub fn effective_text_color(&self, id: WidgetId) -> Color {
-        self.widgets[&id]
-            .text_color
+        self.widgets
+            .get(&id)
+            .and_then(|w| w.text_color)
             .unwrap_or(self.theme.text_color)
     }
 
@@ -379,17 +443,29 @@ impl UIManager {
 
     /// Process a mouse click at (x, y). Returns the callback to invoke (if any) so the caller
     /// can fire it *after* releasing the UI lock, avoiding re-entrant deadlocks.
+    /// Disabled widgets do not receive clicks.
     pub fn on_mouse_click(&mut self, x: f32, y: f32) -> Option<Arc<dyn Fn() + Send + Sync>> {
-        // Collect candidates first to avoid borrow conflicts with callback invocation
+        // Collect candidates first to avoid borrow conflicts with callback invocation.
+        // Filter out Disabled widgets so they never receive input events.
         let mut candidates: Vec<(WidgetId, f32)> = self
             .widgets
             .values()
-            .filter(|w| self.is_visible(w.id) && w.contains_point(x, y))
+            .filter(|w| {
+                w.state != WidgetState::Disabled
+                    && self.is_visible(w.id)
+                    && w.contains_point(x, y)
+            })
             .map(|w| (w.id, w.z))
             .collect();
 
-        // Highest z = topmost widget receives the click
-        candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        // Highest z = topmost widget receives the click.
+        // Use `total_cmp` on the integer id as tie-break so coplanar widgets
+        // have deterministic routing independent of HashMap iteration order.
+        candidates.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.0.cmp(&b.0))
+        });
 
         if let Some((widget_id, _)) = candidates.first().copied() {
             // Set focus
@@ -404,7 +480,9 @@ impl UIManager {
             }
 
             // Return callback — caller must invoke it after releasing the lock
-            self.widgets[&widget_id].on_click.clone()
+            self.widgets
+                .get(&widget_id)
+                .and_then(|w| w.on_click.clone())
         } else {
             None
         }
@@ -419,13 +497,15 @@ impl UIManager {
         let updates: Vec<(WidgetId, bool)> = self
             .widgets
             .iter()
-            .map(|(&id, _w)| {
-                let over = self.is_visible(id) && self.widgets[&id].contains_point(x, y);
+            .map(|(&id, w)| {
+                let over = self.is_visible(id) && w.contains_point(x, y);
                 (id, over)
             })
             .collect();
         for (id, over) in updates {
-            let w = self.widgets.get_mut(&id).unwrap();
+            let Some(w) = self.widgets.get_mut(&id) else {
+                continue;
+            };
             if over {
                 if w.state == WidgetState::Normal {
                     w.state = WidgetState::Hover;
@@ -525,16 +605,18 @@ impl UIManager {
         // Iterate roots in order; DFS to preserve hierarchy.
         // Use index iteration to avoid cloning root_order Vec.
         for i in 0..self.root_order.len() {
-            self.collect_draw_commands(self.root_order[i], &mut cmds);
+            self.collect_draw_commands(self.root_order[i], 0, &mut cmds);
         }
         cmds
     }
 
-    fn collect_draw_commands(&self, id: WidgetId, cmds: &mut Vec<DrawCommand>) {
-        if !self.is_visible(id) {
+    fn collect_draw_commands(&self, id: WidgetId, depth: usize, cmds: &mut Vec<DrawCommand>) {
+        if depth >= Self::MAX_LAYOUT_DEPTH || !self.is_visible(id) {
             return;
         }
-        let w = &self.widgets[&id];
+        let Some(w) = self.widgets.get(&id) else {
+            return;
+        };
 
         match w.kind {
             WidgetKind::Label => {
@@ -635,7 +717,7 @@ impl UIManager {
         // Recurse into children
         let children = w.children.clone();
         for child_id in children {
-            self.collect_draw_commands(child_id, cmds);
+            self.collect_draw_commands(child_id, depth + 1, cmds);
         }
     }
 
@@ -648,12 +730,26 @@ impl UIManager {
 
     // ─── Widget access ────────────────────────────────────────────────────────
 
+    /// Get a widget by id. Panics if unknown — callers crossing the Python boundary
+    /// must use `try_get_widget` instead.
     pub fn get_widget(&self, id: WidgetId) -> &Widget {
         &self.widgets[&id]
     }
 
+    /// Get a widget by id, returning `None` if unknown. Use this from bridge code.
+    pub fn try_get_widget(&self, id: WidgetId) -> Option<&Widget> {
+        self.widgets.get(&id)
+    }
+
+    /// Get a mutable widget by id. Panics if unknown — callers crossing the Python
+    /// boundary must use `try_get_widget_mut` instead.
     pub fn get_widget_mut(&mut self, id: WidgetId) -> &mut Widget {
         self.widgets.get_mut(&id).unwrap()
+    }
+
+    /// Get a mutable widget by id, returning `None` if unknown.
+    pub fn try_get_widget_mut(&mut self, id: WidgetId) -> Option<&mut Widget> {
+        self.widgets.get_mut(&id)
     }
 
     /// Set the display text of a widget. No-op if `id` does not exist.
@@ -680,11 +776,12 @@ impl UIManager {
         self.widgets.len()
     }
 
-    /// Remove a widget and all its descendants. Updates parent's children list.
+    /// Remove a widget and all its descendants. Updates parent's children list
+    /// and prunes `focused` + `tab_order` if any of the removed ids were referenced.
     pub fn remove_widget(&mut self, id: WidgetId) {
         // Collect descendants first (DFS)
         let mut to_remove = Vec::new();
-        self.collect_descendants(id, &mut to_remove);
+        self.collect_descendants(id, 0, &mut to_remove);
         to_remove.push(id);
 
         for rid in &to_remove {
@@ -698,14 +795,21 @@ impl UIManager {
             }
             self.widgets.remove(rid);
             self.root_order.retain(|&r| r != *rid);
+            self.tab_order.retain(|&r| r != *rid);
+            if self.focused == Some(*rid) {
+                self.focused = None;
+            }
         }
     }
 
-    fn collect_descendants(&self, id: WidgetId, out: &mut Vec<WidgetId>) {
+    fn collect_descendants(&self, id: WidgetId, depth: usize, out: &mut Vec<WidgetId>) {
+        if depth >= Self::MAX_LAYOUT_DEPTH {
+            return;
+        }
         if let Some(w) = self.widgets.get(&id) {
             for &child_id in &w.children {
                 out.push(child_id);
-                self.collect_descendants(child_id, out);
+                self.collect_descendants(child_id, depth + 1, out);
             }
         }
     }
@@ -732,7 +836,7 @@ impl UIManager {
         let mut widget_vals: Vec<Value> = Vec::with_capacity(self.widgets.len());
         let roots = self.root_order.clone();
         for root_id in roots {
-            self.collect_widget_json(root_id, &mut widget_vals);
+            self.collect_widget_json(root_id, 0, &mut widget_vals);
         }
 
         json!({
@@ -741,12 +845,15 @@ impl UIManager {
         })
     }
 
-    fn collect_widget_json(&self, id: WidgetId, out: &mut Vec<Value>) {
+    fn collect_widget_json(&self, id: WidgetId, depth: usize, out: &mut Vec<Value>) {
+        if depth >= Self::MAX_LAYOUT_DEPTH {
+            return;
+        }
         if let Some(w) = self.widgets.get(&id) {
             out.push(widget_to_json(w));
             let children = w.children.clone();
             for child_id in children {
-                self.collect_widget_json(child_id, out);
+                self.collect_widget_json(child_id, depth + 1, out);
             }
         }
     }
@@ -850,7 +957,7 @@ impl UIManager {
             if let Some(children) = val["children"].as_array() {
                 for child_json_id in children.iter().filter_map(|x| x.as_u64()) {
                     if let Some(&child_runtime_id) = id_map.get(&child_json_id) {
-                        self.add_child(runtime_id, child_runtime_id);
+                        let _ = self.add_child(runtime_id, child_runtime_id);
                     }
                 }
             }

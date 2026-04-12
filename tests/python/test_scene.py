@@ -121,6 +121,34 @@ def check_unsubscribe():
     )
 
 
+def test_spawn_with_light_point():
+    # Regression: the `light=` kwarg was completely untested, and the
+    # bridge accepts a dict with `type` / `color` / `intensity` fields.
+    e = rython.scene.spawn(
+        light={"type": "point", "radius": 5.0, "color": (1.0, 0.5, 0.2), "intensity": 2.0}
+    )
+    assert e.id > 0, f"expected id > 0, got {e.id}"
+
+
+def test_attach_script_no_crash():
+    # Regression: attach_script used to insert directly into the ECS
+    # components map, bypassing the command queue. The fix routes through
+    # queue_attach. This test simply verifies the call survives.
+    class MyBehavior:
+        pass
+
+    e = rython.scene.spawn()
+    rython.scene.attach_script(e, MyBehavior)
+
+
+def test_spawn_wrong_transform_type_is_silently_ignored():
+    # Regression: passing a non-Transform value to transform= used to
+    # silently succeed; we now document this as the contract. The engine
+    # must survive the call without crashing.
+    e = rython.scene.spawn(transform="not_a_Transform")
+    assert e.id > 0
+
+
 # ---------------------------------------------------------------------------
 # init — entry point called by the engine
 # ---------------------------------------------------------------------------
@@ -137,6 +165,12 @@ def init():
     suite.run("spawn_with_rigid_body_and_collider", test_spawn_with_rigid_body_and_collider)
     suite.run("multiple_spawns_unique_ids", test_multiple_spawns_unique_ids)
     suite.run("subscribe_returns_int", test_subscribe_returns_int)
+    suite.run("spawn_with_light_point", test_spawn_with_light_point)
+    suite.run("attach_script_no_crash", test_attach_script_no_crash)
+    suite.run(
+        "spawn_wrong_transform_type_is_silently_ignored",
+        test_spawn_wrong_transform_type_is_silently_ignored,
+    )
 
     # Set up frame-loop tests
     _setup_emit_subscribe()

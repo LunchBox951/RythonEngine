@@ -239,11 +239,14 @@ fn t_ecs_09_hierarchy_depth_guard() {
     let deepest = ids[65];
     let (_, depth_exceeded) = scene.hierarchy.ancestor_chain(deepest);
     assert!(depth_exceeded, "depth should be exceeded");
-    // System produced a result for the deep entity (didn't crash)
+    // Shallow entities within the depth cap must still end up in the cache.
+    let shallow = ids[5];
     assert!(
-        cache.contains_key(&deepest) || !cache.contains_key(&deepest),
-        "system completes without panic"
+        cache.contains_key(&shallow),
+        "entities within the hierarchy depth cap must resolve to a cached world transform"
     );
+    // The scene must still contain all 66 entities.
+    assert_eq!(scene.all_entities().len(), 66);
 }
 
 // ── T-ECS-10: Entity Hierarchy — Clear Parent ────────────────────────────────
@@ -1702,4 +1705,141 @@ fn t_ecs_69_despawn_parent_orphans_children_detailed() {
 
     // Parent's children list is gone
     assert!(scene.hierarchy.get_children(parent).is_empty());
+}
+
+// ── T-ECS-70: LightComponent survives save/load round-trip ───────────────────
+//
+// Regression: load_component previously had no branch for LightComponent,
+// silently dropping all lights on load.
+#[test]
+fn t_ecs_70_light_component_round_trip() {
+    let scene = Scene::new();
+    let h = scene.queue_spawn(vec![comp(LightComponent {
+        kind: LightKind::Point { radius: 5.0 },
+        color: [1.0, 0.5, 0.25],
+        intensity: 2.5,
+        enabled: true,
+        cast_shadows: true,
+    })]);
+    scene.drain_commands();
+    let e = h.get().unwrap();
+
+    let saved = scene.save_json();
+
+    // Wipe the scene and re-load from JSON
+    let dst = Scene::new();
+    dst.load_json(&saved);
+
+    let light = dst
+        .components
+        .get::<LightComponent>(e)
+        .expect("LightComponent must survive round-trip");
+    assert!((light.intensity - 2.5).abs() < 1e-5);
+    assert!((light.color[0] - 1.0).abs() < 1e-5);
+    assert!((light.color[1] - 0.5).abs() < 1e-5);
+    assert!((light.color[2] - 0.25).abs() < 1e-5);
+    assert!(light.cast_shadows);
+    match light.kind {
+        LightKind::Point { radius } => {
+            assert!((radius - 5.0).abs() < 1e-5);
+        }
+        _ => panic!("LightKind variant must round-trip"),
+    }
+}
+
+// ── T-ECS-71: load_json rejects records with missing id instead of collapsing ─
+// ── T-ECS-72: for_each iteration order is deterministic ─────────────────────
+//
+// Regression: ComponentStorage::for_each used to iterate HashMap::iter() order,
+// which is randomized by the SipHash seed. RenderSystem and LightSystem emit
+// draw commands from this iteration, so z-fighting and blend order varied
+// across runs.
+#[test]
+fn t_ecs_72_for_each_iteration_order_is_deterministic() {
+    // Build two scenes with the same entities in the same order. Record the
+    // EntityId iteration order from for_each. The two orderings must match.
+    fn capture_order() -> Vec<EntityId> {
+        let scene = Scene::new();
+        // Spawn 20 entities. The second spawn of EntityId::next() will yield
+        // sequential ids, but we store them in a vec so later we assert exact
+        // sort order rather than insertion order.
+        let mut ids = Vec::new();
+        for _ in 0..20 {
+            let h = scene.queue_spawn(vec![comp(TransformComponent::default())]);
+            scene.drain_commands();
+            ids.push(h.get().unwrap());
+        }
+        let mut visited = Vec::new();
+        scene
+            .components
+            .for_each::<TransformComponent, _>(|eid, _| visited.push(eid));
+        visited
+    }
+
+    // Repeat twice — but in separate processes the HashMap seed would differ.
+    // Within one process the seed is stable, so we can at least verify the
+    // order is sorted by EntityId (which is what the determinism fix guarantees).
+    let order = capture_order();
+    let mut sorted = order.clone();
+    sorted.sort_unstable();
+    assert_eq!(
+        order, sorted,
+        "for_each must iterate in sorted EntityId order"
+    );
+}
+
+// ── T-ECS-73: save_json is byte-identical across repeated calls ────────────
+#[test]
+fn t_ecs_73_save_json_is_stable() {
+    let scene = Scene::new();
+    // Spawn a handful of entities with different component types, in various
+    // orders, to exercise the sort paths.
+    for i in 0..8 {
+        let h = scene.queue_spawn(vec![
+            comp(TransformComponent {
+                x: i as f32,
+                y: 0.0,
+                z: 0.0,
+                ..Default::default()
+            }),
+            comp(TagComponent {
+                tags: vec![format!("entity{i}")],
+            }),
+        ]);
+        scene.drain_commands();
+        let _ = h;
+    }
+
+    let a = scene.save_json();
+    let b = scene.save_json();
+    assert_eq!(
+        serde_json::to_string(&a).unwrap(),
+        serde_json::to_string(&b).unwrap(),
+        "save_json must produce identical output across calls"
+    );
+}
+
+#[test]
+fn t_ecs_71_load_json_missing_id_rejected() {
+    let json = serde_json::json!({
+        "entities": [
+            // Valid record
+            { "id": 101u64, "parent": null, "components": [] },
+            // Missing id — must be skipped, not coalesced to EntityId(0)
+            { "parent": null, "components": [] },
+            // id=0 — must also be skipped
+            { "id": 0u64, "parent": null, "components": [] },
+            // Another valid record
+            { "id": 102u64, "parent": null, "components": [] },
+        ]
+    });
+
+    let scene = Scene::new();
+    scene.load_json(&json);
+
+    let entities: HashSet<EntityId> = scene.all_entities().into_iter().collect();
+    assert_eq!(entities.len(), 2, "only records with valid id load");
+    assert!(entities.contains(&EntityId(101)));
+    assert!(entities.contains(&EntityId(102)));
+    assert!(!entities.contains(&EntityId(0)));
 }

@@ -122,6 +122,10 @@ impl PlayerController {
         }
         if self.maps.contains_key(name) {
             self.active_map = Some(name.to_owned());
+            // Clear previous_axis_values so the first tick after a map switch
+            // correctly fires axis-crossing events for any newly-bound action
+            // whose name happens to collide with one in the old map.
+            self.previous_axis_values.clear();
             Ok(())
         } else {
             Err(EngineError::Module {
@@ -322,8 +326,26 @@ impl PlayerController {
         // map borrow ends here; safe to mutate self
         self.snapshot = new_snapshot;
         if !locked {
-            self.pending_events.lock().unwrap().extend(new_events);
+            // Recover from mutex poisoning rather than propagating a panic —
+            // poisoning is a one-shot event from an earlier panicking drainer
+            // and the event queue contents are plain data with no invariants.
+            let mut events = match self.pending_events.lock() {
+                Ok(g) => g,
+                Err(poison) => poison.into_inner(),
+            };
+            events.extend(new_events);
         }
+    }
+
+    /// Clear all key/mouse/gamepad button state. Called when the window loses
+    /// focus so that held keys don't stay "pressed" after the user alt-tabs
+    /// away — otherwise the next tick reports them as `held=true` indefinitely
+    /// because the OS never delivered a matching KeyReleased event.
+    pub fn reset_keys(&mut self) {
+        self.current_keys = KeyCodeSet::new();
+        self.current_mouse_buttons = MouseButtonSet::new();
+        self.current_gamepad_buttons = GamepadButtonSet::new();
+        self.previous_axis_values.clear();
     }
 }
 

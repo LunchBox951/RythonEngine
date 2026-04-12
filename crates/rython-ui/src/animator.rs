@@ -182,6 +182,17 @@ impl SequentialAnim {
                 break;
             }
             let step = &self.steps[self.current];
+            // Zero- or negative-duration steps complete instantly with no
+            // division-by-zero risk in the `else` branch below.
+            if step.duration <= 0.0 {
+                updates.push((self.widget_id, step.property.clone(), step.to));
+                self.step_elapsed = 0.0;
+                self.current += 1;
+                if dt <= 0.0 {
+                    break;
+                }
+                continue;
+            }
             self.step_elapsed += dt;
             if self.step_elapsed >= step.duration {
                 // Emit final value, advance to next step, carry over remaining dt

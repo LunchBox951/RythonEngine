@@ -376,7 +376,43 @@ impl DecodeRequest {
     }
 }
 
+/// Reject caller-supplied asset paths that try to escape the working directory
+/// or reach into absolute filesystem locations.
+///
+/// This is a lightweight, deny-by-default sanitizer used by every `decode_*`
+/// loader. It refuses:
+/// - empty paths
+/// - absolute paths (`/etc/passwd`, `C:\Windows\...`)
+/// - any path containing a `..` segment
+/// - Windows drive prefixes / UNC shares
+///
+/// The check is purely structural — the caller is still responsible for
+/// scoping loads to an asset root. But it blocks the simplest path-traversal
+/// attacks that were reachable from untrusted Python scripts.
+fn validate_asset_path(path: &str) -> Result<(), String> {
+    if path.is_empty() {
+        return Err("asset path is empty".to_string());
+    }
+    let p = std::path::Path::new(path);
+    if p.is_absolute() {
+        return Err(format!("absolute asset paths are not allowed: {path}"));
+    }
+    for component in p.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                return Err(format!("'..' not allowed in asset path: {path}"));
+            }
+            std::path::Component::Prefix(_) | std::path::Component::RootDir => {
+                return Err(format!("absolute asset paths are not allowed: {path}"));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 fn decode_image(path: &str) -> Result<AssetData, String> {
+    validate_asset_path(path)?;
     let img = image::open(path).map_err(|e| format!("{path}: {e}"))?;
     let rgba = img.to_rgba8();
     let (width, height) = rgba.dimensions();
@@ -389,6 +425,7 @@ fn decode_image(path: &str) -> Result<AssetData, String> {
 }
 
 fn decode_mesh(path: &str) -> Result<AssetData, String> {
+    validate_asset_path(path)?;
     let (doc, buffers, _images) = gltf::import(path).map_err(|e| format!("{path}: {e}"))?;
 
     let mut vertices: Vec<Vertex> = Vec::new();
@@ -396,7 +433,9 @@ fn decode_mesh(path: &str) -> Result<AssetData, String> {
 
     for mesh in doc.meshes() {
         for primitive in mesh.primitives() {
-            let reader = primitive.reader(|buf| Some(&buffers[buf.index()]));
+            // Return `None` for out-of-range buffer indices so the reader surfaces
+            // a clean error rather than panicking at runtime on malformed glTF.
+            let reader = primitive.reader(|buf| buffers.get(buf.index()).map(|b| &b[..]));
 
             let positions: Vec<[f32; 3]> = reader
                 .read_positions()
@@ -489,8 +528,19 @@ fn decode_sound(path: &str) -> Result<AssetData, String> {
 }
 
 fn decode_wav(path: &str) -> Result<AssetData, String> {
+    validate_asset_path(path)?;
     let mut reader = hound::WavReader::open(path).map_err(|e| format!("{path}: {e}"))?;
     let spec = reader.spec();
+
+    // Reject malformed WAV files with zero or unsupported bit depth *before*
+    // computing `1 << (bits_per_sample - 1)`, which would otherwise underflow
+    // to a 65535-bit shift and panic in debug mode.
+    if spec.bits_per_sample == 0 || spec.bits_per_sample > 32 {
+        return Err(format!(
+            "{path}: unsupported bits_per_sample={}",
+            spec.bits_per_sample
+        ));
+    }
 
     let samples: Vec<f32> = match spec.sample_format {
         hound::SampleFormat::Float => reader
@@ -528,6 +578,10 @@ fn decode_wav(path: &str) -> Result<AssetData, String> {
 }
 
 fn decode_font(path: &str, size: f32) -> Result<AssetData, String> {
+    validate_asset_path(path)?;
+    if !size.is_finite() || size <= 0.0 {
+        return Err(format!("{path}: font size must be finite and positive, got {size}"));
+    }
     let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
     let font = fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default())
         .map_err(|e| format!("{path}: font parse error: {e}"))?;
@@ -594,13 +648,24 @@ fn decode_font(path: &str, size: f32) -> Result<AssetData, String> {
 }
 
 fn decode_spritesheet(path: &str, cols: u32, rows: u32) -> Result<AssetData, String> {
+    validate_asset_path(path)?;
+    if cols == 0 || rows == 0 {
+        return Err(format!(
+            "{path}: spritesheet cols and rows must be non-zero (got {cols}×{rows})"
+        ));
+    }
     let img = image::open(path).map_err(|e| format!("{path}: {e}"))?;
     let rgba = img.to_rgba8();
     let (iw, ih) = rgba.dimensions();
     let pixels = rgba.into_raw();
 
-    let frame_w = iw / cols.max(1);
-    let frame_h = ih / rows.max(1);
+    if cols > iw || rows > ih {
+        return Err(format!(
+            "{path}: spritesheet {cols}×{rows} exceeds image dimensions {iw}×{ih}"
+        ));
+    }
+    let frame_w = iw / cols;
+    let frame_h = ih / rows;
 
     let mut frames = Vec::with_capacity((cols * rows) as usize);
     for row in 0..rows {
@@ -763,19 +828,28 @@ pub struct ResourceManager {
 }
 
 impl ResourceManager {
-    pub fn new(config: ResourceManagerConfig) -> Self {
+    /// Construct a `ResourceManager`. Returns `Err` if the rayon decode thread
+    /// pool cannot be built (e.g. the process is out of thread handles).
+    pub fn try_new(config: ResourceManagerConfig) -> Result<Self, String> {
         let (tx, rx) = crossbeam_channel::unbounded::<DecodeCompletion>();
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(0) // default = number of logical CPUs
             .build()
-            .expect("failed to build resource decode thread pool");
+            .map_err(|e| format!("failed to build resource decode thread pool: {e}"))?;
 
-        ResourceManager {
+        Ok(ResourceManager {
             state: Arc::new(Mutex::new(ManagerState::new(config.streaming_budget_mb))),
             pool,
             completion_tx: tx,
             completion_rx: rx,
-        }
+        })
+    }
+
+    /// Convenience constructor that panics on pool-build failure. Kept for
+    /// callers that already assume infallible construction (tests, the CLI
+    /// bootstrap). Prefer `try_new` for new code.
+    pub fn new(config: ResourceManagerConfig) -> Self {
+        Self::try_new(config).expect("failed to build ResourceManager")
     }
 
     fn submit(&self, request: DecodeRequest) -> AssetHandle {
@@ -1815,5 +1889,52 @@ mod tests {
             .error()
             .expect("failed handle must carry an error message");
         assert!(!err.is_empty(), "error message must not be empty");
+    }
+
+    // ── T-RES-22: Path traversal is rejected ────────────────────────────────
+    //
+    // Regression: the five decode_* functions previously passed raw
+    // caller-supplied strings straight to `image::open` / `fs::read`. This
+    // test locks in rejection of `..`, absolute paths, and empty strings.
+    #[test]
+    fn t_res_22_path_traversal_rejected() {
+        let bad_paths = [
+            "",
+            "/etc/passwd",
+            "../../../etc/shadow",
+            "assets/../../secret.png",
+        ];
+        for path in bad_paths {
+            assert!(
+                validate_asset_path(path).is_err(),
+                "validate_asset_path must reject {path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn t_res_23_valid_relative_paths_accepted() {
+        // Basic relative paths used throughout the game/ directory.
+        let good_paths = ["ship.png", "assets/audio/thrust.wav", "models/box.gltf"];
+        for path in good_paths {
+            assert!(
+                validate_asset_path(path).is_ok(),
+                "validate_asset_path must accept {path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn t_res_24_decode_font_rejects_invalid_size() {
+        for size in [0.0_f32, -1.0, f32::NAN, f32::INFINITY] {
+            let err = decode_font("assets/font.ttf", size);
+            assert!(err.is_err(), "decode_font must reject size={size}");
+        }
+    }
+
+    #[test]
+    fn t_res_25_decode_spritesheet_rejects_zero_grid() {
+        assert!(decode_spritesheet("x.png", 0, 4).is_err());
+        assert!(decode_spritesheet("x.png", 4, 0).is_err());
     }
 }

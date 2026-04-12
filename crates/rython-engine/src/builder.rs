@@ -56,7 +56,18 @@ impl EngineBuilder {
     }
 
     /// Consume the builder and produce a ready-to-[`boot`](Engine::boot) [`Engine`].
+    ///
+    /// Returns `Err` if the scheduler configuration is invalid (e.g.
+    /// `target_fps == 0`, which would previously panic inside `FramePacer`).
     pub fn build(self) -> Result<Engine, EngineError> {
+        // Validate the scheduler config up front so we can surface configuration
+        // errors as an EngineError instead of panicking in the scheduler
+        // constructor.
+        if self.config.scheduler.target_fps == 0 {
+            return Err(EngineError::Config(
+                "scheduler.target_fps must be at least 1".to_string(),
+            ));
+        }
         let scheduler = TaskScheduler::new(&self.config.scheduler);
         let scene = self.scene.unwrap_or_else(|| Arc::new(Scene::new()));
         let mut loader = ModuleLoader::new();

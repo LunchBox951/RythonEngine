@@ -8,8 +8,12 @@ pub struct FramePacer {
 }
 
 impl FramePacer {
+    /// Construct a pacer targeting `target_fps` frames per second.
+    /// A `target_fps` of zero is clamped to 1, avoiding the integer
+    /// divide-by-zero that would otherwise panic here.
     pub fn new(target_fps: u32, spin_threshold_us: u64) -> Self {
-        let nanos = 1_000_000_000u64 / target_fps as u64;
+        let fps = target_fps.max(1);
+        let nanos = 1_000_000_000u64 / fps as u64;
         Self {
             target_duration: Duration::from_nanos(nanos),
             spin_threshold: Duration::from_micros(spin_threshold_us),

@@ -159,17 +159,27 @@ impl PhysicsWorld {
     ) {
         let locked_axes = self.compute_locked_axes();
 
+        let is_dynamic = !matches!(
+            rb_comp.body_type.as_str(),
+            "static" | "fixed" | "kinematic"
+        );
         let rb_builder = match rb_comp.body_type.as_str() {
             "static" | "fixed" => RigidBodyBuilder::fixed(),
             "kinematic" => RigidBodyBuilder::kinematic_position_based(),
             _ => RigidBodyBuilder::dynamic(),
         };
 
-        let rb = rb_builder
+        // Mass only applies to dynamic bodies; on static/kinematic it's ignored
+        // by rapier anyway. Guard against NaN / non-positive mass which would
+        // poison the solver.
+        let mut rb_builder = rb_builder
             .translation(vector![transform.x, transform.y, transform.z])
             .gravity_scale(rb_comp.gravity_factor)
-            .locked_axes(locked_axes)
-            .build();
+            .locked_axes(locked_axes);
+        if is_dynamic && rb_comp.mass.is_finite() && rb_comp.mass > 0.0 {
+            rb_builder = rb_builder.additional_mass(rb_comp.mass);
+        }
+        let rb = rb_builder.build();
 
         let rb_handle = self.rigid_body_set.insert(rb);
 
@@ -2000,5 +2010,89 @@ mod tests {
             "velocity should be zeroed after NaN recovery, got {:?}",
             vel
         );
+    }
+
+    // ── T-PHYS-33: Mass Field Affects Impulse Response ────────────────────────
+    //
+    // Regression test: RigidBodyComponent.mass was silently ignored at
+    // registration, so every body had rapier's density-derived default mass.
+    // Equal impulses must produce inversely proportional velocities.
+    #[test]
+    fn t_phys_33_mass_affects_impulse_response() {
+        let scene = Scene::new();
+        let light = spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            RigidBodyComponent {
+                body_type: "dynamic".to_string(),
+                mass: 1.0,
+                gravity_factor: 0.0,
+                collision_layer: 1,
+                collision_mask: 1,
+            },
+            box_col([1.0, 1.0, 1.0]),
+        );
+        let heavy = spawn(
+            &scene,
+            transform(10.0, 0.0, 0.0),
+            RigidBodyComponent {
+                body_type: "dynamic".to_string(),
+                mass: 10.0,
+                gravity_factor: 0.0,
+                collision_layer: 1,
+                collision_mask: 1,
+            },
+            box_col([1.0, 1.0, 1.0]),
+        );
+
+        let mut w = world_zero_gravity();
+        w.sync_step(&scene); // register both bodies
+
+        // Apply identical impulse to both.
+        w.apply_impulse(light, [0.0, 10.0, 0.0]);
+        w.apply_impulse(heavy, [0.0, 10.0, 0.0]);
+
+        w.sync_step(&scene);
+
+        let v_light = w.get_linear_velocity(light).unwrap();
+        let v_heavy = w.get_linear_velocity(heavy).unwrap();
+
+        // Heavy body velocity should be ~1/10 of light body velocity.
+        // Allow generous tolerance for rapier's internal additional_mass semantics.
+        let ratio = v_heavy[1] / v_light[1];
+        assert!(
+            ratio > 0.0 && ratio < 0.5,
+            "heavy/light velocity ratio={ratio}, expected ~0.1 (mass was wired through)"
+        );
+        assert!(
+            v_light[1] > v_heavy[1] * 2.0,
+            "light v={}, heavy v={}: mass must differentiate impulse response",
+            v_light[1],
+            v_heavy[1]
+        );
+    }
+
+    // ── T-PHYS-34: Zero/NaN/negative mass does not panic ──────────────────────
+    #[test]
+    fn t_phys_34_invalid_mass_no_panic() {
+        let scene = Scene::new();
+        for m in [0.0_f32, -1.0, f32::NAN, f32::INFINITY] {
+            let _ = spawn(
+                &scene,
+                transform(0.0, 0.0, 0.0),
+                RigidBodyComponent {
+                    body_type: "dynamic".to_string(),
+                    mass: m,
+                    gravity_factor: 0.0,
+                    collision_layer: 1,
+                    collision_mask: 1,
+                },
+                box_col([1.0, 1.0, 1.0]),
+            );
+        }
+        let mut w = world_zero_gravity();
+        // Must not panic even with invalid mass values.
+        w.sync_step(&scene);
+        w.sync_step(&scene);
     }
 }

@@ -5,8 +5,8 @@ use std::collections::HashSet;
 
 use crate::command::{Command, CommandQueue};
 use crate::component::{
-    BillboardComponent, ColliderComponent, Component, ComponentStorage, MeshComponent,
-    RigidBodyComponent, TagComponent, TransformComponent,
+    BillboardComponent, ColliderComponent, Component, ComponentStorage, LightComponent,
+    MeshComponent, RigidBodyComponent, TagComponent, TransformComponent,
 };
 use crate::entity::EntityId;
 use crate::event_bus::{EventBus, HandlerId};
@@ -192,7 +192,10 @@ impl Scene {
     // ── Scene serialization ──────────────────────────────────────────────────
 
     pub fn save_json(&self) -> Value {
-        let entities: Vec<EntityId> = self.all_entities();
+        // Sort entities by id so two saves of identical state produce
+        // byte-identical JSON output (deterministic replay / diffs).
+        let mut entities: Vec<EntityId> = self.all_entities();
+        entities.sort_unstable();
         let mut entity_records = Vec::new();
 
         for eid in &entities {
@@ -221,17 +224,30 @@ impl Scene {
             return;
         };
 
-        // First pass: spawn all entities with components
+        // First pass: spawn all entities with components.
+        // Records missing a numeric `id` are skipped rather than collapsed into
+        // EntityId(0), which would clobber each other's components silently.
         {
             let mut entity_set = self.entities.write();
             for record in entities {
-                let id = EntityId(record["id"].as_u64().unwrap_or(0));
-                entity_set.insert(id);
+                let Some(raw) = record["id"].as_u64() else {
+                    continue;
+                };
+                if raw == 0 {
+                    continue;
+                }
+                entity_set.insert(EntityId(raw));
             }
         }
         // Second: load components (separate pass so entity lock is released)
         for record in entities {
-            let id = EntityId(record["id"].as_u64().unwrap_or(0));
+            let Some(raw) = record["id"].as_u64() else {
+                continue;
+            };
+            if raw == 0 {
+                continue;
+            }
+            let id = EntityId(raw);
             if let Some(comps) = record["components"].as_array() {
                 for comp_record in comps {
                     let type_name = comp_record["type"].as_str().unwrap_or("");
@@ -241,11 +257,19 @@ impl Scene {
             }
         }
 
-        // Second pass: restore hierarchy
+        // Third pass: restore hierarchy
         for record in entities {
-            let child_id = EntityId(record["id"].as_u64().unwrap_or(0));
+            let Some(raw) = record["id"].as_u64() else {
+                continue;
+            };
+            if raw == 0 {
+                continue;
+            }
+            let child_id = EntityId(raw);
             if let Some(parent_id) = record["parent"].as_u64() {
-                self.hierarchy.set_parent(child_id, EntityId(parent_id));
+                if parent_id != 0 {
+                    self.hierarchy.set_parent(child_id, EntityId(parent_id));
+                }
             }
         }
     }
@@ -279,6 +303,11 @@ impl Scene {
             }
             "ColliderComponent" => {
                 if let Ok(c) = serde_json::from_value::<ColliderComponent>(data.clone()) {
+                    self.components.insert(entity, c);
+                }
+            }
+            "LightComponent" => {
+                if let Ok(c) = serde_json::from_value::<LightComponent>(data.clone()) {
                     self.components.insert(entity, c);
                 }
             }

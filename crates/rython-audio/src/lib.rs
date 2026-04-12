@@ -170,6 +170,9 @@ pub enum AudioError {
 
     #[error("Unknown category: {0}")]
     UnknownCategory(String),
+
+    #[error("Play failed: {0}")]
+    PlayFailed(String),
 }
 
 impl From<AudioError> for EngineError {
@@ -241,7 +244,12 @@ impl KiraInner {
         );
     }
 
-    fn play_sound(&mut self, id: u64, request: &PlayRequest, effective_vol: f32) {
+    fn play_sound(
+        &mut self,
+        id: u64,
+        request: &PlayRequest,
+        effective_vol: f32,
+    ) -> Result<(), String> {
         // Build settings in a block so the track borrow ends before manager.play().
         let settings = {
             let track = match request.category {
@@ -261,11 +269,14 @@ impl KiraInner {
             }
         };
 
-        if let Ok(data) = StaticSoundData::from_file(&request.path, settings) {
-            if let Ok(handle) = self.manager.play(data) {
-                self.sound_handles.insert(id, handle);
-            }
-        }
+        let data = StaticSoundData::from_file(&request.path, settings)
+            .map_err(|e| format!("audio load '{}' failed: {e}", request.path))?;
+        let handle = self
+            .manager
+            .play(data)
+            .map_err(|e| format!("audio play '{}' failed: {e}", request.path))?;
+        self.sound_handles.insert(id, handle);
+        Ok(())
     }
 
     fn stop_sound(&mut self, id: u64) {
@@ -378,14 +389,25 @@ impl AudioManager {
     // ─── Public API ──────────────────────────────────────────────────────────
 
     pub fn set_master_volume(&mut self, volume: f32) {
-        self.config.master_volume = volume.clamp(0.0, 1.0);
+        // f32::clamp is unspecified for NaN inputs, so we normalize explicitly
+        // and reject NaN/non-finite values rather than forwarding them to kira.
+        let clean = if volume.is_finite() {
+            volume.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        self.config.master_volume = clean;
         if let Some(ref kira) = self.kira {
             kira.apply_volumes(&self.config);
         }
     }
 
     pub fn set_volume(&mut self, category_str: &str, volume: f32) -> Result<(), AudioError> {
-        let v = volume.clamp(0.0, 1.0);
+        let v = if volume.is_finite() {
+            volume.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         match category_str {
             "sfx" => self.config.sfx_volume = v,
             "dialogue" => self.config.dialogue_volume = v,
@@ -447,13 +469,19 @@ impl AudioManager {
 
         let id = self.next_id;
         self.next_id += 1;
-        self.handle_categories.insert(id, request.category);
-        self.active_count += 1;
 
         let vol = self.effective_volume(request.category);
         if let Some(ref mut kira) = self.kira {
-            kira.play_sound(id, &request, vol);
+            // If kira fails to load or play the sound, do NOT increment
+            // active_count or insert into handle_categories — otherwise the
+            // counter drifts above the real number of playing sounds and
+            // can_play_more() would lie forever.
+            if let Err(e) = kira.play_sound(id, &request, vol) {
+                return Err(AudioError::PlayFailed(e));
+            }
         }
+        self.handle_categories.insert(id, request.category);
+        self.active_count += 1;
 
         Ok(PlaybackHandle(id))
     }
@@ -1355,6 +1383,28 @@ mod tests {
             "unknown category"
         );
         assert!(AudioCategory::from_str("sfx ").is_none(), "trailing space");
+    }
+
+    // ── T-AUD-48: NaN master volume does not propagate to config ─────────────
+    #[test]
+    fn t_aud_48_nan_master_volume_rejected() {
+        let mut m = manager();
+        m.set_master_volume(f32::NAN);
+        assert!(
+            m.config.master_volume.is_finite(),
+            "NaN must be normalized, got {}",
+            m.config.master_volume
+        );
+    }
+
+    // ── T-AUD-49: set_volume rejects infinite/NaN values ─────────────────────
+    #[test]
+    fn t_aud_49_nan_category_volume_rejected() {
+        let mut m = manager();
+        m.set_volume("sfx", f32::INFINITY).unwrap();
+        assert!(m.config.sfx_volume.is_finite());
+        m.set_volume("music", f32::NAN).unwrap();
+        assert!(m.config.music_volume.is_finite());
     }
 
     // ── Hardware tests — require a real audio device ──────────────────────────

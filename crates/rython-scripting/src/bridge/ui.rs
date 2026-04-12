@@ -52,9 +52,13 @@ impl UIBridge {
         ui_store().lock().create_text_input(placeholder, x, y, w, h)
     }
 
-    /// Attach `child` as a child of `parent`.
-    fn add_child(&self, parent: u64, child: u64) {
-        ui_store().lock().add_child(parent, child);
+    /// Attach `child` as a child of `parent`. Raises `RuntimeError` if either id is
+    /// unknown or if the operation would create a parent/child cycle.
+    fn add_child(&self, parent: u64, child: u64) -> PyResult<()> {
+        ui_store()
+            .lock()
+            .add_child(parent, child)
+            .map_err(|e| PyErr::new::<PyRuntimeError, _>(e))
     }
 
     /// Set the layout direction for a container widget.

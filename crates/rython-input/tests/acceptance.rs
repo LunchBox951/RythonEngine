@@ -904,3 +904,31 @@ fn t_inp_35_multiple_bindings_same_action() {
         "frame 3: jump held via GamepadButton::South"
     );
 }
+
+// ── T-INP-36: reset_keys clears held state (focus-lost scenario) ─────────────
+//
+// Regression: if the window loses focus while a key is held, the OS never
+// delivers `KeyReleased`, so `held` would report true forever.
+// `reset_keys()` lets the window-event handler drop all held state.
+#[test]
+fn t_inp_36_reset_keys_clears_held_state() {
+    let mut ctrl = make_gameplay_controller();
+    let owner: OwnerId = 1;
+
+    ctrl.tick(&[RawInputEvent::KeyPressed(KeyCode::Space)]);
+    let s = ctrl.get_snapshot(owner).unwrap();
+    assert!(s.held("jump"));
+
+    // Simulate a focus-loss: reset without receiving a KeyReleased event.
+    ctrl.reset_keys();
+    ctrl.tick(&[]);
+    let s = ctrl.get_snapshot(owner).unwrap();
+    assert!(
+        !s.held("jump"),
+        "jump must not be held after reset_keys()"
+    );
+    assert!(
+        !s.pressed("jump"),
+        "jump must not be pressed after reset_keys()"
+    );
+}

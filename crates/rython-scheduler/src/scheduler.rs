@@ -280,7 +280,17 @@ impl TaskScheduler {
         let owner = group_state.owner;
 
         self.pool.spawn(move || {
-            let result: BgResult = Ok(Box::new(f()) as Box<dyn Any + Send + 'static>);
+            // Catch panics here the same way `submit_background_raw` does.
+            // Without this, a panicking group member would kill the rayon
+            // worker, `BgComplete` would never be sent, and the group's
+            // `remaining` counter would never reach zero — leaking the group
+            // forever and never firing its callback.
+            let result: BgResult = match std::panic::catch_unwind(AssertUnwindSafe(|| f())) {
+                Ok(v) => Ok(Box::new(v) as Box<dyn Any + Send + 'static>),
+                Err(_) => Err(EngineError::Task(TaskError::Panicked {
+                    message: "group background task panicked".to_string(),
+                })),
+            };
 
             let _ = bg_tx.send(BgComplete {
                 task_id,
@@ -347,7 +357,12 @@ impl TaskScheduler {
         });
 
         // 3. Parallel phase
-        let par_tasks = std::mem::take(&mut self.par_queue);
+        // Sort by priority before dispatch so tasks with lower priority numbers
+        // are handed to the rayon pool first. rayon still makes no guarantee
+        // about completion order, but dispatch order is now deterministic and
+        // the Priority argument on `submit_parallel` actually has an effect.
+        let mut par_tasks = std::mem::take(&mut self.par_queue);
+        par_tasks.sort_by_key(|t| t.priority);
         if !par_tasks.is_empty() {
             use rayon::prelude::*;
             self.pool.install(|| {
@@ -361,7 +376,10 @@ impl TaskScheduler {
             });
         }
 
-        // Run recurring parallel tasks
+        // Run recurring parallel tasks (sorted by priority for consistency with
+        // recurring_seq; without this the order differed between sequential and
+        // parallel recurring tasks).
+        self.recurring_par.sort_by_key(|t| t.priority);
         self.pool.install(|| {
             self.recurring_par.retain_mut(|t| {
                 std::panic::catch_unwind(AssertUnwindSafe(|| (t.f)())).unwrap_or(false)

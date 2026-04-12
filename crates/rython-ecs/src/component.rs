@@ -53,7 +53,7 @@ impl Component for TransformComponent {
         Box::new(self.clone())
     }
     fn serialize_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap()
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }
 }
 
@@ -138,7 +138,7 @@ impl Component for MeshComponent {
         Box::new(self.clone())
     }
     fn serialize_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap()
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }
 }
 
@@ -171,7 +171,7 @@ impl Component for BillboardComponent {
         Box::new(self.clone())
     }
     fn serialize_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap()
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }
 }
 
@@ -188,7 +188,7 @@ impl Component for TagComponent {
         Box::new(self.clone())
     }
     fn serialize_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap()
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }
 }
 
@@ -221,7 +221,7 @@ impl Component for RigidBodyComponent {
         Box::new(self.clone())
     }
     fn serialize_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap()
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }
 }
 
@@ -250,7 +250,7 @@ impl Component for ColliderComponent {
         Box::new(self.clone())
     }
     fn serialize_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap()
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }
 }
 
@@ -300,7 +300,7 @@ impl Component for LightComponent {
         Box::new(self.clone())
     }
     fn serialize_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap()
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }
 }
 
@@ -415,6 +415,9 @@ impl ComponentStorage {
     }
 
     /// Iterate all entities that have component type C, calling f for each.
+    /// Iteration order is sorted by EntityId so downstream systems (render,
+    /// light, physics sync) see a deterministic sequence independent of the
+    /// HashMap hash seed.
     pub fn for_each<C: Component, F>(&self, mut f: F)
     where
         F: FnMut(EntityId, &C),
@@ -422,20 +425,26 @@ impl ComponentStorage {
         let tid = TypeId::of::<C>();
         let stores = self.stores.read();
         if let Some(store) = stores.get(&tid) {
-            for (eid, comp) in store.iter() {
-                if let Some(c) = comp.downcast_ref::<C>() {
-                    f(*eid, c);
+            let mut entities: Vec<EntityId> = store.keys().copied().collect();
+            entities.sort_unstable();
+            for eid in entities {
+                if let Some(comp) = store.get(&eid) {
+                    if let Some(c) = comp.downcast_ref::<C>() {
+                        f(eid, c);
+                    }
                 }
             }
         }
     }
 
-    /// Collect all entity IDs with component C.
+    /// Collect all entity IDs with component C, sorted by id.
     pub fn entities_with<C: Component>(&self) -> Vec<EntityId> {
         let tid = TypeId::of::<C>();
         let stores = self.stores.read();
         if let Some(store) = stores.get(&tid) {
-            return store.keys().copied().collect();
+            let mut out: Vec<EntityId> = store.keys().copied().collect();
+            out.sort_unstable();
+            return out;
         }
         Vec::new()
     }
@@ -451,6 +460,8 @@ impl ComponentStorage {
     }
 
     /// Snapshot all components for entity as (type_name, json_value) pairs.
+    /// Output is sorted by component type name so two `save_json` calls on
+    /// identical scene state produce byte-identical JSON.
     pub fn snapshot_entity(&self, entity: EntityId) -> Vec<(&'static str, serde_json::Value)> {
         let stores = self.stores.read();
         let mut result = Vec::new();
@@ -459,6 +470,7 @@ impl ComponentStorage {
                 result.push((comp.component_type_name(), comp.serialize_json()));
             }
         }
+        result.sort_by_key(|(name, _)| *name);
         result
     }
 

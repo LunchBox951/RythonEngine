@@ -2,7 +2,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Lightweight entity handle — just a monotonic numeric ID.
 /// IDs are never reused within a session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct EntityId(pub u64);
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);

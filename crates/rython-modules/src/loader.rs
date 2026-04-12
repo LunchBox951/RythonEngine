@@ -29,45 +29,64 @@ impl ModuleLoader {
         }
     }
 
-    /// Register a module. Panics if a module with the same name is already registered.
+    /// Register a module. If a module with the same name is already registered
+    /// the existing entry's ref count is incremented and the new module
+    /// instance is dropped — the original registration wins. Callers that want
+    /// "duplicate = error" semantics should check `contains()` first.
     pub fn register(&mut self, module: Box<dyn Module>, owner: Option<OwnerId>) {
         let name = module.name().to_owned();
         let dep_names = module.dependencies();
         let exclusive_owner = if module.is_exclusive() { owner } else { None };
 
-        self.deps.insert(name.clone(), dep_names);
-
         if let Some(existing) = self.modules.get_mut(&name) {
-            // Shared dependency — just increment ref count
+            // Shared dependency — just increment ref count.
+            // The incoming `module` box is dropped here. We also do NOT
+            // overwrite self.deps, because doing so would silently replace
+            // the original module's declared dependency graph with the
+            // duplicate's.
             existing.ref_count += 1;
-        } else {
-            self.modules.insert(
-                name,
-                ModuleEntry {
-                    module,
-                    state: ModuleState::Loading,
-                    ref_count: 1,
-                    exclusive_owner,
-                },
-            );
+            return;
         }
+        self.deps.insert(name.clone(), dep_names);
+        self.modules.insert(
+            name,
+            ModuleEntry {
+                module,
+                state: ModuleState::Loading,
+                ref_count: 1,
+                exclusive_owner,
+            },
+        );
     }
 
     /// Load all registered modules in dependency order (post-order topological sort).
-    /// Returns Err if a circular dependency is detected.
+    /// Returns Err if a circular dependency is detected OR if any module's
+    /// `on_load` fails. On failure, previously-loaded modules are rolled back
+    /// by calling `on_unload` in reverse.
     pub fn load_all(&mut self, scheduler: &dyn SchedulerHandle) -> Result<(), EngineError> {
         let order = topological_sort(&self.deps).map_err(|cycle| EngineError::Module {
             module: cycle.join(" -> "),
             message: format!("circular dependency detected: {}", cycle.join(" -> ")),
         })?;
 
-        self.load_order = order.clone();
-
+        // Append to load_order incrementally after each successful load so that
+        // a later unload never touches modules that were never actually loaded.
+        self.load_order.clear();
         for name in &order {
             if let Some(entry) = self.modules.get_mut(name) {
                 entry.state = ModuleState::Loading;
-                entry.module.on_load(scheduler)?;
-                entry.state = ModuleState::Loaded;
+                match entry.module.on_load(scheduler) {
+                    Ok(()) => {
+                        entry.state = ModuleState::Loaded;
+                        self.load_order.push(name.clone());
+                    }
+                    Err(e) => {
+                        // Roll back: unload everything we've loaded so far, in
+                        // reverse, before surfacing the error.
+                        let _ = self.unload_all(scheduler);
+                        return Err(e);
+                    }
+                }
             }
         }
 
@@ -77,30 +96,55 @@ impl ModuleLoader {
     /// Unload all modules in reverse load order.
     pub fn unload_all(&mut self, scheduler: &dyn SchedulerHandle) -> Result<(), EngineError> {
         let reverse: Vec<String> = self.load_order.iter().rev().cloned().collect();
+        self.load_order.clear();
+        let mut first_err: Option<EngineError> = None;
         for name in reverse {
-            self.unload_by_name(&name, scheduler)?;
+            if let Err(e) = self.unload_by_name(&name, scheduler) {
+                // Record the first error but keep unloading the rest so we
+                // don't leak resources.
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
         }
-        Ok(())
+        match first_err {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     /// Unload a specific module. Decrements ref_count; only unloads when count reaches 0.
+    /// The entry is removed from the map regardless of whether `on_unload`
+    /// returned `Ok` or `Err`, so a failing `on_unload` cannot leave a zombie
+    /// entry stuck in the `Unloading` state.
     pub fn unload_by_name(
         &mut self,
         name: &str,
         scheduler: &dyn SchedulerHandle,
     ) -> Result<(), EngineError> {
-        if let Some(entry) = self.modules.get_mut(name) {
-            if entry.ref_count > 1 {
-                entry.ref_count -= 1;
-                return Ok(());
+        let should_unload = {
+            match self.modules.get_mut(name) {
+                Some(entry) if entry.ref_count > 1 => {
+                    entry.ref_count -= 1;
+                    false
+                }
+                Some(entry) => {
+                    entry.state = ModuleState::Unloading;
+                    true
+                }
+                None => return Ok(()),
             }
-
-            // ref_count is 1 — actually unload
-            entry.state = ModuleState::Unloading;
-            entry.module.on_unload(scheduler)?;
-            self.modules.remove(name);
+        };
+        if !should_unload {
+            return Ok(());
         }
-        Ok(())
+        // Take the entry out of the map before calling on_unload so that
+        // failure still guarantees removal.
+        let mut entry = match self.modules.remove(name) {
+            Some(e) => e,
+            None => return Ok(()),
+        };
+        entry.module.on_unload(scheduler)
     }
 
     pub fn get_state(&self, name: &str) -> Option<ModuleState> {

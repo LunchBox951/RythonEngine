@@ -303,12 +303,13 @@ impl SceneBridge {
                 .ok_or_else(|| PyErr::new::<PyRuntimeError, _>("No active scene"))?
         };
 
-        let handle = scene.queue_spawn(components);
-        scene.drain_commands();
+        // Use the synchronous side-door rather than queue_spawn + drain_commands,
+        // because draining mid-frame would commit any unrelated commands queued by
+        // other scripts at the wrong frame step (step 4 is the contract). Python
+        // needs the EntityId back immediately, so spawn_immediate is the documented
+        // escape hatch for scripting — it bypasses the queue without touching it.
+        let eid = scene.spawn_immediate(components);
 
-        let eid = handle
-            .get()
-            .ok_or_else(|| PyErr::new::<PyRuntimeError, _>("Spawn failed"))?;
         Ok(EntityPy {
             id: eid.0,
             scene: Some(scene),
@@ -372,7 +373,8 @@ impl SceneBridge {
         Ok(id)
     }
 
-    /// Attach a Python script class to an entity.
+    /// Attach a Python script class to an entity. The attach is enqueued as a
+    /// normal ECS command and drains at frame step 4 like every other mutation.
     fn attach_script(
         &self,
         entity: &EntityPy,
@@ -388,7 +390,7 @@ impl SceneBridge {
         };
         if let Some(scene) = scene {
             let entity_id = EntityId(entity.id);
-            scene.components.insert(
+            scene.queue_attach(
                 entity_id,
                 crate::component::ScriptComponent {
                     class_name: class_name.clone(),

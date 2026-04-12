@@ -258,7 +258,10 @@ fn build_engine(
 fn run_headless(engine_config: EngineConfig, scripting_config: ScriptingConfig) {
     let (mut engine, scene, physics_world, _ui_manager, player_controller) =
         build_engine(&engine_config, scripting_config);
-    engine.boot().expect("failed to boot engine");
+    if let Err(e) = engine.boot() {
+        eprintln!("engine boot failed: {e}");
+        return;
+    }
     let start = Instant::now();
     loop {
         set_elapsed_secs(start.elapsed().as_secs_f64());
@@ -272,12 +275,36 @@ fn run_headless(engine_config: EngineConfig, scripting_config: ScriptingConfig) 
         flush_python_bg_tasks();
         scene.drain_commands();
         physics_world.lock().sync_step(&scene);
+        // Propagate parent→child world transforms exactly as the windowed
+        // event loop does (step 8 of the frame pipeline). Without this,
+        // any physics body whose ECS transform cascades through a hierarchy
+        // sees permanently stale child transforms in headless mode.
+        let _world_transforms =
+            TransformSystem::run(&scene.components, &scene.hierarchy);
         {
-            let mut pc = player_controller.lock().unwrap();
+            // Recover from poison so a single panicking drainer doesn't kill
+            // subsequent frames.
+            let mut pc = match player_controller.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
             pc.tick(&[]);
-            let snapshot = pc.get_snapshot(0).unwrap().clone();
-            let input_events: Vec<InputActionEvent> =
-                std::mem::take(&mut pc.pending_events().lock().unwrap());
+            let snapshot = match pc.get_snapshot(0) {
+                Ok(s) => s.clone(),
+                Err(_) => {
+                    drop(pc);
+                    std::thread::sleep(Duration::from_millis(16));
+                    continue;
+                }
+            };
+            let events_arc = pc.pending_events();
+            let input_events: Vec<InputActionEvent> = {
+                let mut guard = match events_arc.lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
+                std::mem::take(&mut *guard)
+            };
             drop(pc);
             set_active_input(snapshot);
             for ev in input_events {
@@ -287,6 +314,11 @@ fn run_headless(engine_config: EngineConfig, scripting_config: ScriptingConfig) 
                 );
             }
         }
+        // Drain any draw commands emitted by Python scripts / UI code so the
+        // static command queues don't grow unboundedly in headless mode.
+        // Results are dropped — headless has no renderer to consume them.
+        let _ = drain_draw_commands();
+        let _ = drain_ui_draw_commands();
         engine.tick().ok();
         if was_quit_requested() {
             reset_quit_requested();
