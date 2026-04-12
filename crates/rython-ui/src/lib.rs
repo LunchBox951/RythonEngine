@@ -115,9 +115,18 @@ mod tests {
         let expected_y2 = expected_y1 + btn_h + spacing;
         let expected_y3 = expected_y2 + btn_h + spacing;
 
-        assert!((y1 - expected_y1).abs() < 1e-4, "btn1 y={y1} expected={expected_y1}");
-        assert!((y2 - expected_y2).abs() < 1e-4, "btn2 y={y2} expected={expected_y2}");
-        assert!((y3 - expected_y3).abs() < 1e-4, "btn3 y={y3} expected={expected_y3}");
+        assert!(
+            (y1 - expected_y1).abs() < 1e-4,
+            "btn1 y={y1} expected={expected_y1}"
+        );
+        assert!(
+            (y2 - expected_y2).abs() < 1e-4,
+            "btn2 y={y2} expected={expected_y2}"
+        );
+        assert!(
+            (y3 - expected_y3).abs() < 1e-4,
+            "btn3 y={y3} expected={expected_y3}"
+        );
     }
 
     // ── T-UI-05: Horizontal Stack Layout ─────────────────────────────────────
@@ -145,9 +154,18 @@ mod tests {
         let expected_x2 = expected_x1 + btn_w + spacing;
         let expected_x3 = expected_x2 + btn_w + spacing;
 
-        assert!((x1 - expected_x1).abs() < 1e-4, "btn1 x={x1} expected={expected_x1}");
-        assert!((x2 - expected_x2).abs() < 1e-4, "btn2 x={x2} expected={expected_x2}");
-        assert!((x3 - expected_x3).abs() < 1e-4, "btn3 x={x3} expected={expected_x3}");
+        assert!(
+            (x1 - expected_x1).abs() < 1e-4,
+            "btn1 x={x1} expected={expected_x1}"
+        );
+        assert!(
+            (x2 - expected_x2).abs() < 1e-4,
+            "btn2 x={x2} expected={expected_x2}"
+        );
+        assert!(
+            (x3 - expected_x3).abs() < 1e-4,
+            "btn3 x={x3} expected={expected_x3}"
+        );
 
         // Gaps between buttons are exactly spacing
         assert!((x2 - (x1 + btn_w) - spacing).abs() < 1e-4);
@@ -201,7 +219,10 @@ mod tests {
         // Themed label follows new theme
         assert_eq!(ui.effective_text_color(label), Color::rgb(0, 0, 0));
         // Explicit label is unaffected
-        assert_eq!(ui.effective_text_color(label_explicit), Color::rgb(128, 64, 64));
+        assert_eq!(
+            ui.effective_text_color(label_explicit),
+            Color::rgb(128, 64, 64)
+        );
     }
 
     // ── T-UI-08: Animation — Linear Tween ────────────────────────────────────
@@ -209,9 +230,13 @@ mod tests {
     #[test]
     fn t_ui_08_animation_linear_tween() {
         let tween = Tween::new(0.0, 1.0, 1.0, EasingFn::Linear);
-        for (t, expected) in
-            [(0.0f32, 0.0f32), (0.25, 0.25), (0.5, 0.5), (0.75, 0.75), (1.0, 1.0)]
-        {
+        for (t, expected) in [
+            (0.0f32, 0.0f32),
+            (0.25, 0.25),
+            (0.5, 0.5),
+            (0.75, 0.75),
+            (1.0, 1.0),
+        ] {
             let v = tween.sample(t);
             assert!(
                 (v - expected).abs() < 0.01,
@@ -226,7 +251,10 @@ mod tests {
     fn t_ui_09_animation_ease_in() {
         let tween = Tween::new(0.0, 1.0, 1.0, EasingFn::EaseIn);
         let v = tween.sample(0.5);
-        assert!(v < 0.5, "ease_in starts slow, at t=0.5 value {v} should be < 0.5");
+        assert!(
+            v < 0.5,
+            "ease_in starts slow, at t=0.5 value {v} should be < 0.5"
+        );
         assert!(
             (v - 0.25).abs() < 0.01,
             "quadratic ease-in: t^2 at t=0.5 = 0.25, got {v}"
@@ -239,7 +267,10 @@ mod tests {
     fn t_ui_10_animation_ease_out() {
         let tween = Tween::new(0.0, 1.0, 1.0, EasingFn::EaseOut);
         let v = tween.sample(0.5);
-        assert!(v > 0.5, "ease_out starts fast, at t=0.5 value {v} should be > 0.5");
+        assert!(
+            v > 0.5,
+            "ease_out starts fast, at t=0.5 value {v} should be > 0.5"
+        );
         assert!(
             (v - 0.75).abs() < 0.01,
             "quadratic ease-out at t=0.5 = 0.75, got {v}"
@@ -265,7 +296,10 @@ mod tests {
             (alpha - 1.0).abs() < f32::EPSILON,
             "alpha should be clamped to 1.0, got {alpha}"
         );
-        assert!(!ui.has_active_animation(label), "animation should be completed");
+        assert!(
+            !ui.has_active_animation(label),
+            "animation should be completed"
+        );
     }
 
     // ── T-UI-12: Sequential Animation Chain ──────────────────────────────────
@@ -347,7 +381,9 @@ mod tests {
         // Click inside button bounds (x: 0.4..0.6, y: 0.4..0.46)
         let cb = ui.on_mouse_click(0.5, 0.43);
         assert!(cb.is_some(), "click inside button should be consumed");
-        if let Some(cb) = cb { cb(); }
+        if let Some(cb) = cb {
+            cb();
+        }
         assert!(*clicked.lock().unwrap(), "on_click callback should fire");
     }
 
@@ -371,7 +407,9 @@ mod tests {
         // Click outside button bounds
         let cb = ui.on_mouse_click(0.1, 0.1);
         assert!(cb.is_none(), "click outside button should not be consumed");
-        if let Some(cb) = cb { cb(); }
+        if let Some(cb) = cb {
+            cb();
+        }
         assert!(!*clicked.lock().unwrap(), "on_click should not fire");
     }
 
@@ -489,12 +527,18 @@ mod tests {
         // Queue hide and drain
         ui.queue_cmd(UICmd::Hide(label));
         ui.drain_commands();
-        assert!(!ui.is_visible(label), "widget should be hidden after HideUICmd");
+        assert!(
+            !ui.is_visible(label),
+            "widget should be hidden after HideUICmd"
+        );
 
         // Queue show and drain
         ui.queue_cmd(UICmd::Show(label));
         ui.drain_commands();
-        assert!(ui.is_visible(label), "widget should be visible after ShowUICmd");
+        assert!(
+            ui.is_visible(label),
+            "widget should be visible after ShowUICmd"
+        );
     }
 
     // ── T-UI-20: save_json — structure ───────────────────────────────────────
@@ -554,7 +598,10 @@ mod tests {
         assert_eq!(w_panel.kind, WidgetKind::Panel);
         assert!((w_panel.x - 0.1).abs() < f32::EPSILON);
         assert!((w_panel.y - 0.2).abs() < f32::EPSILON);
-        assert!(w_panel.children.contains(&btn), "panel must reference btn as child");
+        assert!(
+            w_panel.children.contains(&btn),
+            "panel must reference btn as child"
+        );
 
         let w_btn = dst.get_widget(btn);
         assert_eq!(w_btn.kind, WidgetKind::Button);
@@ -593,15 +640,24 @@ mod tests {
         assert!((w_panel.padding - 0.01).abs() < 1e-5);
 
         // Visibility restored
-        assert!(!dst.get_widget(label).visible, "hidden widget stays hidden after round-trip");
+        assert!(
+            !dst.get_widget(label).visible,
+            "hidden widget stays hidden after round-trip"
+        );
 
         // Root order preserved (only panel is a root widget)
         assert_eq!(dst.root_order(), &[panel]);
 
         // New widget IDs don't collide with loaded IDs
         let new_id = dst.create_label("New", 0.5, 0.5, 0.1, 0.05);
-        assert_ne!(new_id, panel, "new ID must not collide with loaded panel ID");
-        assert_ne!(new_id, label, "new ID must not collide with loaded button ID");
+        assert_ne!(
+            new_id, panel,
+            "new ID must not collide with loaded panel ID"
+        );
+        assert_ne!(
+            new_id, label,
+            "new ID must not collide with loaded button ID"
+        );
     }
 
     // ── T-UI-23: remove_widget removes subtree ───────────────────────────────
@@ -618,7 +674,10 @@ mod tests {
         ui.remove_widget(btn);
 
         assert_eq!(ui.widget_count(), 2, "btn removed");
-        assert!(!ui.get_widget(panel).children.contains(&btn), "panel must not reference removed btn");
+        assert!(
+            !ui.get_widget(panel).children.contains(&btn),
+            "panel must not reference removed btn"
+        );
     }
 
     // ── T-UI-24: remove_widget cascades to grandchildren ─────────────────────
@@ -636,7 +695,10 @@ mod tests {
         ui.remove_widget(child);
 
         assert_eq!(ui.widget_count(), 1, "child and grandchild both removed");
-        assert!(!ui.get_widget(root).children.contains(&child), "root must not reference child");
+        assert!(
+            !ui.get_widget(root).children.contains(&child),
+            "root must not reference child"
+        );
         // grandchild no longer accessible (would panic if we tried get_widget)
         assert_eq!(ui.widget_count(), 1);
         _ = grandchild; // suppress unused warning
@@ -654,7 +716,10 @@ mod tests {
         );
         // Starts slow
         let v_early = apply_easing(EasingFn::EaseInOut, 0.1);
-        assert!(v_early < 0.1, "EaseInOut starts slow: at t=0.1 got {v_early}");
+        assert!(
+            v_early < 0.1,
+            "EaseInOut starts slow: at t=0.1 got {v_early}"
+        );
         // Ends slow
         let v_late = apply_easing(EasingFn::EaseInOut, 0.9);
         assert!(v_late > 0.9, "EaseInOut ends slow: at t=0.9 got {v_late}");
@@ -678,8 +743,14 @@ mod tests {
         use crate::animator::apply_easing;
         let v0 = apply_easing(EasingFn::Elastic, 0.0);
         let v1 = apply_easing(EasingFn::Elastic, 1.0);
-        assert!((v0 - 0.0).abs() < 0.001, "Elastic at t=0 must be 0, got {v0}");
-        assert!((v1 - 1.0).abs() < 0.001, "Elastic at t=1 must be 1, got {v1}");
+        assert!(
+            (v0 - 0.0).abs() < 0.001,
+            "Elastic at t=0 must be 0, got {v0}"
+        );
+        assert!(
+            (v1 - 1.0).abs() < 0.001,
+            "Elastic at t=1 must be 1, got {v1}"
+        );
     }
 
     // ── T-UI-28: TextInput backspace ──────────────────────────────────────────
@@ -696,11 +767,19 @@ mod tests {
 
         // Backspace removes last char
         ui.on_key_press('\x08');
-        assert_eq!(ui.get_widget(inp).text, "h", "backspace should remove last char");
+        assert_eq!(
+            ui.get_widget(inp).text,
+            "h",
+            "backspace should remove last char"
+        );
 
         // Backspace on single char empties string
         ui.on_key_press('\x08');
-        assert_eq!(ui.get_widget(inp).text, "", "backspace on single char empties");
+        assert_eq!(
+            ui.get_widget(inp).text,
+            "",
+            "backspace on single char empties"
+        );
 
         // Backspace on empty string is a no-op (no panic)
         ui.on_key_press('\x08');
@@ -714,7 +793,10 @@ mod tests {
         let mut ui = ui();
         let _btn = ui.create_button("X", 0.5, 0.5, 0.1, 0.05);
         // No widget focused
-        assert!(!ui.on_key_press('a'), "key press with no focus must return false");
+        assert!(
+            !ui.on_key_press('a'),
+            "key press with no focus must return false"
+        );
     }
 
     // ── T-UI-30: Tab navigation wraps around ─────────────────────────────────
@@ -732,7 +814,10 @@ mod tests {
         // Tab from last element wraps to first
         let next = ui.on_tab();
         assert_eq!(next, Some(btn1), "tab from last must wrap to first");
-        assert!(ui.get_widget(btn1).focused, "btn1 should be focused after wrap");
+        assert!(
+            ui.get_widget(btn1).focused,
+            "btn1 should be focused after wrap"
+        );
         assert!(!ui.get_widget(btn3).focused, "btn3 should lose focus");
     }
 
@@ -747,7 +832,10 @@ mod tests {
         ui.queue_cmd(UICmd::Focus(inp));
         ui.drain_commands();
 
-        assert!(ui.get_widget(inp).focused, "widget must be focused after UICmd::Focus");
+        assert!(
+            ui.get_widget(inp).focused,
+            "widget must be focused after UICmd::Focus"
+        );
     }
 
     // ── T-UI-32: Hidden widget excluded from draw commands ────────────────────
@@ -763,7 +851,11 @@ mod tests {
 
         let cmds = ui.build_draw_commands();
         let has_secret = cmds.iter().any(|c| {
-            if let DrawCommand::Text(t) = c { t.text == "Secret" } else { false }
+            if let DrawCommand::Text(t) = c {
+                t.text == "Secret"
+            } else {
+                false
+            }
         });
         assert!(!has_secret, "hidden label must not appear in draw commands");
     }
@@ -805,7 +897,10 @@ mod tests {
         let x2 = ui.get_widget(btn2).abs_x;
 
         assert!((x1 - (panel_x + padding)).abs() < 1e-4, "btn1 x={x1}");
-        assert!((x2 - (panel_x + padding + btn_w + spacing)).abs() < 1e-4, "btn2 x={x2}");
+        assert!(
+            (x2 - (panel_x + padding + btn_w + spacing)).abs() < 1e-4,
+            "btn2 x={x2}"
+        );
 
         // y offset by padding too
         let panel_y = ui.get_widget(panel).abs_y;
@@ -845,8 +940,11 @@ mod tests {
         let mut dst = UIManager::with_default_theme();
         dst.load_json(&json);
 
-        assert_eq!(dst.effective_color(btn), Color::rgb(200, 10, 10),
-            "explicit button color must survive round-trip");
+        assert_eq!(
+            dst.effective_color(btn),
+            Color::rgb(200, 10, 10),
+            "explicit button color must survive round-trip"
+        );
     }
 
     // ── T-UI-37: load_layout is additive — does not clear existing tree ───────
@@ -864,7 +962,11 @@ mod tests {
         // load_layout should ADD, not replace
         let _ = ui.load_layout(&layout_json);
 
-        assert_eq!(ui.widget_count(), 2, "existing widget kept + new panel added");
+        assert_eq!(
+            ui.widget_count(),
+            2,
+            "existing widget kept + new panel added"
+        );
         // Original widget still accessible
         assert_eq!(ui.get_widget(existing).text, "Existing");
     }
@@ -890,11 +992,17 @@ mod tests {
         ui.tick(0.5);
 
         let x = ui.get_widget(label).abs_x;
-        assert!((x - 0.5).abs() < 0.05, "position_x at t=0.5 should be ~0.5, got {x}");
+        assert!(
+            (x - 0.5).abs() < 0.05,
+            "position_x at t=0.5 should be ~0.5, got {x}"
+        );
 
         ui.tick(0.5);
         let x_final = ui.get_widget(label).abs_x;
-        assert!((x_final - 1.0).abs() < 0.01, "position_x final should be 1.0, got {x_final}");
+        assert!(
+            (x_final - 1.0).abs() < 0.01,
+            "position_x final should be 1.0, got {x_final}"
+        );
         assert!(!ui.has_active_animation(label), "tween must be complete");
     }
 
@@ -913,10 +1021,18 @@ mod tests {
 
         let cmds = ui.build_draw_commands();
         let visible_text = cmds.iter().any(|c| {
-            if let DrawCommand::Text(t) = c { t.text == "Visible" } else { false }
+            if let DrawCommand::Text(t) = c {
+                t.text == "Visible"
+            } else {
+                false
+            }
         });
         let hidden_text = cmds.iter().any(|c| {
-            if let DrawCommand::Text(t) = c { t.text == "Hidden" } else { false }
+            if let DrawCommand::Text(t) = c {
+                t.text == "Hidden"
+            } else {
+                false
+            }
         });
 
         assert!(visible_text, "visible button must emit draw commands");
@@ -1053,18 +1169,36 @@ mod tests {
         let top_clicked = Arc::new(Mutex::new(false));
 
         let bc = Arc::clone(&bottom_clicked);
-        ui.set_on_click(btn_bottom, Arc::new(move || { *bc.lock().unwrap() = true; }));
+        ui.set_on_click(
+            btn_bottom,
+            Arc::new(move || {
+                *bc.lock().unwrap() = true;
+            }),
+        );
 
         let tc = Arc::clone(&top_clicked);
-        ui.set_on_click(btn_top, Arc::new(move || { *tc.lock().unwrap() = true; }));
+        ui.set_on_click(
+            btn_top,
+            Arc::new(move || {
+                *tc.lock().unwrap() = true;
+            }),
+        );
 
         // Click at the shared position — only the top widget should receive it
         let cb = ui.on_mouse_click(0.5, 0.43);
         assert!(cb.is_some(), "click should be consumed by the top button");
-        if let Some(cb) = cb { cb(); }
+        if let Some(cb) = cb {
+            cb();
+        }
 
-        assert!(*top_clicked.lock().unwrap(), "top button's handler must fire");
-        assert!(!*bottom_clicked.lock().unwrap(), "bottom button's handler must NOT fire");
+        assert!(
+            *top_clicked.lock().unwrap(),
+            "top button's handler must fire"
+        );
+        assert!(
+            !*bottom_clicked.lock().unwrap(),
+            "bottom button's handler must NOT fire"
+        );
     }
 
     // ── T-UI-45: Focus Traversal Across Parents ──────────────────────────────
@@ -1091,7 +1225,11 @@ mod tests {
         assert!(ui.get_widget(btn2).focused);
 
         let next = ui.on_tab();
-        assert_eq!(next, Some(btn3), "second tab: btn2 → btn3 (crosses panel boundary)");
+        assert_eq!(
+            next,
+            Some(btn3),
+            "second tab: btn2 → btn3 (crosses panel boundary)"
+        );
         assert!(ui.get_widget(btn3).focused);
         assert!(!ui.get_widget(btn2).focused, "btn2 should lose focus");
 
@@ -1103,7 +1241,10 @@ mod tests {
         let next = ui.on_tab();
         assert_eq!(next, Some(btn1), "fourth tab: btn4 → btn1 (wrap)");
         assert!(ui.get_widget(btn1).focused);
-        assert!(!ui.get_widget(btn4).focused, "btn4 should lose focus after wrap");
+        assert!(
+            !ui.get_widget(btn4).focused,
+            "btn4 should lose focus after wrap"
+        );
     }
 
     // ── T-UI-46: Widget Removal Cascades to Children ─────────────────────────
@@ -1121,7 +1262,11 @@ mod tests {
         // Remove the panel — all children must cascade
         ui.remove_widget(panel);
 
-        assert_eq!(ui.widget_count(), 0, "all widgets must be removed when panel is removed");
+        assert_eq!(
+            ui.widget_count(),
+            0,
+            "all widgets must be removed when panel is removed"
+        );
 
         // Verify none of the child IDs are accessible
         // (get_widget would panic on a missing ID; widget_count confirms they are gone)

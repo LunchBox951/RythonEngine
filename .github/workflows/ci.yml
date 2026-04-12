@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel any in-progress run for the same branch/PR when a new commit is pushed.
+# Keeps the queue short and avoids burning minutes on stale runs.
+# github.ref is used as a string key here, not injected into any shell command.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    needs: fmt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y libasound2-dev libwayland-dev libxkbcommon-dev python3-dev
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: fmt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y libasound2-dev libwayland-dev libxkbcommon-dev python3-dev xvfb
+      - name: Run Rust tests
+        # xvfb-run provides a virtual framebuffer so tests that touch winit/wgpu
+        # window creation don't panic on a headless runner.
+        #
+        # Python integration tests are NOT run here -- they require a live engine
+        # binary with audio and video hardware unavailable on GitHub-hosted runners.
+        # Run `make test-python` locally for full Python test coverage.
+        run: xvfb-run --auto-servernum cargo test --workspace

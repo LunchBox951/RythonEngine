@@ -1,5 +1,17 @@
-use rython_core::{EngineError, OwnerId, Priority, TaskId};
+use rython_core::{EngineError, GroupId, OwnerId, Priority, TaskId};
 use std::any::Any;
+
+/// The type-erased result produced by a background task.
+pub type BgResult = Result<Box<dyn Any + Send + 'static>, EngineError>;
+
+/// Erased body of a background task.
+pub type BgTaskFn = Box<dyn FnOnce() -> BgResult + Send + 'static>;
+
+/// Callback invoked once a single background task completes.
+pub type BgCallback = Box<dyn FnOnce(BgResult) -> Result<(), EngineError> + Send + 'static>;
+
+/// Callback invoked once all members of a task group have completed.
+pub type GroupCallback = Box<dyn FnOnce(Vec<BgResult>) -> Result<(), EngineError> + Send + 'static>;
 
 /// A one-shot sequential task to run on the main thread.
 pub struct SequentialTask {
@@ -36,10 +48,9 @@ pub struct BackgroundTask {
 pub struct BgComplete {
     pub task_id: TaskId,
     pub owner: OwnerId,
-    pub result: Result<Box<dyn Any + Send + 'static>, EngineError>,
-    pub callback:
-        Option<Box<dyn FnOnce(Result<Box<dyn Any + Send + 'static>, EngineError>) -> Result<(), EngineError> + Send + 'static>>,
-    pub group_id: Option<rython_core::GroupId>,
+    pub result: BgResult,
+    pub callback: Option<BgCallback>,
+    pub group_id: Option<GroupId>,
 }
 
 /// A task submitted remotely (from another thread via the channel).

@@ -1,7 +1,10 @@
 use crate::{
     frame_pacer::FramePacer,
     group::GroupState,
-    task::{BgComplete, ParallelTask, RecurringTask, RemoteTask, SequentialTask},
+    task::{
+        BgCallback, BgComplete, BgResult, BgTaskFn, GroupCallback, ParallelTask, RecurringTask,
+        RemoteTask, SequentialTask,
+    },
 };
 use rython_core::{
     EngineError, GroupId, OwnerId, Priority, SchedulerConfig, SchedulerHandle, TaskError, TaskId,
@@ -27,7 +30,12 @@ pub struct RemoteSender {
 }
 
 impl RemoteSender {
-    pub fn submit(&self, f: Box<dyn FnOnce() -> Result<(), EngineError> + Send + 'static>, priority: Priority, owner: OwnerId) {
+    pub fn submit(
+        &self,
+        f: Box<dyn FnOnce() -> Result<(), EngineError> + Send + 'static>,
+        priority: Priority,
+        owner: OwnerId,
+    ) {
         let _ = self.tx.send(RemoteTask { owner, priority, f });
     }
 }
@@ -72,17 +80,7 @@ pub struct TaskScheduler {
     pacer: FramePacer,
 
     // Pre-allocated scratch buffer for group callbacks ready to fire
-    ready_group_callbacks: Vec<(
-        GroupId,
-        Box<
-            dyn FnOnce(
-                    Vec<Result<Box<dyn Any + Send + 'static>, EngineError>>,
-                ) -> Result<(), EngineError>
-                + Send
-                + 'static,
-        >,
-        Vec<Result<Box<dyn Any + Send + 'static>, EngineError>>,
-    )>,
+    ready_group_callbacks: Vec<(GroupId, GroupCallback, Vec<BgResult>)>,
 
     // Rayon thread pool
     pool: rayon::ThreadPool,
@@ -131,7 +129,12 @@ impl TaskScheduler {
         owner: OwnerId,
     ) -> TaskId {
         let id = next_id();
-        self.seq_queue.push(SequentialTask { id, owner, priority, f });
+        self.seq_queue.push(SequentialTask {
+            id,
+            owner,
+            priority,
+            f,
+        });
         id
     }
 
@@ -143,23 +146,20 @@ impl TaskScheduler {
         owner: OwnerId,
     ) -> TaskId {
         let id = next_id();
-        self.par_queue.push(ParallelTask { id, owner, priority, f });
+        self.par_queue.push(ParallelTask {
+            id,
+            owner,
+            priority,
+            f,
+        });
         id
     }
 
     /// Submit a background (fire-and-forget) task.
     pub fn submit_background_raw(
         &mut self,
-        f: Box<dyn FnOnce() -> Result<Box<dyn Any + Send + 'static>, EngineError> + Send + 'static>,
-        callback: Option<
-            Box<
-                dyn FnOnce(
-                        Result<Box<dyn Any + Send + 'static>, EngineError>,
-                    ) -> Result<(), EngineError>
-                    + Send
-                    + 'static,
-            >,
-        >,
+        f: BgTaskFn,
+        callback: Option<BgCallback>,
         _priority: Priority,
         owner: OwnerId,
     ) -> TaskId {
@@ -167,7 +167,7 @@ impl TaskScheduler {
         let bg_tx = self.bg_tx.clone();
 
         self.pool.spawn(move || {
-            let result = std::panic::catch_unwind(AssertUnwindSafe(|| f()));
+            let result = std::panic::catch_unwind(AssertUnwindSafe(f));
             let result = match result {
                 Ok(r) => r,
                 Err(panic_val) => {
@@ -201,25 +201,18 @@ impl TaskScheduler {
         R: Any + Send + 'static,
         C: FnOnce(Result<R, EngineError>) -> Result<(), EngineError> + Send + 'static,
     {
-        let erased_f = Box::new(move || -> Result<Box<dyn Any + Send + 'static>, EngineError> {
-            Ok(Box::new(f()) as Box<dyn Any + Send + 'static>)
-        });
+        let erased_f: BgTaskFn =
+            Box::new(move || -> BgResult { Ok(Box::new(f()) as Box<dyn Any + Send + 'static>) });
 
-        let erased_cb: Option<
-            Box<
-                dyn FnOnce(
-                        Result<Box<dyn Any + Send + 'static>, EngineError>,
-                    ) -> Result<(), EngineError>
-                    + Send
-                    + 'static,
-            >,
-        > = callback.map(|cb| {
-            Box::new(
-                move |res: Result<Box<dyn Any + Send + 'static>, EngineError>| {
-                    let typed_res = res.map(|boxed| *boxed.downcast::<R>().expect("type mismatch in background callback"));
-                    cb(typed_res)
-                },
-            ) as Box<dyn FnOnce(Result<Box<dyn Any + Send + 'static>, EngineError>) -> Result<(), EngineError> + Send + 'static>
+        let erased_cb: Option<BgCallback> = callback.map(|cb| {
+            Box::new(move |res: BgResult| {
+                let typed_res = res.map(|boxed| {
+                    *boxed
+                        .downcast::<R>()
+                        .expect("type mismatch in background callback")
+                });
+                cb(typed_res)
+            }) as BgCallback
         });
 
         self.submit_background_raw(erased_f, erased_cb, priority, owner)
@@ -233,7 +226,12 @@ impl TaskScheduler {
         owner: OwnerId,
     ) -> TaskId {
         let id = next_id();
-        self.recurring_seq.push(RecurringTask { id, owner, priority, f });
+        self.recurring_seq.push(RecurringTask {
+            id,
+            owner,
+            priority,
+            f,
+        });
         id
     }
 
@@ -245,22 +243,19 @@ impl TaskScheduler {
         owner: OwnerId,
     ) -> TaskId {
         let id = next_id();
-        self.recurring_par.push(RecurringTask { id, owner, priority, f });
+        self.recurring_par.push(RecurringTask {
+            id,
+            owner,
+            priority,
+            f,
+        });
         id
     }
 
     // ─── Task Groups ──────────────────────────────────────────────────────────
 
     /// Create a new task group. The callback fires when all members complete.
-    pub fn create_group(
-        &mut self,
-        callback: Box<
-            dyn FnOnce(Vec<Result<Box<dyn Any + Send + 'static>, EngineError>>) -> Result<(), EngineError>
-                + Send
-                + 'static,
-        >,
-        owner: OwnerId,
-    ) -> GroupId {
+    pub fn create_group(&mut self, callback: GroupCallback, owner: OwnerId) -> GroupId {
         let id = next_id();
         let state = GroupState::new(id, owner, callback);
         self.groups.insert(id, state);
@@ -268,11 +263,8 @@ impl TaskScheduler {
     }
 
     /// Add a background member to an existing (unsealed) group.
-    pub fn group_add_background<F, R>(
-        &mut self,
-        group_id: GroupId,
-        f: F,
-    ) where
+    pub fn group_add_background<F, R>(&mut self, group_id: GroupId, f: F)
+    where
         F: FnOnce() -> R + Send + 'static,
         R: Any + Send + 'static,
     {
@@ -288,8 +280,7 @@ impl TaskScheduler {
         let owner = group_state.owner;
 
         self.pool.spawn(move || {
-            let result: Result<Box<dyn Any + Send + 'static>, EngineError> =
-                Ok(Box::new(f()) as Box<dyn Any + Send + 'static>);
+            let result: BgResult = Ok(Box::new(f()) as Box<dyn Any + Send + 'static>);
 
             let _ = bg_tx.send(BgComplete {
                 task_id,
@@ -408,7 +399,7 @@ impl TaskScheduler {
 }
 
 fn run_sequential_task(f: Box<dyn FnOnce() -> Result<(), EngineError> + Send>) {
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| f()));
+    let result = std::panic::catch_unwind(AssertUnwindSafe(f));
     match result {
         Ok(Ok(())) => {}
         Ok(Err(_e)) => {

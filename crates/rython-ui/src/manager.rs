@@ -160,7 +160,11 @@ impl UIManager {
         // Children always render/hit-test above their parent container
         self.widgets.get_mut(&child_id).unwrap().z = parent_z + 1.0;
         self.widgets.get_mut(&child_id).unwrap().parent = Some(parent_id);
-        self.widgets.get_mut(&parent_id).unwrap().children.push(child_id);
+        self.widgets
+            .get_mut(&parent_id)
+            .unwrap()
+            .children
+            .push(child_id);
     }
 
     /// Create a Button as a direct child of `parent_id` with relative position.
@@ -213,13 +217,7 @@ impl UIManager {
     // ─── Layout ───────────────────────────────────────────────────────────────
 
     /// Configure layout direction, spacing, and padding for a container widget.
-    pub fn set_layout(
-        &mut self,
-        id: WidgetId,
-        dir: LayoutDir,
-        spacing: f32,
-        padding: f32,
-    ) {
+    pub fn set_layout(&mut self, id: WidgetId, dir: LayoutDir, spacing: f32, padding: f32) {
         let w = self.widgets.get_mut(&id).unwrap();
         w.layout = dir;
         w.spacing = spacing;
@@ -244,7 +242,14 @@ impl UIManager {
     fn layout_children(&mut self, id: WidgetId) {
         let (abs_x, abs_y, layout, spacing, padding, children) = {
             let w = &self.widgets[&id];
-            (w.abs_x, w.abs_y, w.layout, w.spacing, w.padding, w.children.clone())
+            (
+                w.abs_x,
+                w.abs_y,
+                w.layout,
+                w.spacing,
+                w.padding,
+                w.children.clone(),
+            )
         };
 
         match layout {
@@ -309,7 +314,9 @@ impl UIManager {
 
     /// Effective text color for a widget (explicit or theme default).
     pub fn effective_text_color(&self, id: WidgetId) -> Color {
-        self.widgets[&id].text_color.unwrap_or(self.theme.text_color)
+        self.widgets[&id]
+            .text_color
+            .unwrap_or(self.theme.text_color)
     }
 
     // ─── Animation ────────────────────────────────────────────────────────────
@@ -324,7 +331,8 @@ impl UIManager {
         duration: f32,
         easing: EasingFn,
     ) {
-        self.animator.start_tween(widget_id, property, from, to, duration, easing);
+        self.animator
+            .start_tween(widget_id, property, from, to, duration, easing);
     }
 
     /// Start a sequential animation chain on a widget.
@@ -887,7 +895,11 @@ fn color_from_json(v: &Value) -> Color {
         Some(a) => a,
         None => return Color::rgb(0, 0, 0),
     };
-    let get = |i: usize, default: u8| arr.get(i).and_then(|x| x.as_u64()).unwrap_or(default as u64) as u8;
+    let get = |i: usize, default: u8| {
+        arr.get(i)
+            .and_then(|x| x.as_u64())
+            .unwrap_or(default as u64) as u8
+    };
     Color::new(get(0, 0), get(1, 0), get(2, 0), get(3, 255))
 }
 
@@ -896,7 +908,11 @@ fn opt_color_to_json(c: Option<Color>) -> Value {
 }
 
 fn opt_color_from_json(v: &Value) -> Option<Color> {
-    if v.is_null() { None } else { Some(color_from_json(v)) }
+    if v.is_null() {
+        None
+    } else {
+        Some(color_from_json(v))
+    }
 }
 
 fn kind_str(k: WidgetKind) -> &'static str {

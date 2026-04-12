@@ -1,15 +1,15 @@
 //! ScriptSystem: manages Python script instances and event dispatch.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use parking_lot::Mutex;
 use pyo3::prelude::*;
 
 use rython_ecs::{EntityId, Scene};
 
-use crate::bridge::{EntityPy, Vec3Py, get_script_class_with_gil, set_active_scene};
+use crate::bridge::{get_script_class_with_gil, set_active_scene, EntityPy, Vec3Py};
 use crate::component::ScriptComponent;
 
 // ─── GIL batch counter (for T-SCRIPT-19) ─────────────────────────────────────
@@ -124,15 +124,23 @@ impl ScriptSystem {
     }
 
     pub fn queue_collision(&self, entity_a: EntityId, entity_b: EntityId, normal: [f32; 3]) {
-        self.event_queue.lock().push(ScriptEvent::Collision { entity_a, entity_b, normal });
+        self.event_queue.lock().push(ScriptEvent::Collision {
+            entity_a,
+            entity_b,
+            normal,
+        });
     }
 
     pub fn queue_trigger_enter(&self, entity: EntityId, other: EntityId) {
-        self.event_queue.lock().push(ScriptEvent::TriggerEnter { entity, other });
+        self.event_queue
+            .lock()
+            .push(ScriptEvent::TriggerEnter { entity, other });
     }
 
     pub fn queue_trigger_exit(&self, entity: EntityId, other: EntityId) {
-        self.event_queue.lock().push(ScriptEvent::TriggerExit { entity, other });
+        self.event_queue
+            .lock()
+            .push(ScriptEvent::TriggerExit { entity, other });
     }
 
     pub fn queue_input_action(&self, entity: EntityId, action: impl Into<String>, value: f32) {
@@ -185,10 +193,13 @@ impl ScriptSystem {
             }
         };
 
-        let entity_wrapper = match Py::new(py, EntityPy {
-            id: entity.0,
-            scene: Some(Arc::clone(&self.scene)),
-        }) {
+        let entity_wrapper = match Py::new(
+            py,
+            EntityPy {
+                id: entity.0,
+                scene: Some(Arc::clone(&self.scene)),
+            },
+        ) {
             Ok(w) => w,
             Err(e) => {
                 self.log_error(format!("Failed to create entity wrapper: {e}"));
@@ -214,11 +225,14 @@ impl ScriptSystem {
             }
         }
 
-        self.instances.lock().insert(entity, ScriptInstance {
-            object: instance,
-            class_name: class_name.to_string(),
-            handlers,
-        });
+        self.instances.lock().insert(
+            entity,
+            ScriptInstance {
+                object: instance,
+                class_name: class_name.to_string(),
+                handlers,
+            },
+        );
     }
 
     fn teardown_script(&self, py: Python<'_>, entity: EntityId) {
@@ -239,32 +253,92 @@ impl ScriptSystem {
                 // Fix #3: Lazily construct EntityPy / Vec3Py only when a handler
                 // exists — avoids 4 Py::new heap allocations per collision when
                 // the script has no on_collision handler.
-                ScriptEvent::Collision { entity_a, entity_b, normal } => {
+                ScriptEvent::Collision {
+                    entity_a,
+                    entity_b,
+                    normal,
+                } => {
                     let scene = &self.scene;
                     self.call_handler_pair_inline(
-                        py, entity_a, "on_collision",
-                        |py| Py::new(py, EntityPy { id: entity_b.0, scene: Some(Arc::clone(scene)) }).ok().map(Into::into),
-                        |py| Py::new(py, Vec3Py::new(normal[0], normal[1], normal[2])).ok().map(Into::into),
+                        py,
+                        entity_a,
+                        "on_collision",
+                        |py| {
+                            Py::new(
+                                py,
+                                EntityPy {
+                                    id: entity_b.0,
+                                    scene: Some(Arc::clone(scene)),
+                                },
+                            )
+                            .ok()
+                            .map(Into::into)
+                        },
+                        |py| {
+                            Py::new(py, Vec3Py::new(normal[0], normal[1], normal[2]))
+                                .ok()
+                                .map(Into::into)
+                        },
                     );
                     self.call_handler_pair_inline(
-                        py, entity_b, "on_collision",
-                        |py| Py::new(py, EntityPy { id: entity_a.0, scene: Some(Arc::clone(scene)) }).ok().map(Into::into),
-                        |py| Py::new(py, Vec3Py::new(-normal[0], -normal[1], -normal[2])).ok().map(Into::into),
+                        py,
+                        entity_b,
+                        "on_collision",
+                        |py| {
+                            Py::new(
+                                py,
+                                EntityPy {
+                                    id: entity_a.0,
+                                    scene: Some(Arc::clone(scene)),
+                                },
+                            )
+                            .ok()
+                            .map(Into::into)
+                        },
+                        |py| {
+                            Py::new(py, Vec3Py::new(-normal[0], -normal[1], -normal[2]))
+                                .ok()
+                                .map(Into::into)
+                        },
                     );
                 }
                 ScriptEvent::TriggerEnter { entity, other } => {
                     let scene = &self.scene;
-                    self.call_handler_one_lazy(py, entity, "on_trigger_enter",
-                        |py| Py::new(py, EntityPy { id: other.0, scene: Some(Arc::clone(scene)) }).ok().map(Into::into));
+                    self.call_handler_one_lazy(py, entity, "on_trigger_enter", |py| {
+                        Py::new(
+                            py,
+                            EntityPy {
+                                id: other.0,
+                                scene: Some(Arc::clone(scene)),
+                            },
+                        )
+                        .ok()
+                        .map(Into::into)
+                    });
                 }
                 ScriptEvent::TriggerExit { entity, other } => {
                     let scene = &self.scene;
-                    self.call_handler_one_lazy(py, entity, "on_trigger_exit",
-                        |py| Py::new(py, EntityPy { id: other.0, scene: Some(Arc::clone(scene)) }).ok().map(Into::into));
+                    self.call_handler_one_lazy(py, entity, "on_trigger_exit", |py| {
+                        Py::new(
+                            py,
+                            EntityPy {
+                                id: other.0,
+                                scene: Some(Arc::clone(scene)),
+                            },
+                        )
+                        .ok()
+                        .map(Into::into)
+                    });
                 }
-                ScriptEvent::InputAction { entity, action, value } => {
-                    let ao: Option<Py<PyAny>> = action.into_pyobject(py).ok().map(|b| b.unbind().into());
-                    let vo: Option<Py<PyAny>> = value.into_pyobject(py).ok().map(|b| b.unbind().into());
+                ScriptEvent::InputAction {
+                    entity,
+                    action,
+                    value,
+                } => {
+                    let ao: Option<Py<PyAny>> =
+                        action.into_pyobject(py).ok().map(|b| b.unbind().into());
+                    let vo: Option<Py<PyAny>> =
+                        value.into_pyobject(py).ok().map(|b| b.unbind().into());
                     if let (Some(ao), Some(vo)) = (ao, vo) {
                         self.call_handler_pair(py, entity, "on_input_action", ao, vo);
                     }
@@ -289,13 +363,7 @@ impl ScriptSystem {
 
     /// Lazily construct the argument only when the handler exists — avoids
     /// heap allocations for entities without the handler.
-    fn call_handler_one_lazy<F>(
-        &self,
-        py: Python<'_>,
-        entity: EntityId,
-        method: &str,
-        make_arg: F,
-    )
+    fn call_handler_one_lazy<F>(&self, py: Python<'_>, entity: EntityId, method: &str, make_arg: F)
     where
         F: FnOnce(Python<'_>) -> Option<Py<PyAny>>,
     {
@@ -349,8 +417,7 @@ impl ScriptSystem {
         method: &str,
         make_arg1: F1,
         make_arg2: F2,
-    )
-    where
+    ) where
         F1: FnOnce(Python<'_>) -> Option<Py<PyAny>>,
         F2: FnOnce(Python<'_>) -> Option<Py<PyAny>>,
     {
@@ -365,7 +432,9 @@ impl ScriptSystem {
             }
             (inst.object.clone_ref(py), inst.class_name.clone())
         };
-        let (Some(a1), Some(a2)) = (make_arg1(py), make_arg2(py)) else { return };
+        let (Some(a1), Some(a2)) = (make_arg1(py), make_arg2(py)) else {
+            return;
+        };
         if let Err(e) = obj.bind(py).call_method1(method, (a1, a2)) {
             self.log_python_error(py, &e, &class_name, method);
         }
@@ -388,7 +457,12 @@ impl ScriptSystem {
 
     /// Return the script instance object for an entity (for testing).
     pub fn get_instance(&self, entity: EntityId) -> Option<Py<PyAny>> {
-        Python::attach(|py| self.instances.lock().get(&entity).map(|i| i.object.clone_ref(py)))
+        Python::attach(|py| {
+            self.instances
+                .lock()
+                .get(&entity)
+                .map(|i| i.object.clone_ref(py))
+        })
     }
 
     /// Directly instantiate a script for testing.

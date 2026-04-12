@@ -36,8 +36,7 @@ pub fn open_project(root: &Path) -> std::io::Result<ProjectConfig> {
 
 /// Write `project.json`.
 pub fn save_project(root: &Path, config: &ProjectConfig) -> std::io::Result<()> {
-    let content = serde_json::to_string_pretty(config)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let content = serde_json::to_string_pretty(config).map_err(std::io::Error::other)?;
     fs::write(root.join("project.json"), content)
 }
 
@@ -64,8 +63,7 @@ pub fn list_scenes(root: &Path) -> Vec<String> {
 pub fn save_scene(root: &Path, name: &str, scene: &Scene) -> std::io::Result<()> {
     fs::create_dir_all(root.join("scenes"))?;
     let data = scene.save_json();
-    let content = serde_json::to_string_pretty(&data)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let content = serde_json::to_string_pretty(&data).map_err(std::io::Error::other)?;
     fs::write(root.join("scenes").join(format!("{name}.json")), content)
 }
 
@@ -103,8 +101,7 @@ mod tests {
     impl TempDir {
         fn new(label: &str) -> Self {
             let n = IO_TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-            let path =
-                std::env::temp_dir().join(format!("rython_io_{}_{}", label, n));
+            let path = std::env::temp_dir().join(format!("rython_io_{}_{}", label, n));
             std::fs::create_dir_all(&path).unwrap();
             TempDir(path)
         }

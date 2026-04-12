@@ -89,10 +89,7 @@ fn ray_aabb(ray: &Ray, aabb: &Aabb) -> Option<f32> {
 /// Iterates all entities with both `TransformComponent` and `MeshComponent`,
 /// computes an axis-aligned bounding box scaled by the transform, and returns
 /// the closest hit.
-pub fn pick_entity(
-    ray: &Ray,
-    scene: &Arc<Scene>,
-) -> Option<EntityId> {
+pub fn pick_entity(ray: &Ray, scene: &Arc<Scene>) -> Option<EntityId> {
     use rython_ecs::component::{MeshComponent, TransformComponent};
 
     let entities = scene.all_entities();

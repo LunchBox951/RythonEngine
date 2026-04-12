@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use parking_lot::RwLock;
 use crate::entity::EntityId;
+use parking_lot::RwLock;
+use std::collections::HashMap;
 
 pub const MAX_HIERARCHY_DEPTH: usize = 64;
 
@@ -26,7 +26,9 @@ impl Default for Hierarchy {
 }
 
 impl Hierarchy {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn set_parent(&self, child: EntityId, parent: EntityId) {
         let mut m = self.maps.write();
@@ -54,7 +56,12 @@ impl Hierarchy {
     }
 
     pub fn get_children(&self, parent: EntityId) -> Vec<EntityId> {
-        self.maps.read().children_map.get(&parent).cloned().unwrap_or_default()
+        self.maps
+            .read()
+            .children_map
+            .get(&parent)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Walk the ancestor chain from `entity` up. Returns ordered chain [entity, parent, grandparent, ...].

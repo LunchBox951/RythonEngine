@@ -1,7 +1,7 @@
-use std::any::TypeId;
-use parking_lot::Mutex;
 use crate::component::Component;
 use crate::entity::EntityId;
+use parking_lot::Mutex;
+use std::any::TypeId;
 
 /// All mutations go through commands, drained at a deterministic frame point.
 pub enum Command {
@@ -38,12 +38,16 @@ pub struct CommandQueue {
 
 impl Default for CommandQueue {
     fn default() -> Self {
-        Self { queue: Mutex::new(Vec::new()) }
+        Self {
+            queue: Mutex::new(Vec::new()),
+        }
     }
 }
 
 impl CommandQueue {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn push(&self, cmd: Command) {
         self.queue.lock().push(cmd);

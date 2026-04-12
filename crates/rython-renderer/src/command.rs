@@ -217,7 +217,10 @@ mod emissive_tests {
             emissive_map_id: Some("textures/lantern_e.png".to_string()),
             ..Default::default()
         };
-        assert_eq!(cmd.emissive_map_id.as_deref(), Some("textures/lantern_e.png"));
+        assert_eq!(
+            cmd.emissive_map_id.as_deref(),
+            Some("textures/lantern_e.png")
+        );
     }
 
     // §4 Test 7: emissive_intensity = 0 → w=0 in packed vec4
@@ -246,7 +249,10 @@ mod specular_tests {
     // §2 Test 5: specular_color tint is stored correctly
     #[test]
     fn s2_t5_specular_color_tint_roundtrip() {
-        let cmd = DrawMesh { specular_color: [0.5, 0.5, 1.0], ..Default::default() };
+        let cmd = DrawMesh {
+            specular_color: [0.5, 0.5, 1.0],
+            ..Default::default()
+        };
         assert!((cmd.specular_color[0] - 0.5).abs() < 1e-6);
         assert!((cmd.specular_color[1] - 0.5).abs() < 1e-6);
         assert!((cmd.specular_color[2] - 1.0).abs() < 1e-6);

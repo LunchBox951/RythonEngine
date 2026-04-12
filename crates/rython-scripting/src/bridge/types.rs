@@ -32,9 +32,17 @@ impl Vec3Py {
     pub fn normalized(&self) -> Self {
         let len = self.length();
         if len < f32::EPSILON {
-            Self { x: 0.0, y: 0.0, z: 0.0 }
+            Self {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            }
         } else {
-            Self { x: self.x / len, y: self.y / len, z: self.z / len }
+            Self {
+                x: self.x / len,
+                y: self.y / len,
+                z: self.z / len,
+            }
         }
     }
 
@@ -43,23 +51,43 @@ impl Vec3Py {
     }
 
     fn __add__(&self, other: &Vec3Py) -> Vec3Py {
-        Vec3Py { x: self.x + other.x, y: self.y + other.y, z: self.z + other.z }
+        Vec3Py {
+            x: self.x + other.x,
+            y: self.y + other.y,
+            z: self.z + other.z,
+        }
     }
 
     fn __sub__(&self, other: &Vec3Py) -> Vec3Py {
-        Vec3Py { x: self.x - other.x, y: self.y - other.y, z: self.z - other.z }
+        Vec3Py {
+            x: self.x - other.x,
+            y: self.y - other.y,
+            z: self.z - other.z,
+        }
     }
 
     fn __mul__(&self, scalar: f32) -> Vec3Py {
-        Vec3Py { x: self.x * scalar, y: self.y * scalar, z: self.z * scalar }
+        Vec3Py {
+            x: self.x * scalar,
+            y: self.y * scalar,
+            z: self.z * scalar,
+        }
     }
 
     fn __rmul__(&self, scalar: f32) -> Vec3Py {
-        Vec3Py { x: self.x * scalar, y: self.y * scalar, z: self.z * scalar }
+        Vec3Py {
+            x: self.x * scalar,
+            y: self.y * scalar,
+            z: self.z * scalar,
+        }
     }
 
     fn __neg__(&self) -> Vec3Py {
-        Vec3Py { x: -self.x, y: -self.y, z: -self.z }
+        Vec3Py {
+            x: -self.x,
+            y: -self.y,
+            z: -self.z,
+        }
     }
 
     fn __repr__(&self) -> String {
@@ -87,7 +115,11 @@ pub struct TransformPy {
 }
 
 impl TransformPy {
-    pub fn from_component(comp: &TransformComponent, entity_id: EntityId, scene: Arc<Scene>) -> Self {
+    pub fn from_component(
+        comp: &TransformComponent,
+        entity_id: EntityId,
+        scene: Arc<Scene>,
+    ) -> Self {
         Self {
             entity_id: Some(entity_id.0),
             scene: Some(scene),
@@ -114,20 +146,30 @@ impl TransformPy {
             return;
         };
         let entity = EntityId(eid);
-        let (x, y, z, rx, ry, rz, sx, sy, sz) =
-            (self.x, self.y, self.z, self.rot_x, self.rot_y, self.rot_z,
-             self.scale_x, self.scale_y, self.scale_z);
-        scene.components.get_mut(entity, |t: &mut TransformComponent| {
-            t.x = x;
-            t.y = y;
-            t.z = z;
-            t.rot_x = rx;
-            t.rot_y = ry;
-            t.rot_z = rz;
-            t.scale_x = sx;
-            t.scale_y = sy;
-            t.scale_z = sz;
-        });
+        let (x, y, z, rx, ry, rz, sx, sy, sz) = (
+            self.x,
+            self.y,
+            self.z,
+            self.rot_x,
+            self.rot_y,
+            self.rot_z,
+            self.scale_x,
+            self.scale_y,
+            self.scale_z,
+        );
+        scene
+            .components
+            .get_mut(entity, |t: &mut TransformComponent| {
+                t.x = x;
+                t.y = y;
+                t.z = z;
+                t.rot_x = rx;
+                t.rot_y = ry;
+                t.rot_z = rz;
+                t.scale_x = sx;
+                t.scale_y = sy;
+                t.scale_z = sz;
+            });
     }
 }
 
@@ -135,6 +177,7 @@ impl TransformPy {
 impl TransformPy {
     #[new]
     #[pyo3(signature = (x=0.0, y=0.0, z=0.0, rot_x=0.0, rot_y=0.0, rot_z=0.0, scale=1.0, scale_x=None, scale_y=None, scale_z=None))]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         x: f32,
         y: f32,
@@ -150,8 +193,12 @@ impl TransformPy {
         Self {
             entity_id: None,
             scene: None,
-            x, y, z,
-            rot_x, rot_y, rot_z,
+            x,
+            y,
+            z,
+            rot_x,
+            rot_y,
+            rot_z,
             scale_x: scale_x.unwrap_or(scale),
             scale_y: scale_y.unwrap_or(scale),
             scale_z: scale_z.unwrap_or(scale),

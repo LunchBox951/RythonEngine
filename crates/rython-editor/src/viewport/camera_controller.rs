@@ -56,8 +56,8 @@ impl CameraController {
         if is_orbit {
             let delta = response.drag_delta();
             self.yaw -= delta.x * 0.005;
-            self.pitch = (self.pitch - delta.y * 0.005)
-                .clamp(-89.0_f32.to_radians(), 89.0_f32.to_radians());
+            self.pitch =
+                (self.pitch - delta.y * 0.005).clamp(-89.0_f32.to_radians(), 89.0_f32.to_radians());
             moved = true;
         }
 

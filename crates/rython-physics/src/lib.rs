@@ -76,8 +76,10 @@ pub struct PhysicsWorld {
 
 impl PhysicsWorld {
     pub fn new(config: PhysicsConfig) -> Self {
-        let mut integration_parameters = IntegrationParameters::default();
-        integration_parameters.dt = config.fixed_timestep;
+        let integration_parameters = IntegrationParameters {
+            dt: config.fixed_timestep,
+            ..Default::default()
+        };
 
         let (collision_send, collision_recv) = unbounded();
         let (contact_force_send, _contact_force_recv) = unbounded();
@@ -140,7 +142,10 @@ impl PhysicsWorld {
                 Some(c) => c,
                 None => continue,
             };
-            let transform = scene.components.get::<TransformComponent>(entity).unwrap_or_default();
+            let transform = scene
+                .components
+                .get::<TransformComponent>(entity)
+                .unwrap_or_default();
             self.register_body(entity, &rb_comp, &col_comp, &transform);
         }
     }
@@ -170,7 +175,8 @@ impl PhysicsWorld {
 
         let col = self.make_collider(col_comp, rb_comp);
         let col_handle =
-            self.collider_set.insert_with_parent(col, rb_handle, &mut self.rigid_body_set);
+            self.collider_set
+                .insert_with_parent(col, rb_handle, &mut self.rigid_body_set);
 
         self.collider_to_entity.insert(col_handle, entity);
         self.entity_to_body.insert(
@@ -183,7 +189,11 @@ impl PhysicsWorld {
         );
     }
 
-    fn make_collider(&self, col_comp: &ColliderComponent, rb_comp: &RigidBodyComponent) -> Collider {
+    fn make_collider(
+        &self,
+        col_comp: &ColliderComponent,
+        rb_comp: &RigidBodyComponent,
+    ) -> Collider {
         let builder = match col_comp.shape.as_str() {
             "sphere" | "ball" => ColliderBuilder::ball(col_comp.size[0] / 2.0),
             _ => ColliderBuilder::cuboid(
@@ -236,7 +246,9 @@ impl PhysicsWorld {
     }
 
     fn remove_body(&mut self, entity: EntityId) {
-        let Some(entry) = self.entity_to_body.remove(&entity) else { return };
+        let Some(entry) = self.entity_to_body.remove(&entity) else {
+            return;
+        };
         self.collider_to_entity.remove(&entry.collider_handle);
         self.collider_set.remove(
             entry.collider_handle,
@@ -272,8 +284,11 @@ impl PhysicsWorld {
     // ── Step ─────────────────────────────────────────────────────────────────
 
     fn step_simulation(&mut self, scene: &Scene) {
-        let gravity =
-            vector![self.config.gravity[0], self.config.gravity[1], self.config.gravity[2]];
+        let gravity = vector![
+            self.config.gravity[0],
+            self.config.gravity[1],
+            self.config.gravity[2]
+        ];
 
         // Drain any stale events from the reused channels before stepping.
         while self.collision_recv.try_recv().is_ok() {}
@@ -356,21 +371,30 @@ impl PhysicsWorld {
                             // Flip it for e1's per-entity event so each entity receives
                             // the normal pointing toward itself (upward for the floor contact).
                             let flipped = [-normal[0], -normal[1], -normal[2]];
-                            scene.emit("collision", serde_json::json!({
-                                "entity_a": e1.0,
-                                "entity_b": e2.0,
-                                "normal": normal,
-                            }));
-                            scene.emit(&format!("collision:{}", e1.0), serde_json::json!({
-                                "entity_a": e1.0,
-                                "entity_b": e2.0,
-                                "normal": flipped,
-                            }));
-                            scene.emit(&format!("collision:{}", e2.0), serde_json::json!({
-                                "entity_a": e1.0,
-                                "entity_b": e2.0,
-                                "normal": normal,
-                            }));
+                            scene.emit(
+                                "collision",
+                                serde_json::json!({
+                                    "entity_a": e1.0,
+                                    "entity_b": e2.0,
+                                    "normal": normal,
+                                }),
+                            );
+                            scene.emit(
+                                &format!("collision:{}", e1.0),
+                                serde_json::json!({
+                                    "entity_a": e1.0,
+                                    "entity_b": e2.0,
+                                    "normal": flipped,
+                                }),
+                            );
+                            scene.emit(
+                                &format!("collision:{}", e2.0),
+                                serde_json::json!({
+                                    "entity_a": e1.0,
+                                    "entity_b": e2.0,
+                                    "normal": normal,
+                                }),
+                            );
                         }
                     }
                 }
@@ -443,11 +467,13 @@ impl PhysicsWorld {
                 entry.last_valid_position = [px, py, pz];
             }
 
-            scene.components.get_mut::<TransformComponent, _>(entity, |t| {
-                t.x = px;
-                t.y = py;
-                t.z = pz;
-            });
+            scene
+                .components
+                .get_mut::<TransformComponent, _>(entity, |t| {
+                    t.x = px;
+                    t.y = py;
+                    t.z = pz;
+                });
         }
     }
 
@@ -515,7 +541,10 @@ pub struct PhysicsModule {
 
 impl PhysicsModule {
     pub fn new(config: PhysicsConfig) -> Self {
-        Self { config, world: None }
+        Self {
+            config,
+            world: None,
+        }
     }
 
     pub fn with_default_config() -> Self {
@@ -556,7 +585,12 @@ mod tests {
     }
 
     fn transform(x: f32, y: f32, z: f32) -> TransformComponent {
-        TransformComponent { x, y, z, ..Default::default() }
+        TransformComponent {
+            x,
+            y,
+            z,
+            ..Default::default()
+        }
     }
 
     fn dyn_rb() -> RigidBodyComponent {
@@ -580,11 +614,19 @@ mod tests {
     }
 
     fn box_col(size: [f32; 3]) -> ColliderComponent {
-        ColliderComponent { shape: "box".to_string(), size, is_trigger: false }
+        ColliderComponent {
+            shape: "box".to_string(),
+            size,
+            is_trigger: false,
+        }
     }
 
     fn trigger_col(size: [f32; 3]) -> ColliderComponent {
-        ColliderComponent { shape: "box".to_string(), size, is_trigger: true }
+        ColliderComponent {
+            shape: "box".to_string(),
+            size,
+            is_trigger: true,
+        }
     }
 
     fn spawn(
@@ -603,7 +645,10 @@ mod tests {
     }
 
     fn world_zero_gravity() -> PhysicsWorld {
-        PhysicsWorld::new(PhysicsConfig { gravity: [0.0, 0.0, 0.0], ..Default::default() })
+        PhysicsWorld::new(PhysicsConfig {
+            gravity: [0.0, 0.0, 0.0],
+            ..Default::default()
+        })
     }
 
     fn world_2d(mode: &str) -> PhysicsWorld {
@@ -619,7 +664,12 @@ mod tests {
     #[test]
     fn t_phys_01_gravity_free_fall() {
         let scene = Scene::new();
-        let e = spawn(&scene, transform(0.0, 100.0, 0.0), dyn_rb(), box_col([1.0, 1.0, 1.0]));
+        let e = spawn(
+            &scene,
+            transform(0.0, 100.0, 0.0),
+            dyn_rb(),
+            box_col([1.0, 1.0, 1.0]),
+        );
 
         let mut w = world();
         for _ in 0..60 {
@@ -664,7 +714,11 @@ mod tests {
         assert!(disp_a > 0.0 && disp_b > 0.0, "both should fall");
         // B falls roughly half as far
         let ratio = disp_a / disp_b;
-        assert!((ratio - 2.0).abs() < 0.2, "A/B displacement ratio={} expected ~2", ratio);
+        assert!(
+            (ratio - 2.0).abs() < 0.2,
+            "A/B displacement ratio={} expected ~2",
+            ratio
+        );
     }
 
     // ── T-PHYS-03: Zero Gravity ───────────────────────────────────────────────
@@ -672,7 +726,12 @@ mod tests {
     #[test]
     fn t_phys_03_zero_gravity() {
         let scene = Scene::new();
-        let e = spawn(&scene, transform(0.0, 10.0, 0.0), dyn_rb(), box_col([1.0, 1.0, 1.0]));
+        let e = spawn(
+            &scene,
+            transform(0.0, 10.0, 0.0),
+            dyn_rb(),
+            box_col([1.0, 1.0, 1.0]),
+        );
 
         let mut w = world_zero_gravity();
         for _ in 0..60 {
@@ -732,7 +791,11 @@ mod tests {
         w.sync_step(&scene);
 
         let pos = w.get_body_position(e).unwrap();
-        assert!((pos[0] - 10.0).abs() < 0.01, "rapier x={} expected 10.0", pos[0]);
+        assert!(
+            (pos[0] - 10.0).abs() < 0.01,
+            "rapier x={} expected 10.0",
+            pos[0]
+        );
 
         // TransformComponent should still be at 10.0 (kinematic never pulled)
         let t = scene.components.get::<TransformComponent>(e).unwrap();
@@ -771,7 +834,12 @@ mod tests {
         // TransformComponent should match rapier position
         let ecs_y = scene.components.get::<TransformComponent>(dyn_e).unwrap().y;
         let rapier_y = w.get_body_position(dyn_e).unwrap()[1];
-        assert!((ecs_y - rapier_y).abs() < 0.001, "ecs_y={} rapier_y={}", ecs_y, rapier_y);
+        assert!(
+            (ecs_y - rapier_y).abs() < 0.001,
+            "ecs_y={} rapier_y={}",
+            ecs_y,
+            rapier_y
+        );
     }
 
     // ── T-PHYS-07: Collision Detection — Two Dynamic Bodies ───────────────────
@@ -813,7 +881,10 @@ mod tests {
         let ea = ev0["entity_a"].as_u64().unwrap();
         let eb = ev0["entity_b"].as_u64().unwrap();
         let ids: std::collections::HashSet<u64> = [ea, eb].into();
-        assert!(ids.contains(&a.0) && ids.contains(&b.0), "event must contain both entity IDs");
+        assert!(
+            ids.contains(&a.0) && ids.contains(&b.0),
+            "event must contain both entity IDs"
+        );
 
         // Normal approximately along X
         let normal = ev0["normal"].as_array().unwrap();
@@ -993,7 +1064,7 @@ mod tests {
             ..Default::default()
         });
         w.sync_step(&scene); // register bodies
-        // Launch toward each other at high speed so they collide and bounce apart.
+                             // Launch toward each other at high speed so they collide and bounce apart.
         w.set_linear_velocity(a, [10.0, 0.0, 0.0]);
         w.set_linear_velocity(b, [-10.0, 0.0, 0.0]);
 
@@ -1001,7 +1072,10 @@ mod tests {
             w.sync_step(&scene);
         }
 
-        assert!(*ended.lock().unwrap(), "collision_end event expected for solid bodies");
+        assert!(
+            *ended.lock().unwrap(),
+            "collision_end event expected for solid bodies"
+        );
     }
 
     // ── T-PHYS-12: Apply Impulse ──────────────────────────────────────────────
@@ -1022,7 +1096,11 @@ mod tests {
         w.sync_step(&scene);
 
         let vel = w.get_linear_velocity(e).unwrap();
-        assert!(vel[1] > 0.0, "vy={} should be > 0 after upward impulse", vel[1]);
+        assert!(
+            vel[1] > 0.0,
+            "vy={} should be > 0 after upward impulse",
+            vel[1]
+        );
 
         let t = scene.components.get::<TransformComponent>(e).unwrap();
         assert!(t.y > 0.0, "y={} should be > 0 after step", t.y);
@@ -1138,7 +1216,12 @@ mod tests {
     #[test]
     fn t_phys_17_body_removal_on_detach() {
         let scene = Scene::new();
-        let e = spawn(&scene, transform(0.0, 0.0, 0.0), dyn_rb(), box_col([1.0, 1.0, 1.0]));
+        let e = spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            dyn_rb(),
+            box_col([1.0, 1.0, 1.0]),
+        );
 
         let mut w = world();
         w.sync_step(&scene);
@@ -1158,7 +1241,12 @@ mod tests {
     #[test]
     fn t_phys_18_nan_resilience() {
         let scene = Scene::new();
-        let e = spawn(&scene, transform(0.0, 0.0, 0.0), dyn_rb(), box_col([1.0, 1.0, 1.0]));
+        let e = spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            dyn_rb(),
+            box_col([1.0, 1.0, 1.0]),
+        );
 
         let mut w = world_zero_gravity();
         w.sync_step(&scene); // establishes last_valid_position = (0,0,0)
@@ -1170,7 +1258,10 @@ mod tests {
         w.sync_step(&scene);
 
         let t = scene.components.get::<TransformComponent>(e).unwrap();
-        assert!(!t.x.is_nan() && !t.y.is_nan() && !t.z.is_nan(), "TransformComponent must not be NaN");
+        assert!(
+            !t.x.is_nan() && !t.y.is_nan() && !t.z.is_nan(),
+            "TransformComponent must not be NaN"
+        );
 
         // Position should be reset to last valid (0,0,0)
         let pos = w.get_body_position(e).unwrap();
@@ -1230,8 +1321,14 @@ mod tests {
             }
         }
 
-        let pny = player_normal_y.lock().unwrap().expect("player collision:{id} event not fired");
-        let fny = floor_normal_y.lock().unwrap().expect("floor collision:{id} event not fired");
+        let pny = player_normal_y
+            .lock()
+            .unwrap()
+            .expect("player collision:{id} event not fired");
+        let fny = floor_normal_y
+            .lock()
+            .unwrap()
+            .expect("floor collision:{id} event not fired");
 
         assert!(
             pny > 0.7,
@@ -1275,13 +1372,22 @@ mod tests {
     #[test]
     fn t_phys_20_sync_cycle_idempotent_registration() {
         let scene = Scene::new();
-        let _e = spawn(&scene, transform(0.0, 0.0, 0.0), dyn_rb(), box_col([1.0, 1.0, 1.0]));
+        let _e = spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            dyn_rb(),
+            box_col([1.0, 1.0, 1.0]),
+        );
 
         let mut w = world_zero_gravity();
         for _ in 0..5 {
             w.sync_step(&scene);
         }
-        assert_eq!(w.body_count(), 1, "sync_step must not re-register the same body");
+        assert_eq!(
+            w.body_count(),
+            1,
+            "sync_step must not re-register the same body"
+        );
     }
 
     // ── T-PHYS-21: Per-entity collision events fire for both entities ──────────
@@ -1321,8 +1427,10 @@ mod tests {
             }
         });
 
-        let mut w =
-            PhysicsWorld::new(PhysicsConfig { gravity: [0.0, 0.0, 0.0], ..Default::default() });
+        let mut w = PhysicsWorld::new(PhysicsConfig {
+            gravity: [0.0, 0.0, 0.0],
+            ..Default::default()
+        });
         for _ in 0..5 {
             w.sync_step(&scene);
         }
@@ -1389,8 +1497,10 @@ mod tests {
             *eb.lock().unwrap() = true;
         });
 
-        let mut w =
-            PhysicsWorld::new(PhysicsConfig { gravity: [0.0, 0.0, 0.0], ..Default::default() });
+        let mut w = PhysicsWorld::new(PhysicsConfig {
+            gravity: [0.0, 0.0, 0.0],
+            ..Default::default()
+        });
         w.sync_step(&scene);
         w.set_linear_velocity(a, [10.0, 0.0, 0.0]);
         w.set_linear_velocity(b, [-10.0, 0.0, 0.0]);
@@ -1418,7 +1528,12 @@ mod tests {
             trigger_col([4.0, 4.0, 4.0]),
         );
         // Body starts inside the trigger zone and falls under gravity out the bottom.
-        let body = spawn(&scene, transform(0.0, 1.0, 0.0), dyn_rb(), box_col([0.4, 0.4, 0.4]));
+        let body = spawn(
+            &scene,
+            transform(0.0, 1.0, 0.0),
+            dyn_rb(),
+            box_col([0.4, 0.4, 0.4]),
+        );
 
         let entered_trigger: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
         let entered_body: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
@@ -1447,10 +1562,26 @@ mod tests {
             w.sync_step(&scene);
         }
 
-        assert!(*entered_trigger.lock().unwrap(), "trigger_enter:{} not fired", trigger.0);
-        assert!(*entered_body.lock().unwrap(), "trigger_enter:{} not fired", body.0);
-        assert!(*exited_trigger.lock().unwrap(), "trigger_exit:{} not fired", trigger.0);
-        assert!(*exited_body.lock().unwrap(), "trigger_exit:{} not fired", body.0);
+        assert!(
+            *entered_trigger.lock().unwrap(),
+            "trigger_enter:{} not fired",
+            trigger.0
+        );
+        assert!(
+            *entered_body.lock().unwrap(),
+            "trigger_enter:{} not fired",
+            body.0
+        );
+        assert!(
+            *exited_trigger.lock().unwrap(),
+            "trigger_exit:{} not fired",
+            trigger.0
+        );
+        assert!(
+            *exited_body.lock().unwrap(),
+            "trigger_exit:{} not fired",
+            body.0
+        );
     }
 
     // ── T-PHYS-24: Sensor overlap emits trigger, not collision ────────────────
@@ -1486,13 +1617,18 @@ mod tests {
             *cf.lock().unwrap() = true;
         });
 
-        let mut w =
-            PhysicsWorld::new(PhysicsConfig { gravity: [0.0, 0.0, 0.0], ..Default::default() });
+        let mut w = PhysicsWorld::new(PhysicsConfig {
+            gravity: [0.0, 0.0, 0.0],
+            ..Default::default()
+        });
         for _ in 0..10 {
             w.sync_step(&scene);
         }
 
-        assert!(*trigger_fired.lock().unwrap(), "trigger event expected for sensor overlap");
+        assert!(
+            *trigger_fired.lock().unwrap(),
+            "trigger event expected for sensor overlap"
+        );
         assert!(
             !*collision_fired.lock().unwrap(),
             "collision event must NOT fire for sensor overlap"
@@ -1548,8 +1684,10 @@ mod tests {
             }
         });
 
-        let mut w =
-            PhysicsWorld::new(PhysicsConfig { gravity: [0.0, 0.0, 0.0], ..Default::default() });
+        let mut w = PhysicsWorld::new(PhysicsConfig {
+            gravity: [0.0, 0.0, 0.0],
+            ..Default::default()
+        });
         w.sync_step(&scene);
         w.set_linear_velocity(a, [10.0, 0.0, 0.0]);
         w.set_linear_velocity(b, [-10.0, 0.0, 0.0]);
@@ -1561,8 +1699,14 @@ mod tests {
             }
         }
 
-        let na = normal_a.lock().unwrap().expect("collision:{a} per-entity event not fired");
-        let nb = normal_b.lock().unwrap().expect("collision:{b} per-entity event not fired");
+        let na = normal_a
+            .lock()
+            .unwrap()
+            .expect("collision:{a} per-entity event not fired");
+        let nb = normal_b
+            .lock()
+            .unwrap()
+            .expect("collision:{b} per-entity event not fired");
 
         // a is on the left: its per-entity normal must point leftward (-X, toward a).
         assert!(
@@ -1588,7 +1732,12 @@ mod tests {
     #[test]
     fn t_phys_26_set_gravity_runtime_change() {
         let scene = Scene::new();
-        let e = spawn(&scene, transform(0.0, 10.0, 0.0), dyn_rb(), box_col([1.0, 1.0, 1.0]));
+        let e = spawn(
+            &scene,
+            transform(0.0, 10.0, 0.0),
+            dyn_rb(),
+            box_col([1.0, 1.0, 1.0]),
+        );
 
         let mut w = world_zero_gravity();
         // 30 frames of zero gravity — body should stay at y=10.
@@ -1596,7 +1745,11 @@ mod tests {
             w.sync_step(&scene);
         }
         let y_before = scene.components.get::<TransformComponent>(e).unwrap().y;
-        assert!((y_before - 10.0).abs() < 0.01, "y={} should be 10.0 with zero gravity", y_before);
+        assert!(
+            (y_before - 10.0).abs() < 0.01,
+            "y={} should be 10.0 with zero gravity",
+            y_before
+        );
 
         // Enable gravity mid-simulation.
         w.set_gravity([0.0, -9.81, 0.0]);
@@ -1654,7 +1807,8 @@ mod tests {
 
         let ta = scene.components.get::<TransformComponent>(a).unwrap();
         let tb = scene.components.get::<TransformComponent>(b).unwrap();
-        let distance = ((ta.x - tb.x).powi(2) + (ta.y - tb.y).powi(2) + (ta.z - tb.z).powi(2)).sqrt();
+        let distance =
+            ((ta.x - tb.x).powi(2) + (ta.y - tb.y).powi(2) + (ta.z - tb.z).powi(2)).sqrt();
         assert!(
             distance > 0.5,
             "bodies should have been pushed apart by overlap resolution, distance={}",
@@ -1769,7 +1923,12 @@ mod tests {
     #[test]
     fn t_phys_31_body_registration_deregistration_cycle() {
         let scene = Scene::new();
-        let e = spawn(&scene, transform(0.0, 0.0, 0.0), dyn_rb(), box_col([1.0, 1.0, 1.0]));
+        let e = spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            dyn_rb(),
+            box_col([1.0, 1.0, 1.0]),
+        );
 
         let mut w = world_zero_gravity();
         w.sync_step(&scene);
@@ -1782,9 +1941,18 @@ mod tests {
         assert_eq!(w.body_count(), 0, "0 bodies after deregistration");
 
         // Spawn a new entity with physics components
-        let e2 = spawn(&scene, transform(5.0, 5.0, 5.0), dyn_rb(), box_col([1.0, 1.0, 1.0]));
+        let e2 = spawn(
+            &scene,
+            transform(5.0, 5.0, 5.0),
+            dyn_rb(),
+            box_col([1.0, 1.0, 1.0]),
+        );
         w.sync_step(&scene);
-        assert_eq!(w.body_count(), 1, "1 body after re-registration of new entity");
+        assert_eq!(
+            w.body_count(),
+            1,
+            "1 body after re-registration of new entity"
+        );
 
         // Verify the new body is tracked
         let pos = w.get_body_position(e2).unwrap();
@@ -1821,21 +1989,9 @@ mod tests {
         assert!(!t.z.is_nan(), "z must not be NaN after recovery");
 
         // Should be reset to last valid position (3, 4, 5)
-        assert!(
-            (t.x - 3.0).abs() < 0.01,
-            "x={} should be reset to 3.0",
-            t.x
-        );
-        assert!(
-            (t.y - 4.0).abs() < 0.01,
-            "y={} should be reset to 4.0",
-            t.y
-        );
-        assert!(
-            (t.z - 5.0).abs() < 0.01,
-            "z={} should be reset to 5.0",
-            t.z
-        );
+        assert!((t.x - 3.0).abs() < 0.01, "x={} should be reset to 3.0", t.x);
+        assert!((t.y - 4.0).abs() < 0.01, "y={} should be reset to 4.0", t.y);
+        assert!((t.z - 5.0).abs() < 0.01, "z={} should be reset to 5.0", t.z);
 
         // Velocity should be zeroed after NaN recovery
         let vel = w.get_linear_velocity(e).unwrap();

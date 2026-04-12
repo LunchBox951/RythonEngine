@@ -17,10 +17,8 @@ pub struct CameraPy {
     pub target_z: f32,
 }
 
-#[pymethods]
-impl CameraPy {
-    #[new]
-    pub fn new() -> Self {
+impl Default for CameraPy {
+    fn default() -> Self {
         // Default position (0, 0, -10) looking at origin (0, 0, 0).
         Self {
             pos_x: 0.0,
@@ -33,6 +31,14 @@ impl CameraPy {
             target_y: 0.0,
             target_z: 0.0,
         }
+    }
+}
+
+#[pymethods]
+impl CameraPy {
+    #[new]
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Set the camera world-space position.

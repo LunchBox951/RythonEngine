@@ -19,11 +19,11 @@ use rython_physics::PhysicsModule;
 use rython_renderer::{Camera, RendererConfig, RendererState};
 use rython_resources::ResourceManager;
 use rython_scripting::{
-    drain_draw_commands, drain_ui_draw_commands, flush_python_bg_completions, flush_python_bg_tasks,
-    flush_python_par_tasks, flush_python_seq_tasks, flush_recurring_callbacks, flush_timers,
-    get_scene_settings, reset_quit_requested, set_active_audio, set_active_input,
-    set_active_physics, set_active_ui, set_elapsed_secs, ScriptingConfig, ScriptingModule,
-    was_quit_requested,
+    drain_draw_commands, drain_ui_draw_commands, flush_python_bg_completions,
+    flush_python_bg_tasks, flush_python_par_tasks, flush_python_seq_tasks,
+    flush_recurring_callbacks, flush_timers, get_scene_settings, reset_quit_requested,
+    set_active_audio, set_active_input, set_active_physics, set_active_ui, set_elapsed_secs,
+    was_quit_requested, ScriptingConfig, ScriptingModule,
 };
 use rython_ui::{Theme, UIManager};
 use rython_window::{KeyCode, MouseButton, RawInputEvent, WindowModule};
@@ -169,16 +169,18 @@ fn winit_key_to_rython(key: &WinitKeyCode) -> Option<KeyCode> {
 
 // ── Engine construction ───────────────────────────────────────────────────────
 
-fn build_engine(
-    engine_config: &EngineConfig,
-    scripting_config: ScriptingConfig,
-) -> (
+type EngineWithShared = (
     Engine,
     Arc<Scene>,
     Arc<parking_lot::Mutex<rython_physics::PhysicsWorld>>,
     Arc<parking_lot::Mutex<UIManager>>,
     Arc<std::sync::Mutex<PlayerController>>,
-) {
+);
+
+fn build_engine(
+    engine_config: &EngineConfig,
+    scripting_config: ScriptingConfig,
+) -> EngineWithShared {
     let scene = Arc::new(Scene::new());
     let physics_world = Arc::new(parking_lot::Mutex::new(
         rython_physics::PhysicsWorld::with_default_config(),
@@ -190,17 +192,46 @@ fn build_engine(
     set_active_ui(Arc::clone(&ui_manager));
 
     // AudioManager — shared with scripting bridge for Python audio API
-    let audio_manager = Arc::new(parking_lot::Mutex::new(AudioManager::new(Default::default())));
+    let audio_manager = Arc::new(parking_lot::Mutex::new(AudioManager::new(
+        Default::default(),
+    )));
     set_active_audio(Arc::clone(&audio_manager));
-    audio_manager.lock().ensure_initialized().expect("failed to init audio");
+    audio_manager
+        .lock()
+        .ensure_initialized()
+        .expect("failed to init audio");
 
     // PlayerController — managed directly in the main loop; register default input map
     let mut pc = PlayerController::new(0);
     let mut default_map = InputMap::new("default");
-    default_map.bind_axis("move_x", AxisBinding::KBAxis { negative: KeyCode::D, positive: KeyCode::A });
-    default_map.bind_axis("move_x", AxisBinding::KBAxis { negative: KeyCode::Right, positive: KeyCode::Left });
-    default_map.bind_axis("move_z", AxisBinding::KBAxis { negative: KeyCode::S, positive: KeyCode::W });
-    default_map.bind_axis("move_z", AxisBinding::KBAxis { negative: KeyCode::Down, positive: KeyCode::Up });
+    default_map.bind_axis(
+        "move_x",
+        AxisBinding::KBAxis {
+            negative: KeyCode::D,
+            positive: KeyCode::A,
+        },
+    );
+    default_map.bind_axis(
+        "move_x",
+        AxisBinding::KBAxis {
+            negative: KeyCode::Right,
+            positive: KeyCode::Left,
+        },
+    );
+    default_map.bind_axis(
+        "move_z",
+        AxisBinding::KBAxis {
+            negative: KeyCode::S,
+            positive: KeyCode::W,
+        },
+    );
+    default_map.bind_axis(
+        "move_z",
+        AxisBinding::KBAxis {
+            negative: KeyCode::Down,
+            positive: KeyCode::Up,
+        },
+    );
     default_map.bind_button("jump", ButtonBinding::Keyboard(KeyCode::Space));
     default_map.bind_button("pause", ButtonBinding::Keyboard(KeyCode::Escape));
     pc.register_map(default_map);
@@ -314,10 +345,18 @@ impl App {
     }
 
     fn tick_and_render(&mut self, event_loop: &ActiveEventLoop) {
-        let Some(renderer) = self.renderer.as_mut() else { return };
-        let Some(surface) = self.surface.as_ref() else { return };
-        let Some(surface_cfg) = self.surface_config.as_ref() else { return };
-        let Some(engine) = self.engine.as_mut() else { return };
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
+        let Some(surface) = self.surface.as_ref() else {
+            return;
+        };
+        let Some(surface_cfg) = self.surface_config.as_ref() else {
+            return;
+        };
+        let Some(engine) = self.engine.as_mut() else {
+            return;
+        };
 
         let width = surface_cfg.width;
         let height = surface_cfg.height;
@@ -437,7 +476,9 @@ impl App {
             }
         };
 
-        let color_view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let color_view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         // MSAA: ensure multisampled texture is ready
         let sample_count = renderer.gpu.sample_count;
@@ -452,15 +493,24 @@ impl App {
         // MSAA-aware clear pass (inline to support resolve target)
         {
             let [r, g, b, a] = renderer.scene_settings.clear_color;
-            let clear_color = wgpu::Color { r: r as f64, g: g as f64, b: b as f64, a: a as f64 };
+            let clear_color = wgpu::Color {
+                r: r as f64,
+                g: g as f64,
+                b: b as f64,
+                a: a as f64,
+            };
             let (att_view, att_resolve): (&wgpu::TextureView, Option<&wgpu::TextureView>) =
                 match (sample_count > 1, renderer.msaa_view()) {
                     (true, Some(mv)) => (mv, Some(&color_view)),
                     _ => (&color_view, None),
                 };
-            let mut enc = renderer.gpu.device.create_command_encoder(
-                &wgpu::CommandEncoderDescriptor { label: Some("clear encoder") },
-            );
+            let mut enc =
+                renderer
+                    .gpu
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("clear encoder"),
+                    });
             {
                 let _pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("clear pass"),
@@ -484,8 +534,32 @@ impl App {
         let mesh_cmds: Vec<rython_renderer::DrawMesh> = ecs_cmds
             .into_iter()
             .filter_map(|cmd| {
-                if let rython_ecs::DrawCommand::DrawMesh { mesh_id, texture_id, normal_map_id, specular_map_id, specular_color, shininess, transform, metallic, roughness, .. } = cmd {
-                    Some(rython_renderer::DrawMesh { mesh_id, texture_id, normal_map_id, specular_map_id, specular_color, shininess, transform, z: 0.0, metallic, roughness, ..Default::default() })
+                if let rython_ecs::DrawCommand::DrawMesh {
+                    mesh_id,
+                    texture_id,
+                    normal_map_id,
+                    specular_map_id,
+                    specular_color,
+                    shininess,
+                    transform,
+                    metallic,
+                    roughness,
+                    ..
+                } = cmd
+                {
+                    Some(rython_renderer::DrawMesh {
+                        mesh_id,
+                        texture_id,
+                        normal_map_id,
+                        specular_map_id,
+                        specular_color,
+                        shininess,
+                        transform,
+                        z: 0.0,
+                        metallic,
+                        roughness,
+                        ..Default::default()
+                    })
                 } else {
                     None
                 }
@@ -495,33 +569,38 @@ impl App {
         if !mesh_cmds.is_empty() {
             renderer.ensure_depth_texture(width, height);
             // Build LightBuffer from scene LightComponents, or fall back to scene_settings.
-            let light_buffer: Option<rython_renderer::LightBuffer> =
-                if collected_lights.is_empty() {
-                    None
-                } else {
-                    let [ar, ag, ab] = renderer.scene_settings.ambient_color;
-                    let ai = renderer.scene_settings.ambient_intensity;
-                    let mut lb = rython_renderer::LightBuffer::empty();
-                    lb.ambient = [ar * ai, ag * ai, ab * ai];
-                    for cl in &collected_lights {
-                        if lb.light_count as usize >= rython_renderer::MAX_LIGHTS {
-                            break;
-                        }
-                        let idx = lb.light_count as usize;
-                        lb.lights[idx] = rython_renderer::GpuLight {
-                            position_or_dir: if cl.kind == 0 {
-                                [cl.direction[0], cl.direction[1], cl.direction[2], 0.0]
-                            } else {
-                                [cl.position[0], cl.position[1], cl.position[2], cl.kind as f32]
-                            },
-                            color_intensity: [cl.color[0], cl.color[1], cl.color[2], cl.intensity],
-                            spot_params: [cl.inner_cos, cl.outer_cos, cl.radius, 1.0],
-                            spot_dir_pad: [cl.direction[0], cl.direction[1], cl.direction[2], 0.0],
-                        };
-                        lb.light_count += 1;
+            let light_buffer: Option<rython_renderer::LightBuffer> = if collected_lights.is_empty()
+            {
+                None
+            } else {
+                let [ar, ag, ab] = renderer.scene_settings.ambient_color;
+                let ai = renderer.scene_settings.ambient_intensity;
+                let mut lb = rython_renderer::LightBuffer::empty();
+                lb.ambient = [ar * ai, ag * ai, ab * ai];
+                for cl in &collected_lights {
+                    if lb.light_count as usize >= rython_renderer::MAX_LIGHTS {
+                        break;
                     }
-                    Some(lb)
-                };
+                    let idx = lb.light_count as usize;
+                    lb.lights[idx] = rython_renderer::GpuLight {
+                        position_or_dir: if cl.kind == 0 {
+                            [cl.direction[0], cl.direction[1], cl.direction[2], 0.0]
+                        } else {
+                            [
+                                cl.position[0],
+                                cl.position[1],
+                                cl.position[2],
+                                cl.kind as f32,
+                            ]
+                        },
+                        color_intensity: [cl.color[0], cl.color[1], cl.color[2], cl.intensity],
+                        spot_params: [cl.inner_cos, cl.outer_cos, cl.radius, 1.0],
+                        spot_dir_pad: [cl.direction[0], cl.direction[1], cl.direction[2], 0.0],
+                    };
+                    lb.light_count += 1;
+                }
+                Some(lb)
+            };
             renderer.render_meshes(&mesh_cmds, &camera, &color_view, light_buffer.as_ref());
         }
 
@@ -533,7 +612,11 @@ impl App {
         let rect_cmds: Vec<rython_renderer::DrawRect> = all_overlay_cmds
             .iter()
             .filter_map(|cmd| {
-                if let rython_renderer::DrawCommand::Rect(r) = cmd { Some(r.clone()) } else { None }
+                if let rython_renderer::DrawCommand::Rect(r) = cmd {
+                    Some(r.clone())
+                } else {
+                    None
+                }
             })
             .collect();
         if !rect_cmds.is_empty() {
@@ -544,7 +627,11 @@ impl App {
         let text_cmds: Vec<rython_renderer::DrawText> = all_overlay_cmds
             .into_iter()
             .filter_map(|cmd| {
-                if let rython_renderer::DrawCommand::Text(t) = cmd { Some(t) } else { None }
+                if let rython_renderer::DrawCommand::Text(t) = cmd {
+                    Some(t)
+                } else {
+                    None
+                }
             })
             .collect();
         if !text_cmds.is_empty() {
@@ -579,8 +666,11 @@ impl ApplicationHandler for App {
                 self.window_config.height,
             ));
 
-        let window =
-            Arc::new(event_loop.create_window(attrs).expect("failed to create window"));
+        let window = Arc::new(
+            event_loop
+                .create_window(attrs)
+                .expect("failed to create window"),
+        );
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
 
@@ -611,11 +701,7 @@ impl ApplicationHandler for App {
 
         // Upload built-in cube mesh
         let cube = rython_resources::generate_cube();
-        renderer.upload_mesh(
-            "cube",
-            bytemuck::cast_slice(&cube.vertices),
-            &cube.indices,
-        );
+        renderer.upload_mesh("cube", bytemuck::cast_slice(&cube.vertices), &cube.indices);
 
         self.surface = Some(surface);
         self.surface_config = Some(surface_cfg);
@@ -642,16 +728,23 @@ impl ApplicationHandler for App {
                 event_loop.exit();
             }
             WindowEvent::Resized(new_size) => {
-                if let (Some(surface), Some(cfg), Some(renderer)) =
-                    (self.surface.as_ref(), self.surface_config.as_mut(), self.renderer.as_ref())
-                {
+                if let (Some(surface), Some(cfg), Some(renderer)) = (
+                    self.surface.as_ref(),
+                    self.surface_config.as_mut(),
+                    self.renderer.as_ref(),
+                ) {
                     cfg.width = new_size.width.max(1);
                     cfg.height = new_size.height.max(1);
                     surface.configure(&renderer.gpu.device, cfg);
                 }
             }
             WindowEvent::KeyboardInput {
-                event: KeyEvent { physical_key: PhysicalKey::Code(winit_key), state, .. },
+                event:
+                    KeyEvent {
+                        physical_key: PhysicalKey::Code(winit_key),
+                        state,
+                        ..
+                    },
                 ..
             } => {
                 if let Some(key) = winit_key_to_rython(&winit_key) {
@@ -724,12 +817,16 @@ fn run_windowed(engine_config: EngineConfig, scripting_config: ScriptingConfig) 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use winit::keyboard::KeyCode as WinitKeyCode;
 
     fn args(v: &[&str]) -> impl Iterator<Item = String> {
-        v.iter().map(|s| s.to_string()).collect::<Vec<_>>().into_iter()
+        v.iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 
     // ── parse_args_from ───────────────────────────────────────────────────────
@@ -770,9 +867,12 @@ mod tests {
     #[test]
     fn parse_multiple_options() {
         let a = parse_args_from(args(&[
-            "--script-dir", "scripts",
-            "--entry-point", "game.main",
-            "--config", "cfg.json",
+            "--script-dir",
+            "scripts",
+            "--entry-point",
+            "game.main",
+            "--config",
+            "cfg.json",
             "--headless",
         ]));
         assert_eq!(a.script_dir, "scripts");
@@ -828,7 +928,11 @@ mod tests {
             (WinitKeyCode::KeyZ, KeyCode::Z),
         ];
         for (winit, expected) in cases {
-            assert_eq!(winit_key_to_rython(&winit), Some(expected), "failed for {winit:?}");
+            assert_eq!(
+                winit_key_to_rython(&winit),
+                Some(expected),
+                "failed for {winit:?}"
+            );
         }
     }
 
@@ -847,7 +951,11 @@ mod tests {
             (WinitKeyCode::Digit9, KeyCode::Key9),
         ];
         for (winit, expected) in cases {
-            assert_eq!(winit_key_to_rython(&winit), Some(expected), "failed for {winit:?}");
+            assert_eq!(
+                winit_key_to_rython(&winit),
+                Some(expected),
+                "failed for {winit:?}"
+            );
         }
     }
 
@@ -861,7 +969,11 @@ mod tests {
             (WinitKeyCode::Backspace, KeyCode::Backspace),
         ];
         for (winit, expected) in cases {
-            assert_eq!(winit_key_to_rython(&winit), Some(expected), "failed for {winit:?}");
+            assert_eq!(
+                winit_key_to_rython(&winit),
+                Some(expected),
+                "failed for {winit:?}"
+            );
         }
     }
 
@@ -876,7 +988,11 @@ mod tests {
             (WinitKeyCode::AltRight, KeyCode::RightAlt),
         ];
         for (winit, expected) in cases {
-            assert_eq!(winit_key_to_rython(&winit), Some(expected), "failed for {winit:?}");
+            assert_eq!(
+                winit_key_to_rython(&winit),
+                Some(expected),
+                "failed for {winit:?}"
+            );
         }
     }
 
@@ -889,7 +1005,11 @@ mod tests {
             (WinitKeyCode::ArrowRight, KeyCode::Right),
         ];
         for (winit, expected) in cases {
-            assert_eq!(winit_key_to_rython(&winit), Some(expected), "failed for {winit:?}");
+            assert_eq!(
+                winit_key_to_rython(&winit),
+                Some(expected),
+                "failed for {winit:?}"
+            );
         }
     }
 
@@ -910,7 +1030,11 @@ mod tests {
             (WinitKeyCode::F12, KeyCode::F12),
         ];
         for (winit, expected) in cases {
-            assert_eq!(winit_key_to_rython(&winit), Some(expected), "failed for {winit:?}");
+            assert_eq!(
+                winit_key_to_rython(&winit),
+                Some(expected),
+                "failed for {winit:?}"
+            );
         }
     }
 
@@ -940,8 +1064,8 @@ fn resolve_mode(args: &CliArgs) -> Result<(ScriptingConfig, EngineConfig), Strin
     let project_dir: Option<std::path::PathBuf> = if let Some(ref p) = args.project_path {
         Some(std::path::PathBuf::from(p))
     } else {
-        let exe = std::env::current_exe()
-            .map_err(|e| format!("could not determine exe path: {e}"))?;
+        let exe =
+            std::env::current_exe().map_err(|e| format!("could not determine exe path: {e}"))?;
         let exe_dir = exe
             .parent()
             .ok_or_else(|| "exe has no parent directory".to_string())?;

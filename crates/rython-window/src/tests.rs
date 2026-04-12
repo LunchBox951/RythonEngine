@@ -50,7 +50,10 @@ fn t_win_03_push_drain_events() {
     let events = wm.drain_events();
     assert_eq!(events.len(), 3);
 
-    assert!(matches!(events[0], RawInputEvent::KeyPressed(KeyCode::Space)));
+    assert!(matches!(
+        events[0],
+        RawInputEvent::KeyPressed(KeyCode::Space)
+    ));
     assert!(matches!(events[1], RawInputEvent::KeyReleased(KeyCode::W)));
     assert!(matches!(events[2], RawInputEvent::MouseMoved { dx, dy } if dx == 1.5 && dy == -2.0));
 }
@@ -222,7 +225,11 @@ fn t_win_13_drain_during_push() {
     // Second batch — only new events
     wm.push_event(RawInputEvent::KeyPressed(KeyCode::C));
     let second = wm.drain_events();
-    assert_eq!(second.len(), 1, "second drain must return only events since last drain");
+    assert_eq!(
+        second.len(),
+        1,
+        "second drain must return only events since last drain"
+    );
     assert!(matches!(second[0], RawInputEvent::KeyPressed(KeyCode::C)));
 
     // Third drain — empty
@@ -255,13 +262,31 @@ fn t_win_14_all_event_variant_push_drain() {
     let events = wm.drain_events();
     assert_eq!(events.len(), 10, "must recover all 10 event variants");
 
-    assert!(matches!(events[0], RawInputEvent::KeyPressed(KeyCode::Space)));
-    assert!(matches!(events[1], RawInputEvent::KeyReleased(KeyCode::Enter)));
+    assert!(matches!(
+        events[0],
+        RawInputEvent::KeyPressed(KeyCode::Space)
+    ));
+    assert!(matches!(
+        events[1],
+        RawInputEvent::KeyReleased(KeyCode::Enter)
+    ));
     assert!(matches!(events[2], RawInputEvent::MouseMoved { dx, dy } if dx == 1.0 && dy == -1.0));
-    assert!(matches!(events[3], RawInputEvent::MouseButtonPressed(MouseButton::Left)));
-    assert!(matches!(events[4], RawInputEvent::MouseButtonReleased(MouseButton::Right)));
-    assert!(matches!(events[5], RawInputEvent::GamepadButtonPressed(GamepadButton::South)));
-    assert!(matches!(events[6], RawInputEvent::GamepadButtonReleased(GamepadButton::North)));
+    assert!(matches!(
+        events[3],
+        RawInputEvent::MouseButtonPressed(MouseButton::Left)
+    ));
+    assert!(matches!(
+        events[4],
+        RawInputEvent::MouseButtonReleased(MouseButton::Right)
+    ));
+    assert!(matches!(
+        events[5],
+        RawInputEvent::GamepadButtonPressed(GamepadButton::South)
+    ));
+    assert!(matches!(
+        events[6],
+        RawInputEvent::GamepadButtonReleased(GamepadButton::North)
+    ));
     assert!(matches!(
         events[7],
         RawInputEvent::GamepadAxisChanged { axis: GamepadAxisType::RightStickY, value }

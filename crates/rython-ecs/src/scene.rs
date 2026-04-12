@@ -1,7 +1,7 @@
-use std::any::TypeId;
-use std::collections::HashSet;
 use parking_lot::RwLock;
 use serde_json::{json, Value};
+use std::any::TypeId;
+use std::collections::HashSet;
 
 use crate::command::{Command, CommandQueue};
 use crate::component::{
@@ -34,7 +34,9 @@ impl Default for Scene {
 }
 
 impl Scene {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     // ── Entity queries ───────────────────────────────────────────────────────
 
@@ -65,7 +67,10 @@ impl Scene {
 
     /// Queue a spawn without caring about the result ID.
     pub fn queue_spawn_anon(&self, components: Vec<(TypeId, Box<dyn Component>)>) {
-        self.commands.push(Command::SpawnEntity { components, result_tx: None });
+        self.commands.push(Command::SpawnEntity {
+            components,
+            result_tx: None,
+        });
     }
 
     pub fn queue_despawn(&self, entity: EntityId) {
@@ -132,7 +137,10 @@ impl Scene {
         let commands = self.commands.drain();
         for cmd in commands {
             match cmd {
-                Command::SpawnEntity { components, result_tx } => {
+                Command::SpawnEntity {
+                    components,
+                    result_tx,
+                } => {
                     let id = self.spawn_immediate(components);
                     if let Some(slot) = result_tx {
                         *slot.lock() = Some(id);
@@ -141,7 +149,11 @@ impl Scene {
                 Command::DespawnEntity { entity } => {
                     self.despawn_immediate(entity);
                 }
-                Command::AttachComponent { entity, type_id, component } => {
+                Command::AttachComponent {
+                    entity,
+                    type_id,
+                    component,
+                } => {
                     if self.entity_exists(entity) {
                         self.components.insert_boxed(entity, type_id, component);
                     }
@@ -161,7 +173,11 @@ impl Scene {
 
     // ── Event bus convenience wrappers ───────────────────────────────────────
 
-    pub fn subscribe(&self, event_name: &str, handler: impl Fn(&str, &Value) + Send + Sync + 'static) -> HandlerId {
+    pub fn subscribe(
+        &self,
+        event_name: &str,
+        handler: impl Fn(&str, &Value) + Send + Sync + 'static,
+    ) -> HandlerId {
         self.events.subscribe(event_name, handler)
     }
 
@@ -201,7 +217,9 @@ impl Scene {
         self.hierarchy.clear();
         self.entities.write().clear();
 
-        let Some(entities) = data["entities"].as_array() else { return };
+        let Some(entities) = data["entities"].as_array() else {
+            return;
+        };
 
         // First pass: spawn all entities with components
         {

@@ -7,8 +7,20 @@ fn make_gameplay_controller() -> PlayerController {
     let owner: OwnerId = 1;
     let mut ctrl = PlayerController::new(owner);
     let mut map = InputMap::new("gameplay");
-    map.bind_axis("move_x", AxisBinding::KBAxis { negative: KeyCode::A, positive: KeyCode::D });
-    map.bind_axis("move_y", AxisBinding::KBAxis { negative: KeyCode::S, positive: KeyCode::W });
+    map.bind_axis(
+        "move_x",
+        AxisBinding::KBAxis {
+            negative: KeyCode::A,
+            positive: KeyCode::D,
+        },
+    );
+    map.bind_axis(
+        "move_y",
+        AxisBinding::KBAxis {
+            negative: KeyCode::S,
+            positive: KeyCode::W,
+        },
+    );
     map.bind_button("jump", ButtonBinding::Keyboard(KeyCode::Space));
     map.bind_button("attack", ButtonBinding::Keyboard(KeyCode::Enter));
     map.bind_button("sprint", ButtonBinding::Keyboard(KeyCode::LeftShift));
@@ -43,7 +55,10 @@ fn t_inp_02_keyboard_axis_negative_key() {
 #[test]
 fn t_inp_03_keyboard_axis_both_keys_cancel() {
     let mut ctrl = make_gameplay_controller();
-    ctrl.tick(&[RawInputEvent::KeyPressed(KeyCode::A), RawInputEvent::KeyPressed(KeyCode::D)]);
+    ctrl.tick(&[
+        RawInputEvent::KeyPressed(KeyCode::A),
+        RawInputEvent::KeyPressed(KeyCode::D),
+    ]);
     let snap = ctrl.get_snapshot(1).unwrap();
     assert_eq!(snap.axis("move_x"), 0.0);
 }
@@ -112,7 +127,10 @@ fn t_inp_06_input_map_switching() {
     ctrl.tick(&[RawInputEvent::KeyPressed(KeyCode::Space)]);
     let s = ctrl.get_snapshot(owner).unwrap();
     assert!(s.pressed("jump"), "gameplay: jump pressed with Space");
-    assert!(!s.pressed("confirm"), "gameplay: confirm not in map → false");
+    assert!(
+        !s.pressed("confirm"),
+        "gameplay: confirm not in map → false"
+    );
 
     // Switch to menu
     ctrl.set_active_map("menu", owner).unwrap();
@@ -147,7 +165,10 @@ fn t_inp_08_input_locking_events_suppressed() {
     ctrl.tick(&[RawInputEvent::KeyPressed(KeyCode::Space)]);
     let s = ctrl.get_snapshot(1).unwrap();
     assert!(!s.pressed("jump"), "locked: pressed should be false");
-    assert!(ctrl.pending_events().lock().unwrap().is_empty(), "locked: no events emitted");
+    assert!(
+        ctrl.pending_events().lock().unwrap().is_empty(),
+        "locked: no events emitted"
+    );
 }
 
 // ─── T-INP-09: Input Locking — Unlock Restores ───────────────────────────────
@@ -160,7 +181,10 @@ fn t_inp_09_input_locking_unlock_restores() {
     ctrl.tick(&[RawInputEvent::KeyPressed(KeyCode::Space)]);
     let s = ctrl.get_snapshot(1).unwrap();
     assert!(s.pressed("jump"), "unlocked: pressed should be true");
-    assert!(!ctrl.pending_events().lock().unwrap().is_empty(), "unlocked: event emitted");
+    assert!(
+        !ctrl.pending_events().lock().unwrap().is_empty(),
+        "unlocked: event emitted"
+    );
 }
 
 // ─── T-INP-10: Event-Driven Input Fires Events ───────────────────────────────
@@ -198,8 +222,14 @@ fn t_inp_12_ownership_transfer_succeeds() {
 
     assert!(ctrl.get_snapshot(2).is_ok(), "new owner succeeds");
     assert!(ctrl.get_snapshot(1).is_err(), "old owner rejected");
-    assert!(ctrl.set_active_map("gameplay", 2).is_ok(), "new owner can switch map");
-    assert!(ctrl.set_active_map("gameplay", 1).is_err(), "old owner cannot switch map");
+    assert!(
+        ctrl.set_active_map("gameplay", 2).is_ok(),
+        "new owner can switch map"
+    );
+    assert!(
+        ctrl.set_active_map("gameplay", 1).is_err(),
+        "old owner cannot switch map"
+    );
 }
 
 // ─── T-INP-13: Gamepad Axis Range ────────────────────────────────────────────
@@ -211,14 +241,21 @@ fn t_inp_13_gamepad_axis_range() {
     let mut map = InputMap::new("gameplay");
     map.bind_axis(
         "move_x",
-        AxisBinding::GamepadAxis { axis: GamepadAxisType::LeftStickX },
+        AxisBinding::GamepadAxis {
+            axis: GamepadAxisType::LeftStickX,
+        },
     );
     ctrl.register_map(map);
 
     // Full positive deflection
     ctrl.tick(&[
-        RawInputEvent::GamepadConnected { name: "TestPad".into() },
-        RawInputEvent::GamepadAxisChanged { axis: GamepadAxisType::LeftStickX, value: 1.0 },
+        RawInputEvent::GamepadConnected {
+            name: "TestPad".into(),
+        },
+        RawInputEvent::GamepadAxisChanged {
+            axis: GamepadAxisType::LeftStickX,
+            value: 1.0,
+        },
     ]);
     assert_eq!(ctrl.get_snapshot(owner).unwrap().axis("move_x"), 1.0);
 
@@ -244,10 +281,18 @@ fn t_inp_14_multiple_bindings_same_action() {
     let owner: OwnerId = 1;
     let mut ctrl = PlayerController::new(owner);
     let mut map = InputMap::new("gameplay");
-    map.bind_axis("move_x", AxisBinding::KBAxis { negative: KeyCode::A, positive: KeyCode::D });
     map.bind_axis(
         "move_x",
-        AxisBinding::GamepadAxis { axis: GamepadAxisType::LeftStickX },
+        AxisBinding::KBAxis {
+            negative: KeyCode::A,
+            positive: KeyCode::D,
+        },
+    );
+    map.bind_axis(
+        "move_x",
+        AxisBinding::GamepadAxis {
+            axis: GamepadAxisType::LeftStickX,
+        },
     );
     ctrl.register_map(map);
 
@@ -258,7 +303,10 @@ fn t_inp_14_multiple_bindings_same_action() {
     // Gamepad higher absolute value wins over keyboard (keyboard released, gamepad at -0.75)
     ctrl.tick(&[
         RawInputEvent::KeyReleased(KeyCode::D),
-        RawInputEvent::GamepadAxisChanged { axis: GamepadAxisType::LeftStickX, value: -0.75 },
+        RawInputEvent::GamepadAxisChanged {
+            axis: GamepadAxisType::LeftStickX,
+            value: -0.75,
+        },
     ]);
     assert_eq!(ctrl.get_snapshot(owner).unwrap().axis("move_x"), -0.75);
 }
@@ -270,7 +318,12 @@ fn t_inp_15_mouse_axis_x_binding() {
     let owner: OwnerId = 1;
     let mut ctrl = PlayerController::new(owner);
     let mut map = InputMap::new("gameplay");
-    map.bind_axis("look_x", AxisBinding::MouseAxis { axis: MouseAxisType::X });
+    map.bind_axis(
+        "look_x",
+        AxisBinding::MouseAxis {
+            axis: MouseAxisType::X,
+        },
+    );
     ctrl.register_map(map);
 
     ctrl.tick(&[RawInputEvent::MouseMoved { dx: 5.0, dy: 0.0 }]);
@@ -284,7 +337,12 @@ fn t_inp_16_mouse_axis_y_binding() {
     let owner: OwnerId = 1;
     let mut ctrl = PlayerController::new(owner);
     let mut map = InputMap::new("gameplay");
-    map.bind_axis("look_y", AxisBinding::MouseAxis { axis: MouseAxisType::Y });
+    map.bind_axis(
+        "look_y",
+        AxisBinding::MouseAxis {
+            axis: MouseAxisType::Y,
+        },
+    );
     ctrl.register_map(map);
 
     ctrl.tick(&[RawInputEvent::MouseMoved { dx: 0.0, dy: -3.0 }]);
@@ -298,7 +356,12 @@ fn t_inp_17_mouse_delta_accumulates_within_tick() {
     let owner: OwnerId = 1;
     let mut ctrl = PlayerController::new(owner);
     let mut map = InputMap::new("gameplay");
-    map.bind_axis("look_x", AxisBinding::MouseAxis { axis: MouseAxisType::X });
+    map.bind_axis(
+        "look_x",
+        AxisBinding::MouseAxis {
+            axis: MouseAxisType::X,
+        },
+    );
     ctrl.register_map(map);
 
     // Two mouse-moved events in the same tick — deltas must be summed.
@@ -316,16 +379,29 @@ fn t_inp_18_mouse_delta_resets_each_tick() {
     let owner: OwnerId = 1;
     let mut ctrl = PlayerController::new(owner);
     let mut map = InputMap::new("gameplay");
-    map.bind_axis("look_x", AxisBinding::MouseAxis { axis: MouseAxisType::X });
+    map.bind_axis(
+        "look_x",
+        AxisBinding::MouseAxis {
+            axis: MouseAxisType::X,
+        },
+    );
     ctrl.register_map(map);
 
     // Tick 1: mouse moves.
     ctrl.tick(&[RawInputEvent::MouseMoved { dx: 5.0, dy: 0.0 }]);
-    assert_eq!(ctrl.get_snapshot(owner).unwrap().axis("look_x"), 5.0, "tick 1: delta present");
+    assert_eq!(
+        ctrl.get_snapshot(owner).unwrap().axis("look_x"),
+        5.0,
+        "tick 1: delta present"
+    );
 
     // Tick 2: no events — delta must be 0, not carried over.
     ctrl.tick(&[]);
-    assert_eq!(ctrl.get_snapshot(owner).unwrap().axis("look_x"), 0.0, "tick 2: delta cleared");
+    assert_eq!(
+        ctrl.get_snapshot(owner).unwrap().axis("look_x"),
+        0.0,
+        "tick 2: delta cleared"
+    );
 }
 
 // ─── T-INP-19: Mouse Button Binding — Press / Hold / Release ─────────────────
@@ -371,7 +447,9 @@ fn t_inp_20_gamepad_button_binding_lifecycle() {
 
     // Frame 1: press
     ctrl.tick(&[
-        RawInputEvent::GamepadConnected { name: "TestPad".into() },
+        RawInputEvent::GamepadConnected {
+            name: "TestPad".into(),
+        },
         RawInputEvent::GamepadButtonPressed(GamepadButton::South),
     ]);
     let s = ctrl.get_snapshot(owner).unwrap();
@@ -399,14 +477,24 @@ fn t_inp_21_gamepad_disconnected_clears_state() {
     let owner: OwnerId = 1;
     let mut ctrl = PlayerController::new(owner);
     let mut map = InputMap::new("gameplay");
-    map.bind_axis("move_x", AxisBinding::GamepadAxis { axis: GamepadAxisType::LeftStickX });
+    map.bind_axis(
+        "move_x",
+        AxisBinding::GamepadAxis {
+            axis: GamepadAxisType::LeftStickX,
+        },
+    );
     map.bind_button("jump", ButtonBinding::Gamepad(GamepadButton::South));
     ctrl.register_map(map);
 
     // Connect and push a value.
     ctrl.tick(&[
-        RawInputEvent::GamepadConnected { name: "TestPad".into() },
-        RawInputEvent::GamepadAxisChanged { axis: GamepadAxisType::LeftStickX, value: 0.8 },
+        RawInputEvent::GamepadConnected {
+            name: "TestPad".into(),
+        },
+        RawInputEvent::GamepadAxisChanged {
+            axis: GamepadAxisType::LeftStickX,
+            value: 0.8,
+        },
         RawInputEvent::GamepadButtonPressed(GamepadButton::South),
     ]);
     assert_eq!(ctrl.get_snapshot(owner).unwrap().axis("move_x"), 0.8);
@@ -434,7 +522,9 @@ fn t_inp_22_gamepad_info_tracks_connect_disconnect() {
     assert_eq!(ctrl.active_backend(), "keyboard_mouse");
     assert!(ctrl.gamepad_info().is_none());
 
-    ctrl.tick(&[RawInputEvent::GamepadConnected { name: "Xbox Controller".into() }]);
+    ctrl.tick(&[RawInputEvent::GamepadConnected {
+        name: "Xbox Controller".into(),
+    }]);
     assert_eq!(ctrl.active_backend(), "gamepad");
     assert_eq!(ctrl.gamepad_info(), Some("Xbox Controller"));
 
@@ -450,12 +540,22 @@ fn t_inp_23_axis_below_deadzone_emits_no_event() {
     let owner: OwnerId = 1;
     let mut ctrl = PlayerController::new(owner);
     let mut map = InputMap::new("gameplay");
-    map.bind_axis("move_x", AxisBinding::GamepadAxis { axis: GamepadAxisType::LeftStickX });
+    map.bind_axis(
+        "move_x",
+        AxisBinding::GamepadAxis {
+            axis: GamepadAxisType::LeftStickX,
+        },
+    );
     ctrl.register_map(map);
 
     ctrl.tick(&[
-        RawInputEvent::GamepadConnected { name: "TestPad".into() },
-        RawInputEvent::GamepadAxisChanged { axis: GamepadAxisType::LeftStickX, value: 0.05 },
+        RawInputEvent::GamepadConnected {
+            name: "TestPad".into(),
+        },
+        RawInputEvent::GamepadAxisChanged {
+            axis: GamepadAxisType::LeftStickX,
+            value: 0.05,
+        },
     ]);
     // Snapshot value reflects raw input.
     assert_eq!(ctrl.get_snapshot(owner).unwrap().axis("move_x"), 0.05);
@@ -464,7 +564,8 @@ fn t_inp_23_axis_below_deadzone_emits_no_event() {
     let evts = evts.lock().unwrap();
     assert!(
         evts.iter().all(|e| !e.action.starts_with("axis:")),
-        "no axis event below deadzone; got: {:?}", *evts
+        "no axis event below deadzone; got: {:?}",
+        *evts
     );
 }
 
@@ -475,11 +576,18 @@ fn t_inp_24_axis_crossing_deadzone_emits_event() {
     let owner: OwnerId = 1;
     let mut ctrl = PlayerController::new(owner);
     let mut map = InputMap::new("gameplay");
-    map.bind_axis("move_x", AxisBinding::GamepadAxis { axis: GamepadAxisType::LeftStickX });
+    map.bind_axis(
+        "move_x",
+        AxisBinding::GamepadAxis {
+            axis: GamepadAxisType::LeftStickX,
+        },
+    );
     ctrl.register_map(map);
 
     // Start at rest (no event).
-    ctrl.tick(&[RawInputEvent::GamepadConnected { name: "TestPad".into() }]);
+    ctrl.tick(&[RawInputEvent::GamepadConnected {
+        name: "TestPad".into(),
+    }]);
 
     // Cross the deadzone threshold (0.1) — an axis event must fire.
     ctrl.tick(&[RawInputEvent::GamepadAxisChanged {
@@ -519,8 +627,8 @@ fn t_inp_25_button_release_emits_event_value_zero() {
 fn t_inp_26_pending_events_accumulate_across_ticks() {
     let mut ctrl = make_gameplay_controller();
 
-    ctrl.tick(&[RawInputEvent::KeyPressed(KeyCode::Space)]);   // jump press
-    ctrl.tick(&[RawInputEvent::KeyPressed(KeyCode::Enter)]);   // attack press (jump still held)
+    ctrl.tick(&[RawInputEvent::KeyPressed(KeyCode::Space)]); // jump press
+    ctrl.tick(&[RawInputEvent::KeyPressed(KeyCode::Enter)]); // attack press (jump still held)
     ctrl.tick(&[RawInputEvent::KeyReleased(KeyCode::Space)]); // jump release
 
     let evts = ctrl.pending_events();
@@ -572,8 +680,14 @@ fn t_inp_29_key_pressed_while_locked_appears_as_held_after_unlock() {
     ctrl.unlock();
     ctrl.tick(&[]);
     let s = ctrl.get_snapshot(1).unwrap();
-    assert!(!s.pressed("jump"), "after unlock: not pressed (was already down)");
-    assert!(s.held("jump"), "after unlock: held because key is still physically down");
+    assert!(
+        !s.pressed("jump"),
+        "after unlock: not pressed (was already down)"
+    );
+    assert!(
+        s.held("jump"),
+        "after unlock: held because key is still physically down"
+    );
 }
 
 // ─── T-INP-30: Simultaneous Conflicting KB + Gamepad ─────────────────────────
@@ -583,18 +697,31 @@ fn t_inp_30_simultaneous_conflicting_kb_gamepad() {
     let owner: OwnerId = 1;
     let mut ctrl = PlayerController::new(owner);
     let mut map = InputMap::new("gameplay");
-    map.bind_axis("move_x", AxisBinding::KBAxis { negative: KeyCode::A, positive: KeyCode::D });
     map.bind_axis(
         "move_x",
-        AxisBinding::GamepadAxis { axis: GamepadAxisType::LeftStickX },
+        AxisBinding::KBAxis {
+            negative: KeyCode::A,
+            positive: KeyCode::D,
+        },
+    );
+    map.bind_axis(
+        "move_x",
+        AxisBinding::GamepadAxis {
+            axis: GamepadAxisType::LeftStickX,
+        },
     );
     ctrl.register_map(map);
 
     // Press A (keyboard negative = -1.0) AND send gamepad positive (+1.0) in the same tick.
     ctrl.tick(&[
-        RawInputEvent::GamepadConnected { name: "TestPad".into() },
+        RawInputEvent::GamepadConnected {
+            name: "TestPad".into(),
+        },
         RawInputEvent::KeyPressed(KeyCode::A),
-        RawInputEvent::GamepadAxisChanged { axis: GamepadAxisType::LeftStickX, value: 1.0 },
+        RawInputEvent::GamepadAxisChanged {
+            axis: GamepadAxisType::LeftStickX,
+            value: 1.0,
+        },
     ]);
     let val = ctrl.get_snapshot(owner).unwrap().axis("move_x");
 
@@ -620,7 +747,12 @@ fn t_inp_31_dead_zone_gamepad_axis() {
     let owner: OwnerId = 1;
     let mut ctrl = PlayerController::new(owner);
     let mut map = InputMap::new("gameplay");
-    map.bind_axis("move_x", AxisBinding::GamepadAxis { axis: GamepadAxisType::LeftStickX });
+    map.bind_axis(
+        "move_x",
+        AxisBinding::GamepadAxis {
+            axis: GamepadAxisType::LeftStickX,
+        },
+    );
     ctrl.register_map(map);
 
     // No configurable dead zone API exists; the hardcoded AXIS_DEADZONE (0.1) only
@@ -628,11 +760,17 @@ fn t_inp_31_dead_zone_gamepad_axis() {
 
     // Value below dead zone (0.05 < 0.1): snapshot still reflects raw value
     ctrl.tick(&[
-        RawInputEvent::GamepadConnected { name: "TestPad".into() },
-        RawInputEvent::GamepadAxisChanged { axis: GamepadAxisType::LeftStickX, value: 0.05 },
+        RawInputEvent::GamepadConnected {
+            name: "TestPad".into(),
+        },
+        RawInputEvent::GamepadAxisChanged {
+            axis: GamepadAxisType::LeftStickX,
+            value: 0.05,
+        },
     ]);
     assert_eq!(
-        ctrl.get_snapshot(owner).unwrap().axis("move_x"), 0.05,
+        ctrl.get_snapshot(owner).unwrap().axis("move_x"),
+        0.05,
         "below dead zone: raw value passes through to snapshot"
     );
 
@@ -642,7 +780,8 @@ fn t_inp_31_dead_zone_gamepad_axis() {
         value: 0.2,
     }]);
     assert_eq!(
-        ctrl.get_snapshot(owner).unwrap().axis("move_x"), 0.2,
+        ctrl.get_snapshot(owner).unwrap().axis("move_x"),
+        0.2,
         "above dead zone: raw value passes through to snapshot"
     );
 }
@@ -668,13 +807,19 @@ fn t_inp_32_input_map_switch_mid_frame() {
     // Tick with Space (bound only in "gameplay") — should NOT be active
     ctrl.tick(&[RawInputEvent::KeyPressed(KeyCode::Space)]);
     let s = ctrl.get_snapshot(owner).unwrap();
-    assert!(!s.pressed("jump"), "menu map active: jump must not be pressed");
+    assert!(
+        !s.pressed("jump"),
+        "menu map active: jump must not be pressed"
+    );
     assert!(!s.held("jump"), "menu map active: jump must not be held");
 
     // Enter (bound in "menu") should work
     ctrl.tick(&[RawInputEvent::KeyPressed(KeyCode::Enter)]);
     let s = ctrl.get_snapshot(owner).unwrap();
-    assert!(s.pressed("confirm"), "menu map active: confirm must be pressed");
+    assert!(
+        s.pressed("confirm"),
+        "menu map active: confirm must be pressed"
+    );
 }
 
 // ─── T-INP-33: Unbound Axis Returns Zero ─────────────────────────────────────
@@ -686,7 +831,11 @@ fn t_inp_33_unbound_axis_returns_zero() {
     let s = ctrl.get_snapshot(1).unwrap();
 
     // "nonexistent_axis" is not bound in any map
-    assert_eq!(s.axis("nonexistent_axis"), 0.0, "unbound axis must return 0.0");
+    assert_eq!(
+        s.axis("nonexistent_axis"),
+        0.0,
+        "unbound axis must return 0.0"
+    );
 }
 
 // ─── T-INP-34: Unbound Button Returns False ──────────────────────────────────
@@ -698,9 +847,18 @@ fn t_inp_34_unbound_button_returns_false() {
     let s = ctrl.get_snapshot(1).unwrap();
 
     // "nonexistent_button" is not bound in any map
-    assert!(!s.pressed("nonexistent_button"), "unbound button: pressed must be false");
-    assert!(!s.held("nonexistent_button"), "unbound button: held must be false");
-    assert!(!s.released("nonexistent_button"), "unbound button: released must be false");
+    assert!(
+        !s.pressed("nonexistent_button"),
+        "unbound button: pressed must be false"
+    );
+    assert!(
+        !s.held("nonexistent_button"),
+        "unbound button: held must be false"
+    );
+    assert!(
+        !s.released("nonexistent_button"),
+        "unbound button: released must be false"
+    );
 }
 
 // ─── T-INP-35: Multiple Bindings Same Action — KB + Gamepad ──────────────────
@@ -716,7 +874,9 @@ fn t_inp_35_multiple_bindings_same_action() {
 
     // Frame 1: Press Space → jump pressed via keyboard
     ctrl.tick(&[
-        RawInputEvent::GamepadConnected { name: "TestPad".into() },
+        RawInputEvent::GamepadConnected {
+            name: "TestPad".into(),
+        },
         RawInputEvent::KeyPressed(KeyCode::Space),
     ]);
     let s = ctrl.get_snapshot(owner).unwrap();
@@ -726,12 +886,21 @@ fn t_inp_35_multiple_bindings_same_action() {
     // Frame 2: Release Space
     ctrl.tick(&[RawInputEvent::KeyReleased(KeyCode::Space)]);
     let s = ctrl.get_snapshot(owner).unwrap();
-    assert!(!s.held("jump"), "frame 2: jump not held after Space release");
+    assert!(
+        !s.held("jump"),
+        "frame 2: jump not held after Space release"
+    );
     assert!(s.released("jump"), "frame 2: jump released");
 
     // Frame 3: Press GamepadButton::South → jump pressed via gamepad
     ctrl.tick(&[RawInputEvent::GamepadButtonPressed(GamepadButton::South)]);
     let s = ctrl.get_snapshot(owner).unwrap();
-    assert!(s.pressed("jump"), "frame 3: jump pressed via GamepadButton::South");
-    assert!(s.held("jump"), "frame 3: jump held via GamepadButton::South");
+    assert!(
+        s.pressed("jump"),
+        "frame 3: jump pressed via GamepadButton::South"
+    );
+    assert!(
+        s.held("jump"),
+        "frame 3: jump held via GamepadButton::South"
+    );
 }

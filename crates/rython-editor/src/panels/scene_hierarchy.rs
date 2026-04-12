@@ -12,6 +12,7 @@ struct PendingReparent {
     new_parent: Option<EntityId>,
 }
 
+#[derive(Default)]
 pub struct SceneHierarchyPanel {
     drag_source: Option<EntityId>,
 }
@@ -41,12 +42,18 @@ impl SceneHierarchyPanel {
         if area_resp.secondary_clicked() {
             ui.memory_mut(|m| m.open_popup(ui.id().with("hier_ctx_empty")));
         }
-        egui::popup::popup_below_widget(ui, ui.id().with("hier_ctx_empty"), &area_resp, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-            if ui.button("Add Entity").clicked() {
-                spawn_new_entity(scene, selection, undo);
-                *project_dirty = true;
-            }
-        });
+        egui::popup::popup_below_widget(
+            ui,
+            ui.id().with("hier_ctx_empty"),
+            &area_resp,
+            egui::PopupCloseBehavior::CloseOnClick,
+            |ui| {
+                if ui.button("Add Entity").clicked() {
+                    spawn_new_entity(scene, selection, undo);
+                    *project_dirty = true;
+                }
+            },
+        );
 
         // Collect root entities (no parent)
         let mut roots: Vec<EntityId> = scene
@@ -87,6 +94,7 @@ impl SceneHierarchyPanel {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn show_entity_node(
         &mut self,
         ui: &mut egui::Ui,
@@ -166,7 +174,10 @@ impl SceneHierarchyPanel {
         if header_response.inner.hovered() && ui.input(|i| i.pointer.any_released()) {
             if let Some(src) = self.drag_source.take() {
                 if src != entity {
-                    *pending = Some(PendingReparent { child: src, new_parent: Some(entity) });
+                    *pending = Some(PendingReparent {
+                        child: src,
+                        new_parent: Some(entity),
+                    });
                 }
             }
         }
@@ -229,10 +240,7 @@ fn duplicate_entity(
     let parent = scene.hierarchy.get_parent(entity);
     let cmd = SpawnEntity::new(
         new_id,
-        comps
-            .into_iter()
-            .map(|(n, v)| (n.to_string(), v))
-            .collect(),
+        comps.into_iter().map(|(n, v)| (n.to_string(), v)).collect(),
         parent,
     );
     undo.push(Box::new(cmd), scene);

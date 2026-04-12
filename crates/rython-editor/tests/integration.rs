@@ -1,15 +1,11 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use rython_ecs::component::{
-    ColliderComponent, MeshComponent, TagComponent, TransformComponent,
-};
+use rython_ecs::component::{ColliderComponent, MeshComponent, TagComponent, TransformComponent};
 use rython_ecs::Scene;
 
-use rython_editor::state::undo::{
-    DespawnEntity, ModifyComponent, SpawnEntity, UndoStack,
-};
+use rython_editor::project::io::{load_scene, save_scene};
 use rython_editor::state::selection::SelectionState;
-use rython_editor::project::io::{save_scene, load_scene};
+use rython_editor::state::undo::{DespawnEntity, ModifyComponent, SpawnEntity, UndoStack};
 
 // ── Temp-dir helper ──────────────────────────────────────────────────────────
 
@@ -120,18 +116,27 @@ fn t_editor_int_01_undo_redo_mixed_operations() {
     // Step 4: Delete entity A.
     let despawn_a = DespawnEntity::capture(id_a, &scene);
     undo.push(Box::new(despawn_a), &scene);
-    assert!(!scene.entity_exists(id_a), "entity A must be gone after despawn");
+    assert!(
+        !scene.entity_exists(id_a),
+        "entity A must be gone after despawn"
+    );
     assert!(scene.entity_exists(id_b), "entity B must still exist");
 
     // -- Undo step 4: entity A reappears with modified transform (10,20,30).
     undo.undo(&scene);
-    assert!(scene.entity_exists(id_a), "entity A must be restored after undo despawn");
+    assert!(
+        scene.entity_exists(id_a),
+        "entity A must be restored after undo despawn"
+    );
     let ta: TransformComponent = scene.components.get(id_a).unwrap();
     assert_eq!(ta.x, 10.0, "restored entity A must have modified transform");
 
     // -- Undo step 3: entity B disappears.
     undo.undo(&scene);
-    assert!(!scene.entity_exists(id_b), "entity B must be gone after undo spawn");
+    assert!(
+        !scene.entity_exists(id_b),
+        "entity B must be gone after undo spawn"
+    );
 
     // -- Undo step 2: entity A reverts to original transform.
     undo.undo(&scene);
@@ -140,7 +145,10 @@ fn t_editor_int_01_undo_redo_mixed_operations() {
 
     // -- Undo step 1: entity A disappears.
     undo.undo(&scene);
-    assert!(!scene.entity_exists(id_a), "entity A must be gone after undo spawn");
+    assert!(
+        !scene.entity_exists(id_a),
+        "entity A must be gone after undo spawn"
+    );
     assert!(!undo.can_undo(), "undo stack must be exhausted");
 
     // -- Redo all 4 steps.
@@ -187,7 +195,10 @@ fn t_editor_int_02_undo_redo_limit() {
 
     // All 250 entities must exist in the scene (commands are executed immediately).
     for id in &ids {
-        assert!(scene.entity_exists(*id), "entity {id:?} must exist after spawn");
+        assert!(
+            scene.entity_exists(*id),
+            "entity {id:?} must exist after spawn"
+        );
     }
 
     // Count how many times we can undo — should be exactly 200.
@@ -259,7 +270,11 @@ fn t_editor_int_03_project_save_load_roundtrip() {
     load_scene(&tmp.0, "test_level", &scene2).unwrap();
 
     // Verify entity count.
-    assert_eq!(scene2.entity_count(), 4, "loaded scene must have 4 entities");
+    assert_eq!(
+        scene2.entity_count(),
+        4,
+        "loaded scene must have 4 entities"
+    );
 
     // Verify entity 1 components.
     let t1: TransformComponent = scene2.components.get(e1).unwrap();
@@ -290,7 +305,11 @@ fn t_editor_int_03_project_save_load_roundtrip() {
 
     // Verify hierarchy: e4 is child of e1.
     let parent_of_e4 = scene2.hierarchy.get_parent(e4);
-    assert_eq!(parent_of_e4, Some(e1), "entity 4 must be a child of entity 1");
+    assert_eq!(
+        parent_of_e4,
+        Some(e1),
+        "entity 4 must be a child of entity 1"
+    );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -312,7 +331,11 @@ fn t_editor_int_04_project_save_load_empty() {
     let scene2 = Scene::new();
     load_scene(&tmp.0, "empty", &scene2).unwrap();
 
-    assert_eq!(scene2.entity_count(), 0, "loaded empty scene must have zero entities");
+    assert_eq!(
+        scene2.entity_count(),
+        0,
+        "loaded empty scene must have zero entities"
+    );
     assert!(scene2.all_entities().is_empty());
 }
 
@@ -342,17 +365,27 @@ fn t_editor_int_05_selection_after_undo() {
     // Delete the entity (capture snapshot first).
     let despawn = DespawnEntity::capture(id, &scene);
     undo.push(Box::new(despawn), &scene);
-    assert!(!scene.entity_exists(id), "entity must be gone after despawn");
+    assert!(
+        !scene.entity_exists(id),
+        "entity must be gone after despawn"
+    );
 
     // Clear selection after deletion -- this is what the editor does: once an
     // entity is deleted, the selection is cleared so the inspector panel does
     // not reference a stale entity.
     selection.clear();
-    assert_eq!(selection.selected_entity(), None, "selection must be cleared after deletion");
+    assert_eq!(
+        selection.selected_entity(),
+        None,
+        "selection must be cleared after deletion"
+    );
 
     // Undo the deletion -- entity reappears.
     undo.undo(&scene);
-    assert!(scene.entity_exists(id), "entity must be restored after undo");
+    assert!(
+        scene.entity_exists(id),
+        "entity must be restored after undo"
+    );
 
     // After undo, the entity is back in the scene, but the selection state
     // is NOT automatically restored.  The undo system operates on the ECS

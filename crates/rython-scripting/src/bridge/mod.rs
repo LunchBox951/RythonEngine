@@ -60,9 +60,11 @@ pub fn set_active_scene(scene: Arc<Scene>) {
 
 // ─── Script class registry ────────────────────────────────────────────────────
 
-static SCRIPT_CLASSES: OnceLock<Arc<Mutex<HashMap<String, Py<PyAny>>>>> = OnceLock::new();
+type ScriptClasses = Arc<Mutex<HashMap<String, Py<PyAny>>>>;
 
-pub(crate) fn class_registry() -> &'static Arc<Mutex<HashMap<String, Py<PyAny>>>> {
+static SCRIPT_CLASSES: OnceLock<ScriptClasses> = OnceLock::new();
+
+pub(crate) fn class_registry() -> &'static ScriptClasses {
     SCRIPT_CLASSES.get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
 }
 
@@ -261,7 +263,11 @@ pub fn flush_python_bg_tasks() {
         let tx = tx.clone();
         rayon::spawn(move || {
             let result = Python::attach(|py| {
-                callback.bind(py).call0().map(|_| ()).map_err(|e| e.to_string())
+                callback
+                    .bind(py)
+                    .call0()
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
             });
             let _ = tx.send((state, result));
         });
@@ -318,7 +324,10 @@ impl SubModulePy {
     }
 
     fn __getattr__(&self, _attr: &str) -> PyResult<Py<PyAny>> {
-        Err(PyErr::new::<PyValueError, _>(format!("rython.{} is a stub", self.name)))
+        Err(PyErr::new::<PyValueError, _>(format!(
+            "rython.{} is a stub",
+            self.name
+        )))
     }
 }
 
@@ -439,7 +448,12 @@ pub fn ensure_rython_module(py: Python<'_>, scene: Arc<Scene>) -> PyResult<()> {
     let res = Py::new(py, resources::ResourcesBridge {})?;
     rython.add("resources", res)?;
 
-    let stub = Py::new(py, SubModulePy { name: "modules".to_string() })?;
+    let stub = Py::new(
+        py,
+        SubModulePy {
+            name: "modules".to_string(),
+        },
+    )?;
     rython.add("modules", stub)?;
 
     sys_modules.set_item("rython", &rython)?;

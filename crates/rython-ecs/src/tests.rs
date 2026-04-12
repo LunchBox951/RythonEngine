@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use crate::component::*;
 use crate::entity::EntityId;
 use crate::scene::Scene;
-use crate::systems::{RenderSystem, TransformSystem};
 use crate::systems::render::DrawCommand;
+use crate::systems::{RenderSystem, TransformSystem};
 
 // ── Helper: build component vec ──────────────────────────────────────────────
 
@@ -82,8 +82,14 @@ fn t_ecs_03_entity_id_non_reuse() {
     scene.drain_commands();
     let id_b = h2.get().unwrap();
 
-    assert_ne!(id_a, id_b, "entity B must get a new ID, not reuse entity A's ID");
-    assert!(!scene.entity_exists(id_a), "querying old ID returns nothing");
+    assert_ne!(
+        id_a, id_b,
+        "entity B must get a new ID, not reuse entity A's ID"
+    );
+    assert!(
+        !scene.entity_exists(id_a),
+        "querying old ID returns nothing"
+    );
 }
 
 // ── T-ECS-04: Component Attach and Detach ────────────────────────────────────
@@ -112,9 +118,15 @@ fn t_ecs_04_component_attach_detach() {
 fn t_ecs_05_component_data_integrity() {
     let scene = Scene::new();
     let h = scene.queue_spawn(vec![comp(TransformComponent {
-        x: 1.5, y: 2.5, z: 3.5,
-        rot_x: 0.0, rot_y: 90.0, rot_z: 0.0,
-        scale_x: 2.0, scale_y: 2.0, scale_z: 2.0,
+        x: 1.5,
+        y: 2.5,
+        z: 3.5,
+        rot_x: 0.0,
+        rot_y: 90.0,
+        rot_z: 0.0,
+        scale_x: 2.0,
+        scale_y: 2.0,
+        scale_z: 2.0,
     })]);
     scene.drain_commands();
     let entity = h.get().unwrap();
@@ -134,11 +146,16 @@ fn t_ecs_05_component_data_integrity() {
 #[test]
 fn t_ecs_06_component_mutation() {
     let scene = Scene::new();
-    let h = scene.queue_spawn(vec![comp(TransformComponent { x: 0.0, ..Default::default() })]);
+    let h = scene.queue_spawn(vec![comp(TransformComponent {
+        x: 0.0,
+        ..Default::default()
+    })]);
     scene.drain_commands();
     let entity = h.get().unwrap();
 
-    scene.components.get_mut::<TransformComponent, _>(entity, |t| t.x = 10.0);
+    scene
+        .components
+        .get_mut::<TransformComponent, _>(entity, |t| t.x = 10.0);
 
     let t = scene.components.get::<TransformComponent>(entity).unwrap();
     assert_eq!(t.x, 10.0);
@@ -223,8 +240,10 @@ fn t_ecs_09_hierarchy_depth_guard() {
     let (_, depth_exceeded) = scene.hierarchy.ancestor_chain(deepest);
     assert!(depth_exceeded, "depth should be exceeded");
     // System produced a result for the deep entity (didn't crash)
-    assert!(cache.contains_key(&deepest) || !cache.contains_key(&deepest),
-        "system completes without panic");
+    assert!(
+        cache.contains_key(&deepest) || !cache.contains_key(&deepest),
+        "system completes without panic"
+    );
 }
 
 // ── T-ECS-10: Entity Hierarchy — Clear Parent ────────────────────────────────
@@ -338,7 +357,11 @@ fn t_ecs_14_event_bus_subscribe_emit() {
     let spawned = h.get().unwrap();
 
     assert_eq!(*count.lock().unwrap(), 1, "handler called exactly once");
-    assert_eq!(*received_id.lock().unwrap(), spawned.0, "received correct entity ID");
+    assert_eq!(
+        *received_id.lock().unwrap(),
+        spawned.0,
+        "received correct entity ID"
+    );
 }
 
 // ── T-ECS-15: Event Bus — Multiple Subscribers ───────────────────────────────
@@ -379,7 +402,11 @@ fn t_ecs_16_event_bus_unsubscribe() {
     scene.unsubscribe("TestEvent", handler_id);
     scene.emit("TestEvent", serde_json::json!({}));
 
-    assert_eq!(*count.lock().unwrap(), 0, "handler must not be called after unsubscribe");
+    assert_eq!(
+        *count.lock().unwrap(),
+        0,
+        "handler must not be called after unsubscribe"
+    );
 }
 
 // ── T-ECS-17: Event Bus — Custom Events ──────────────────────────────────────
@@ -404,8 +431,14 @@ fn t_ecs_17_event_bus_custom_events() {
 #[test]
 fn t_ecs_18_transform_world_position() {
     let scene = Scene::new();
-    let hp = scene.queue_spawn(vec![comp(TransformComponent { x: 10.0, ..Default::default() })]);
-    let hc = scene.queue_spawn(vec![comp(TransformComponent { x: 5.0, ..Default::default() })]);
+    let hp = scene.queue_spawn(vec![comp(TransformComponent {
+        x: 10.0,
+        ..Default::default()
+    })]);
+    let hc = scene.queue_spawn(vec![comp(TransformComponent {
+        x: 5.0,
+        ..Default::default()
+    })]);
     scene.drain_commands();
     let parent = hp.get().unwrap();
     let child = hc.get().unwrap();
@@ -429,10 +462,12 @@ fn t_ecs_19_transform_rotation_propagation() {
     let scene = Scene::new();
     // rot_y stores radians; π/2 rad = 90° = quarter-turn around Y
     let hp = scene.queue_spawn(vec![comp(TransformComponent {
-        rot_y: std::f32::consts::FRAC_PI_2, ..Default::default()
+        rot_y: std::f32::consts::FRAC_PI_2,
+        ..Default::default()
     })]);
     let hc = scene.queue_spawn(vec![comp(TransformComponent {
-        x: 1.0, ..Default::default()
+        x: 1.0,
+        ..Default::default()
     })]);
     scene.drain_commands();
     let parent = hp.get().unwrap();
@@ -446,7 +481,11 @@ fn t_ecs_19_transform_rotation_propagation() {
 
     // 90° Y rotation of (1,0,0) → approximately (0,0,-1)
     assert!((cw.position.x).abs() < 1e-4, "x ≈ 0, got {}", cw.position.x);
-    assert!((cw.position.z + 1.0).abs() < 1e-4, "z ≈ -1, got {}", cw.position.z);
+    assert!(
+        (cw.position.z + 1.0).abs() < 1e-4,
+        "z ≈ -1, got {}",
+        cw.position.z
+    );
 }
 
 // ── T-ECS-20: TransformSystem — Scale Propagation ────────────────────────────
@@ -455,10 +494,14 @@ fn t_ecs_19_transform_rotation_propagation() {
 fn t_ecs_20_transform_scale_propagation() {
     let scene = Scene::new();
     let hp = scene.queue_spawn(vec![comp(TransformComponent {
-        scale_x: 2.0, scale_y: 2.0, scale_z: 2.0, ..Default::default()
+        scale_x: 2.0,
+        scale_y: 2.0,
+        scale_z: 2.0,
+        ..Default::default()
     })]);
     let hc = scene.queue_spawn(vec![comp(TransformComponent {
-        x: 1.0, ..Default::default()
+        x: 1.0,
+        ..Default::default()
     })]);
     scene.drain_commands();
     let parent = hp.get().unwrap();
@@ -470,8 +513,16 @@ fn t_ecs_20_transform_scale_propagation() {
     let cache = TransformSystem::run(&scene.components, &scene.hierarchy);
     let cw = &cache[&child];
 
-    assert!((cw.position.x - 2.0).abs() < 1e-4, "child world x = 2, got {}", cw.position.x);
-    assert!((cw.scale.x - 2.0).abs() < 1e-4, "effective world scale x = 2, got {}", cw.scale.x);
+    assert!(
+        (cw.position.x - 2.0).abs() < 1e-4,
+        "child world x = 2, got {}",
+        cw.position.x
+    );
+    assert!(
+        (cw.scale.x - 2.0).abs() < 1e-4,
+        "effective world scale x = 2, got {}",
+        cw.scale.x
+    );
 }
 
 // ── T-ECS-21: Scene Save/Load Round-Trip ─────────────────────────────────────
@@ -483,9 +534,21 @@ fn t_ecs_21_scene_save_load_roundtrip() {
     let mut handles = Vec::new();
     for i in 0..5 {
         handles.push(scene.queue_spawn(vec![
-            comp(TransformComponent { x: i as f32, y: i as f32 * 2.0, z: 0.0, ..Default::default() }),
-            comp(MeshComponent { mesh_id: format!("mesh_{}", i), texture_id: format!("tex_{}", i), visible: true, ..Default::default() }),
-            comp(TagComponent { tags: vec![format!("tag_{}", i)] }),
+            comp(TransformComponent {
+                x: i as f32,
+                y: i as f32 * 2.0,
+                z: 0.0,
+                ..Default::default()
+            }),
+            comp(MeshComponent {
+                mesh_id: format!("mesh_{}", i),
+                texture_id: format!("tex_{}", i),
+                visible: true,
+                ..Default::default()
+            }),
+            comp(TagComponent {
+                tags: vec![format!("tag_{}", i)],
+            }),
         ]));
     }
     scene.drain_commands();
@@ -539,7 +602,11 @@ fn t_ecs_22_query_performance() {
     let elapsed = start.elapsed();
 
     assert_eq!(count, n, "should find 100,000 entities");
-    assert!(elapsed.as_millis() < 10, "query completed in {}ms, must be under 10ms", elapsed.as_millis());
+    assert!(
+        elapsed.as_millis() < 10,
+        "query completed in {}ms, must be under 10ms",
+        elapsed.as_millis()
+    );
 }
 
 // ── T-ECS-23: RenderSystem — Visible Entity Produces DrawCommand ─────────────
@@ -548,8 +615,18 @@ fn t_ecs_22_query_performance() {
 fn t_ecs_23_render_visible_entity() {
     let scene = Scene::new();
     let h = scene.queue_spawn(vec![
-        comp(TransformComponent { x: 1.0, y: 2.0, z: 3.0, ..Default::default() }),
-        comp(MeshComponent { mesh_id: "test_mesh".into(), texture_id: "test_tex".into(), visible: true, ..Default::default() }),
+        comp(TransformComponent {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
+            ..Default::default()
+        }),
+        comp(MeshComponent {
+            mesh_id: "test_mesh".into(),
+            texture_id: "test_tex".into(),
+            visible: true,
+            ..Default::default()
+        }),
     ]);
     scene.drain_commands();
     let entity = h.get().unwrap();
@@ -557,7 +634,10 @@ fn t_ecs_23_render_visible_entity() {
     let world_transforms = TransformSystem::run(&scene.components, &scene.hierarchy);
     let cmds = RenderSystem::run(&scene.components, &world_transforms);
 
-    let mesh_cmds: Vec<_> = cmds.iter().filter(|c| matches!(c, DrawCommand::DrawMesh { .. })).collect();
+    let mesh_cmds: Vec<_> = cmds
+        .iter()
+        .filter(|c| matches!(c, DrawCommand::DrawMesh { .. }))
+        .collect();
     assert_eq!(mesh_cmds.len(), 1, "exactly 1 DrawMeshCmd");
 
     if let DrawCommand::DrawMesh { transform, .. } = &mesh_cmds[0] {
@@ -576,15 +656,20 @@ fn t_ecs_23_render_visible_entity() {
 #[test]
 fn t_ecs_24_render_invisible_entity() {
     let scene = Scene::new();
-    let _h = scene.queue_spawn(vec![
-        comp(MeshComponent { mesh_id: "hidden".into(), visible: false, ..Default::default() }),
-    ]);
+    let _h = scene.queue_spawn(vec![comp(MeshComponent {
+        mesh_id: "hidden".into(),
+        visible: false,
+        ..Default::default()
+    })]);
     scene.drain_commands();
 
     let world_transforms = TransformSystem::run(&scene.components, &scene.hierarchy);
     let cmds = RenderSystem::run(&scene.components, &world_transforms);
 
-    let mesh_cmds: Vec<_> = cmds.iter().filter(|c| matches!(c, DrawCommand::DrawMesh { .. })).collect();
+    let mesh_cmds: Vec<_> = cmds
+        .iter()
+        .filter(|c| matches!(c, DrawCommand::DrawMesh { .. }))
+        .collect();
     assert_eq!(mesh_cmds.len(), 0, "zero DrawCommands for invisible entity");
 }
 
@@ -622,16 +707,29 @@ fn t_ecs_26_double_despawn() {
 #[test]
 fn t_ecs_27_component_overwrite() {
     let scene = Scene::new();
-    let h = scene.queue_spawn(vec![comp(TransformComponent { x: 1.0, ..Default::default() })]);
+    let h = scene.queue_spawn(vec![comp(TransformComponent {
+        x: 1.0,
+        ..Default::default()
+    })]);
     scene.drain_commands();
     let entity = h.get().unwrap();
 
-    scene.queue_attach(entity, TransformComponent { x: 99.0, ..Default::default() });
+    scene.queue_attach(
+        entity,
+        TransformComponent {
+            x: 99.0,
+            ..Default::default()
+        },
+    );
     scene.drain_commands();
 
     let t = scene.components.get::<TransformComponent>(entity).unwrap();
     assert_eq!(t.x, 99.0, "second attach must overwrite first");
-    assert_eq!(scene.components.count::<TransformComponent>(), 1, "no duplicate");
+    assert_eq!(
+        scene.components.count::<TransformComponent>(),
+        1,
+        "no duplicate"
+    );
 }
 
 // ── T-ECS-28: Get/Has/Remove on Missing Entity ───────────────────────────────
@@ -643,7 +741,9 @@ fn t_ecs_28_ops_on_missing_entity() {
 
     assert!(!scene.components.has::<TransformComponent>(bogus));
     assert!(scene.components.get::<TransformComponent>(bogus).is_none());
-    let mutated = scene.components.get_mut::<TransformComponent, _>(bogus, |t| t.x = 5.0);
+    let mutated = scene
+        .components
+        .get_mut::<TransformComponent, _>(bogus, |t| t.x = 5.0);
     assert!(!mutated, "get_mut returns false for missing entity");
     let removed = scene.components.remove::<TransformComponent>(bogus);
     assert!(!removed, "remove returns false for missing entity");
@@ -665,8 +765,10 @@ fn t_ecs_29_attach_to_nonexistent_entity_ignored() {
     scene.queue_attach(entity, TransformComponent::default());
     scene.drain_commands();
 
-    assert!(!scene.components.has::<TransformComponent>(entity),
-        "attach to dead entity must not store component");
+    assert!(
+        !scene.components.has::<TransformComponent>(entity),
+        "attach to dead entity must not store component"
+    );
 }
 
 // ── T-ECS-30: Detach Non-Existent Component ──────────────────────────────────
@@ -738,9 +840,19 @@ fn t_ecs_33_hierarchy_reparent() {
     scene.queue_set_parent(c, b);
     scene.drain_commands();
 
-    assert_eq!(scene.hierarchy.get_parent(c), Some(b), "parent updated to b");
-    assert!(scene.hierarchy.get_children(b).contains(&c), "c in b's children");
-    assert!(!scene.hierarchy.get_children(a).contains(&c), "c removed from a's children");
+    assert_eq!(
+        scene.hierarchy.get_parent(c),
+        Some(b),
+        "parent updated to b"
+    );
+    assert!(
+        scene.hierarchy.get_children(b).contains(&c),
+        "c in b's children"
+    );
+    assert!(
+        !scene.hierarchy.get_children(a).contains(&c),
+        "c removed from a's children"
+    );
 }
 
 // ── T-ECS-34: Hierarchy — Clear Parent With No Parent ────────────────────────
@@ -840,7 +952,11 @@ fn t_ecs_38_event_bus_unsubscribe_entity_despawned() {
     scene.queue_despawn(entity);
     scene.drain_commands();
 
-    assert_eq!(*count.lock().unwrap(), 0, "handler must not fire after unsubscribe");
+    assert_eq!(
+        *count.lock().unwrap(),
+        0,
+        "handler must not fire after unsubscribe"
+    );
 }
 
 // ── T-ECS-39: Event Bus — Emit With No Subscribers ───────────────────────────
@@ -897,7 +1013,10 @@ fn t_ecs_41_load_json_unknown_component_skipped() {
 
     scene.load_json(&json);
     let eid = EntityId(77777);
-    assert!(scene.entity_exists(eid), "entity created despite unknown component");
+    assert!(
+        scene.entity_exists(eid),
+        "entity created despite unknown component"
+    );
     let t = scene.components.get::<TransformComponent>(eid).unwrap();
     assert_eq!(t.x, 5.0, "known component loaded correctly");
 }
@@ -912,7 +1031,11 @@ fn t_ecs_42_load_empty_entities_array() {
     assert_eq!(scene.entity_count(), 1);
 
     scene.load_json(&serde_json::json!({ "entities": [] }));
-    assert_eq!(scene.entity_count(), 0, "loading empty array clears all entities");
+    assert_eq!(
+        scene.entity_count(),
+        0,
+        "loading empty array clears all entities"
+    );
 }
 
 // ── T-ECS-43: EntityId Counter Past Loaded IDs ───────────────────────────────
@@ -922,8 +1045,12 @@ fn t_ecs_43_entity_id_counter_past_loaded() {
     let high_id = 0xCAFE_0000u64;
     EntityId::ensure_counter_past(high_id);
     let next = EntityId::next();
-    assert!(next.0 > high_id,
-        "next ID {} must be > loaded max {}", next.0, high_id);
+    assert!(
+        next.0 > high_id,
+        "next ID {} must be > loaded max {}",
+        next.0,
+        high_id
+    );
 }
 
 // ── T-ECS-44: ComponentStorage — for_each ────────────────────────────────────
@@ -932,12 +1059,17 @@ fn t_ecs_43_entity_id_counter_past_loaded() {
 fn t_ecs_44_for_each() {
     let scene = Scene::new();
     for i in 0..5usize {
-        scene.queue_spawn_anon(vec![comp(TransformComponent { x: i as f32, ..Default::default() })]);
+        scene.queue_spawn_anon(vec![comp(TransformComponent {
+            x: i as f32,
+            ..Default::default()
+        })]);
     }
     scene.drain_commands();
 
     let mut xs: Vec<f32> = Vec::new();
-    scene.components.for_each::<TransformComponent, _>(|_eid, t| xs.push(t.x));
+    scene
+        .components
+        .for_each::<TransformComponent, _>(|_eid, t| xs.push(t.x));
     xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
     assert_eq!(xs, vec![0.0, 1.0, 2.0, 3.0, 4.0]);
 }
@@ -948,7 +1080,10 @@ fn t_ecs_44_for_each() {
 fn t_ecs_45_entities_with() {
     let scene = Scene::new();
     let ha = scene.queue_spawn(vec![comp(TransformComponent::default())]);
-    let hb = scene.queue_spawn(vec![comp(TransformComponent::default()), comp(MeshComponent::default())]);
+    let hb = scene.queue_spawn(vec![
+        comp(TransformComponent::default()),
+        comp(MeshComponent::default()),
+    ]);
     let _hc = scene.queue_spawn(vec![comp(MeshComponent::default())]);
     scene.drain_commands();
     let ea = ha.get().unwrap();
@@ -968,14 +1103,20 @@ fn t_ecs_45_entities_with() {
 #[test]
 fn t_ecs_46_component_get_ref() {
     let scene = Scene::new();
-    let h = scene.queue_spawn(vec![comp(TagComponent { tags: vec!["a".into(), "b".into()] })]);
+    let h = scene.queue_spawn(vec![comp(TagComponent {
+        tags: vec!["a".into(), "b".into()],
+    })]);
     scene.drain_commands();
     let entity = h.get().unwrap();
 
-    let len = scene.components.get_ref::<TagComponent, _, usize>(entity, |t| t.tags.len());
+    let len = scene
+        .components
+        .get_ref::<TagComponent, _, usize>(entity, |t| t.tags.len());
     assert_eq!(len, Some(2));
 
-    let missing = scene.components.get_ref::<TransformComponent, _, f32>(entity, |t| t.x);
+    let missing = scene
+        .components
+        .get_ref::<TransformComponent, _, f32>(entity, |t| t.x);
     assert!(missing.is_none());
 }
 
@@ -986,7 +1127,9 @@ fn t_ecs_47_snapshot_entity() {
     let scene = Scene::new();
     let h = scene.queue_spawn(vec![
         comp(TransformComponent::default()),
-        comp(TagComponent { tags: vec!["snap".into()] }),
+        comp(TagComponent {
+            tags: vec!["snap".into()],
+        }),
     ]);
     scene.drain_commands();
     let entity = h.get().unwrap();
@@ -1004,7 +1147,10 @@ fn t_ecs_47_snapshot_entity() {
 #[test]
 fn t_ecs_48_spawn_immediate() {
     let scene = Scene::new();
-    let entity = scene.spawn_immediate(vec![comp(TransformComponent { x: 7.0, ..Default::default() })]);
+    let entity = scene.spawn_immediate(vec![comp(TransformComponent {
+        x: 7.0,
+        ..Default::default()
+    })]);
 
     // Entity exists without any drain
     assert!(scene.entity_exists(entity));
@@ -1018,7 +1164,12 @@ fn t_ecs_48_spawn_immediate() {
 fn t_ecs_49_spawn_with_id() {
     let scene = Scene::new();
     let specific = EntityId(0xABCD_1234);
-    scene.spawn_with_id(specific, vec![comp(TagComponent { tags: vec!["restored".into()] })]);
+    scene.spawn_with_id(
+        specific,
+        vec![comp(TagComponent {
+            tags: vec!["restored".into()],
+        })],
+    );
 
     assert!(scene.entity_exists(specific));
     let tag = scene.components.get::<TagComponent>(specific).unwrap();
@@ -1120,7 +1271,10 @@ fn t_ecs_54_despawn_middle_of_chain() {
     // c is orphaned (b removed from hierarchy)
     assert_eq!(scene.hierarchy.get_parent(c), None, "c orphaned");
     // a has no children (b removed)
-    assert!(scene.hierarchy.get_children(a).is_empty(), "a has no children");
+    assert!(
+        scene.hierarchy.get_children(a).is_empty(),
+        "a has no children"
+    );
 }
 
 // ── T-ECS-55: Entity Spawned Event Fires Multiple Times ──────────────────────
@@ -1162,12 +1316,36 @@ fn t_ecs_56_queue_spawn_anon_creates_entities() {
 fn t_ecs_57_scene_roundtrip_all_component_types() {
     let scene = Scene::new();
     let h = scene.queue_spawn(vec![
-        comp(TransformComponent { x: 1.0, y: 2.0, z: 3.0, ..Default::default() }),
-        comp(MeshComponent { mesh_id: "m".into(), texture_id: "t".into(), visible: true, ..Default::default() }),
-        comp(TagComponent { tags: vec!["all".into()] }),
-        comp(RigidBodyComponent { mass: 5.0, ..Default::default() }),
-        comp(ColliderComponent { shape: "capsule".into(), size: [1.0, 2.0, 1.0], is_trigger: false }),
-        comp(BillboardComponent { asset_id: "b.png".into(), width: 1.5, height: 1.5, ..Default::default() }),
+        comp(TransformComponent {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
+            ..Default::default()
+        }),
+        comp(MeshComponent {
+            mesh_id: "m".into(),
+            texture_id: "t".into(),
+            visible: true,
+            ..Default::default()
+        }),
+        comp(TagComponent {
+            tags: vec!["all".into()],
+        }),
+        comp(RigidBodyComponent {
+            mass: 5.0,
+            ..Default::default()
+        }),
+        comp(ColliderComponent {
+            shape: "capsule".into(),
+            size: [1.0, 2.0, 1.0],
+            is_trigger: false,
+        }),
+        comp(BillboardComponent {
+            asset_id: "b.png".into(),
+            width: 1.5,
+            height: 1.5,
+            ..Default::default()
+        }),
     ]);
     scene.drain_commands();
     let eid = h.get().unwrap();
@@ -1327,7 +1505,12 @@ fn t_ecs_64_depth_guard_at_limit() {
     let deepest = ids[count - 1];
     let (chain, exceeded) = scene.hierarchy.ancestor_chain(deepest);
     assert!(!exceeded, "depth exactly at limit should NOT be exceeded");
-    assert_eq!(chain.len(), count, "chain should include all {} entities", count);
+    assert_eq!(
+        chain.len(),
+        count,
+        "chain should include all {} entities",
+        count
+    );
 
     // Now add one more level — this makes the chain 65 entities (64 hops),
     // which exceeds the loop's 64 iterations and triggers the guard.
@@ -1357,7 +1540,10 @@ fn t_ecs_65_for_each_zero_results() {
     scene.components.for_each::<MeshComponent, _>(|_eid, _m| {
         count += 1;
     });
-    assert_eq!(count, 0, "for_each on absent component type must invoke callback zero times");
+    assert_eq!(
+        count, 0,
+        "for_each on absent component type must invoke callback zero times"
+    );
 }
 
 // ── T-ECS-66: entities_with Nonexistent Component ────────────────────────────
@@ -1372,7 +1558,10 @@ fn t_ecs_66_entities_with_nonexistent_component() {
 
     // No entity has LightComponent
     let result = scene.components.entities_with::<LightComponent>();
-    assert!(result.is_empty(), "entities_with for absent component type must return empty");
+    assert!(
+        result.is_empty(),
+        "entities_with for absent component type must return empty"
+    );
 }
 
 // ── T-ECS-67: entities_with Matching Returns Correct Count ───────────────────
@@ -1387,7 +1576,9 @@ fn t_ecs_67_entities_with_matching_returns_correct() {
         if i < 3 {
             let h = scene.queue_spawn(vec![
                 comp(TransformComponent::default()),
-                comp(TagComponent { tags: vec![format!("entity_{}", i)] }),
+                comp(TagComponent {
+                    tags: vec![format!("entity_{}", i)],
+                }),
             ]);
             scene.drain_commands();
             tagged_ids.push(h.get().unwrap());
@@ -1399,9 +1590,17 @@ fn t_ecs_67_entities_with_matching_returns_correct() {
     assert_eq!(scene.entity_count(), 10);
 
     let with_tag = scene.components.entities_with::<TagComponent>();
-    assert_eq!(with_tag.len(), 3, "exactly 3 entities should have TagComponent");
+    assert_eq!(
+        with_tag.len(),
+        3,
+        "exactly 3 entities should have TagComponent"
+    );
     for id in &tagged_ids {
-        assert!(with_tag.contains(id), "tagged entity {:?} should be in result", id);
+        assert!(
+            with_tag.contains(id),
+            "tagged entity {:?} should be in result",
+            id
+        );
     }
 }
 
@@ -1411,7 +1610,10 @@ fn t_ecs_67_entities_with_matching_returns_correct() {
 fn t_ecs_68_component_overwrite_full_data() {
     let scene = Scene::new();
     let h = scene.queue_spawn(vec![comp(TransformComponent {
-        x: 1.0, y: 2.0, z: 3.0, ..Default::default()
+        x: 1.0,
+        y: 2.0,
+        z: 3.0,
+        ..Default::default()
     })]);
     scene.drain_commands();
     let entity = h.get().unwrap();
@@ -1423,9 +1625,15 @@ fn t_ecs_68_component_overwrite_full_data() {
     assert_eq!(t.z, 3.0);
 
     // Overwrite with new TransformComponent at (4,5,6)
-    scene.queue_attach(entity, TransformComponent {
-        x: 4.0, y: 5.0, z: 6.0, ..Default::default()
-    });
+    scene.queue_attach(
+        entity,
+        TransformComponent {
+            x: 4.0,
+            y: 5.0,
+            z: 6.0,
+            ..Default::default()
+        },
+    );
     scene.drain_commands();
 
     let t2 = scene.components.get::<TransformComponent>(entity).unwrap();
@@ -1434,7 +1642,11 @@ fn t_ecs_68_component_overwrite_full_data() {
     assert_eq!(t2.z, 6.0, "z should be overwritten to 6.0");
 
     // Verify no duplicate — count should still be 1 for this entity
-    assert_eq!(scene.components.count::<TransformComponent>(), 1, "no duplicate component");
+    assert_eq!(
+        scene.components.count::<TransformComponent>(),
+        1,
+        "no duplicate component"
+    );
 }
 
 // ── T-ECS-69: Despawn Parent Orphans Children (detailed) ─────────────────────
@@ -1442,9 +1654,18 @@ fn t_ecs_68_component_overwrite_full_data() {
 #[test]
 fn t_ecs_69_despawn_parent_orphans_children_detailed() {
     let scene = Scene::new();
-    let hp = scene.queue_spawn(vec![comp(TransformComponent { x: 10.0, ..Default::default() })]);
-    let hc1 = scene.queue_spawn(vec![comp(TransformComponent { x: 20.0, ..Default::default() })]);
-    let hc2 = scene.queue_spawn(vec![comp(TransformComponent { x: 30.0, ..Default::default() })]);
+    let hp = scene.queue_spawn(vec![comp(TransformComponent {
+        x: 10.0,
+        ..Default::default()
+    })]);
+    let hc1 = scene.queue_spawn(vec![comp(TransformComponent {
+        x: 20.0,
+        ..Default::default()
+    })]);
+    let hc2 = scene.queue_spawn(vec![comp(TransformComponent {
+        x: 30.0,
+        ..Default::default()
+    })]);
     scene.drain_commands();
     let parent = hp.get().unwrap();
     let c1 = hc1.get().unwrap();

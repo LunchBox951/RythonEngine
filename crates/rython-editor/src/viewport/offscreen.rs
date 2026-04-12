@@ -36,7 +36,13 @@ impl ViewportTexture {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let egui_texture_id =
             egui_renderer.register_native_texture(device, &view, wgpu::FilterMode::Linear);
-        Self { texture, view, egui_texture_id, width, height }
+        Self {
+            texture,
+            view,
+            egui_texture_id,
+            width,
+            height,
+        }
     }
 
     /// Recreate the texture if the target dimensions have changed.

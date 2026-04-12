@@ -33,9 +33,9 @@ pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
     pub uv: [f32; 2],
-    pub tangent: [f32; 3],    // tangent vector (surface u-axis)
-    pub bitangent: [f32; 3],  // bitangent vector (surface v-axis)
-    pub _pad: [f32; 2],       // align to 16-byte stride → 64 bytes total
+    pub tangent: [f32; 3],   // tangent vector (surface u-axis)
+    pub bitangent: [f32; 3], // bitangent vector (surface v-axis)
+    pub _pad: [f32; 2],      // align to 16-byte stride → 64 bytes total
 }
 
 /// Decoded mesh geometry.
@@ -56,35 +56,71 @@ pub fn generate_cube() -> MeshData {
     type FaceData = ([f32; 3], [[f32; 3]; 4]);
     let faces: [FaceData; 6] = [
         // +X (v1↔v3 swapped: cross(v1-v0, v2-v0) now points +X)
-        ([1.0, 0.0, 0.0], [
-            [ 0.5, -0.5, -0.5], [ 0.5,  0.5, -0.5], [ 0.5,  0.5,  0.5], [ 0.5, -0.5,  0.5],
-        ]),
+        (
+            [1.0, 0.0, 0.0],
+            [
+                [0.5, -0.5, -0.5],
+                [0.5, 0.5, -0.5],
+                [0.5, 0.5, 0.5],
+                [0.5, -0.5, 0.5],
+            ],
+        ),
         // -X (v1↔v3 swapped: cross points -X)
-        ([-1.0, 0.0, 0.0], [
-            [-0.5, -0.5,  0.5], [-0.5,  0.5,  0.5], [-0.5,  0.5, -0.5], [-0.5, -0.5, -0.5],
-        ]),
+        (
+            [-1.0, 0.0, 0.0],
+            [
+                [-0.5, -0.5, 0.5],
+                [-0.5, 0.5, 0.5],
+                [-0.5, 0.5, -0.5],
+                [-0.5, -0.5, -0.5],
+            ],
+        ),
         // +Y (unchanged — winding was correct)
-        ([0.0, 1.0, 0.0], [
-            [-0.5,  0.5,  0.5], [ 0.5,  0.5,  0.5], [ 0.5,  0.5, -0.5], [-0.5,  0.5, -0.5],
-        ]),
+        (
+            [0.0, 1.0, 0.0],
+            [
+                [-0.5, 0.5, 0.5],
+                [0.5, 0.5, 0.5],
+                [0.5, 0.5, -0.5],
+                [-0.5, 0.5, -0.5],
+            ],
+        ),
         // -Y (unchanged — winding was correct)
-        ([0.0, -1.0, 0.0], [
-            [-0.5, -0.5, -0.5], [ 0.5, -0.5, -0.5], [ 0.5, -0.5,  0.5], [-0.5, -0.5,  0.5],
-        ]),
+        (
+            [0.0, -1.0, 0.0],
+            [
+                [-0.5, -0.5, -0.5],
+                [0.5, -0.5, -0.5],
+                [0.5, -0.5, 0.5],
+                [-0.5, -0.5, 0.5],
+            ],
+        ),
         // +Z (v1↔v3 swapped: cross points +Z)
-        ([0.0, 0.0, 1.0], [
-            [ 0.5, -0.5,  0.5], [ 0.5,  0.5,  0.5], [-0.5,  0.5,  0.5], [-0.5, -0.5,  0.5],
-        ]),
+        (
+            [0.0, 0.0, 1.0],
+            [
+                [0.5, -0.5, 0.5],
+                [0.5, 0.5, 0.5],
+                [-0.5, 0.5, 0.5],
+                [-0.5, -0.5, 0.5],
+            ],
+        ),
         // -Z (v1↔v3 swapped: cross points -Z)
-        ([0.0, 0.0, -1.0], [
-            [-0.5, -0.5, -0.5], [-0.5,  0.5, -0.5], [ 0.5,  0.5, -0.5], [ 0.5, -0.5, -0.5],
-        ]),
+        (
+            [0.0, 0.0, -1.0],
+            [
+                [-0.5, -0.5, -0.5],
+                [-0.5, 0.5, -0.5],
+                [0.5, 0.5, -0.5],
+                [0.5, -0.5, -0.5],
+            ],
+        ),
     ];
     // Per-vertex UVs: BR=(0,0), BL=(1,0), TL=(1,1), TR=(0,1)
     let uvs: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
 
     let mut vertices = Vec::with_capacity(24);
-    let mut indices  = Vec::with_capacity(36);
+    let mut indices = Vec::with_capacity(36);
 
     for (normal, positions) in &faces {
         let base = vertices.len() as u32;
@@ -193,8 +229,13 @@ pub enum HandleState {
 
 enum InnerState {
     Pending,
-    Ready { data: Arc<AssetData>, size_bytes: usize },
-    Failed { error: String },
+    Ready {
+        data: Arc<AssetData>,
+        size_bytes: usize,
+    },
+    Failed {
+        error: String,
+    },
 }
 
 struct AssetInner {
@@ -212,7 +253,10 @@ impl AssetInner {
 
     fn set_ready(&self, data: AssetData) {
         let size = data.size_bytes();
-        *self.state.lock() = InnerState::Ready { data: Arc::new(data), size_bytes: size };
+        *self.state.lock() = InnerState::Ready {
+            data: Arc::new(data),
+            size_bytes: size,
+        };
     }
 
     fn set_failed(&self, error: String) {
@@ -337,12 +381,15 @@ fn decode_image(path: &str) -> Result<AssetData, String> {
     let rgba = img.to_rgba8();
     let (width, height) = rgba.dimensions();
     let pixels = rgba.into_raw();
-    Ok(AssetData::Image(ImageData { width, height, pixels }))
+    Ok(AssetData::Image(ImageData {
+        width,
+        height,
+        pixels,
+    }))
 }
 
 fn decode_mesh(path: &str) -> Result<AssetData, String> {
-    let (doc, buffers, _images) =
-        gltf::import(path).map_err(|e| format!("{path}: {e}"))?;
+    let (doc, buffers, _images) = gltf::import(path).map_err(|e| format!("{path}: {e}"))?;
 
     let mut vertices: Vec<Vertex> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
@@ -367,12 +414,11 @@ fn decode_mesh(path: &str) -> Result<AssetData, String> {
                 .unwrap_or_else(|| vec![[0.0, 0.0]; positions.len()]);
 
             // glTF TANGENT attribute: vec4 where xyz=tangent, w=handedness (-1 or +1)
-            let gltf_tangents: Option<Vec<[f32; 4]>> =
-                reader.read_tangents().map(|t| t.collect());
+            let gltf_tangents: Option<Vec<[f32; 4]>> = reader.read_tangents().map(|t| t.collect());
 
             let base = vertices.len() as u32;
 
-            for i in 0..positions.len() {
+            for (i, &position) in positions.iter().enumerate() {
                 let normal = normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
                 let uv = uvs.get(i).copied().unwrap_or([0.0, 0.0]);
 
@@ -395,7 +441,7 @@ fn decode_mesh(path: &str) -> Result<AssetData, String> {
                 };
 
                 vertices.push(Vertex {
-                    position: positions[i],
+                    position,
                     normal,
                     uv,
                     tangent,
@@ -416,7 +462,10 @@ fn decode_mesh(path: &str) -> Result<AssetData, String> {
                 let vert_end = vertices.len();
                 // Build local index slice (relative to this primitive's base)
                 let local_indices: Vec<u32> = prim_indices.iter().map(|&i| i - base).collect();
-                crate::tangents::compute_tangents(&mut vertices[vert_start..vert_end], &local_indices);
+                crate::tangents::compute_tangents(
+                    &mut vertices[vert_start..vert_end],
+                    &local_indices,
+                );
             }
 
             indices.extend(prim_indices);
@@ -454,12 +503,18 @@ fn decode_wav(path: &str) -> Result<AssetData, String> {
             if spec.bits_per_sample <= 16 {
                 reader
                     .samples::<i16>()
-                    .map(|s| s.map(|v| v as f32 / max).map_err(|e| format!("{path}: {e}")))
+                    .map(|s| {
+                        s.map(|v| v as f32 / max)
+                            .map_err(|e| format!("{path}: {e}"))
+                    })
                     .collect::<Result<Vec<_>, _>>()?
             } else {
                 reader
                     .samples::<i32>()
-                    .map(|s| s.map(|v| v as f32 / max).map_err(|e| format!("{path}: {e}")))
+                    .map(|s| {
+                        s.map(|v| v as f32 / max)
+                            .map_err(|e| format!("{path}: {e}"))
+                    })
                     .collect::<Result<Vec<_>, _>>()?
             }
         }
@@ -474,14 +529,12 @@ fn decode_wav(path: &str) -> Result<AssetData, String> {
 
 fn decode_font(path: &str, size: f32) -> Result<AssetData, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-    let font =
-        fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default())
-            .map_err(|e| format!("{path}: font parse error: {e}"))?;
+    let font = fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default())
+        .map_err(|e| format!("{path}: font parse error: {e}"))?;
 
     let chars: Vec<char> = (32u8..=126u8).map(|b| b as char).collect();
 
-    let mut rasterized: Vec<(char, fontdue::Metrics, Vec<u8>)> =
-        Vec::with_capacity(chars.len());
+    let mut rasterized: Vec<(char, fontdue::Metrics, Vec<u8>)> = Vec::with_capacity(chars.len());
     for &c in &chars {
         let (metrics, bitmap) = font.rasterize(c, size);
         rasterized.push((c, metrics, bitmap));
@@ -490,7 +543,7 @@ fn decode_font(path: &str, size: f32) -> Result<AssetData, String> {
     let cell_w = (size.ceil() as u32 + 2).max(1);
     let cell_h = (size.ceil() as u32 + 2).max(1);
     let cols = 32u32;
-    let rows = (chars.len() as u32 + cols - 1) / cols;
+    let rows = (chars.len() as u32).div_ceil(cols);
 
     let atlas_w = next_pow2(cols * cell_w);
     let atlas_h = next_pow2(rows * cell_h);
@@ -515,17 +568,20 @@ fn decode_font(path: &str, size: f32) -> Result<AssetData, String> {
             }
         }
 
-        glyphs.insert(c, GlyphRegion {
-            codepoint: c,
-            u: x0 as f32 / atlas_w as f32,
-            v: y0 as f32 / atlas_h as f32,
-            w: metrics.width as f32 / atlas_w as f32,
-            h: metrics.height as f32 / atlas_h as f32,
-            advance_width: metrics.advance_width,
-            advance_height: metrics.advance_height,
-            glyph_width: metrics.width,
-            glyph_height: metrics.height,
-        });
+        glyphs.insert(
+            c,
+            GlyphRegion {
+                codepoint: c,
+                u: x0 as f32 / atlas_w as f32,
+                v: y0 as f32 / atlas_h as f32,
+                w: metrics.width as f32 / atlas_w as f32,
+                h: metrics.height as f32 / atlas_h as f32,
+                advance_width: metrics.advance_width,
+                advance_height: metrics.advance_height,
+                glyph_width: metrics.width,
+                glyph_height: metrics.height,
+            },
+        );
     }
 
     Ok(AssetData::Font(FontData {
@@ -565,7 +621,11 @@ fn decode_spritesheet(path: &str, cols: u32, rows: u32) -> Result<AssetData, Str
     }
 
     Ok(AssetData::Spritesheet(SpritesheetData {
-        image: ImageData { width: iw, height: ih, pixels },
+        image: ImageData {
+            width: iw,
+            height: ih,
+            pixels,
+        },
         frames,
     }))
 }
@@ -606,7 +666,12 @@ impl ManagerState {
             (Arc::clone(&entry.inner), false)
         } else {
             let inner = AssetInner::new();
-            self.cache.insert(key.to_string(), CacheEntry { inner: Arc::clone(&inner) });
+            self.cache.insert(
+                key.to_string(),
+                CacheEntry {
+                    inner: Arc::clone(&inner),
+                },
+            );
             (inner, true)
         }
     }
@@ -645,8 +710,7 @@ impl ManagerState {
                 .iter()
                 .filter(|(_, e)| {
                     // No external handles: only the cache holds this Arc.
-                    Arc::strong_count(&e.inner) == 1
-                        && e.inner.handle_state() == HandleState::Ready
+                    Arc::strong_count(&e.inner) == 1 && e.inner.handle_state() == HandleState::Ready
                 })
                 .min_by_key(|(_, e)| e.inner.last_used())
                 .map(|(k, e)| (k.clone(), e.inner.size_bytes()));
@@ -680,7 +744,9 @@ pub struct ResourceManagerConfig {
 
 impl Default for ResourceManagerConfig {
     fn default() -> Self {
-        ResourceManagerConfig { streaming_budget_mb: 256.0 }
+        ResourceManagerConfig {
+            streaming_budget_mb: 256.0,
+        }
     }
 }
 
@@ -729,9 +795,11 @@ impl ResourceManager {
                     DecodeRequest::Mesh { ref path } => decode_mesh(path),
                     DecodeRequest::Sound { ref path } => decode_sound(path),
                     DecodeRequest::Font { ref path, size } => decode_font(path, size),
-                    DecodeRequest::Spritesheet { ref path, cols, rows } => {
-                        decode_spritesheet(path, cols, rows)
-                    }
+                    DecodeRequest::Spritesheet {
+                        ref path,
+                        cols,
+                        rows,
+                    } => decode_spritesheet(path, cols, rows),
                 };
                 let _ = tx.send(DecodeCompletion {
                     cache_key: key_clone,
@@ -745,23 +813,36 @@ impl ResourceManager {
     }
 
     pub fn load_image(&self, path: &str) -> AssetHandle {
-        self.submit(DecodeRequest::Image { path: path.to_string() })
+        self.submit(DecodeRequest::Image {
+            path: path.to_string(),
+        })
     }
 
     pub fn load_mesh(&self, path: &str) -> AssetHandle {
-        self.submit(DecodeRequest::Mesh { path: path.to_string() })
+        self.submit(DecodeRequest::Mesh {
+            path: path.to_string(),
+        })
     }
 
     pub fn load_sound(&self, path: &str) -> AssetHandle {
-        self.submit(DecodeRequest::Sound { path: path.to_string() })
+        self.submit(DecodeRequest::Sound {
+            path: path.to_string(),
+        })
     }
 
     pub fn load_font(&self, path: &str, size: f32) -> AssetHandle {
-        self.submit(DecodeRequest::Font { path: path.to_string(), size })
+        self.submit(DecodeRequest::Font {
+            path: path.to_string(),
+            size,
+        })
     }
 
     pub fn load_spritesheet(&self, path: &str, cols: u32, rows: u32) -> AssetHandle {
-        self.submit(DecodeRequest::Spritesheet { path: path.to_string(), cols, rows })
+        self.submit(DecodeRequest::Spritesheet {
+            path: path.to_string(),
+            cols,
+            rows,
+        })
     }
 
     /// Drain completed decode tasks, updating handle states on the calling (main) thread.
@@ -813,13 +894,21 @@ mod tests {
     #[test]
     fn test_generate_cube_vertex_count() {
         let mesh = generate_cube();
-        assert_eq!(mesh.vertices.len(), 24, "cube must have 24 vertices (4 per face × 6 faces)");
+        assert_eq!(
+            mesh.vertices.len(),
+            24,
+            "cube must have 24 vertices (4 per face × 6 faces)"
+        );
     }
 
     #[test]
     fn test_generate_cube_index_count() {
         let mesh = generate_cube();
-        assert_eq!(mesh.indices.len(), 36, "cube must have 36 indices (6 per face × 6 faces)");
+        assert_eq!(
+            mesh.indices.len(),
+            36,
+            "cube must have 36 indices (6 per face × 6 faces)"
+        );
     }
 
     #[test]
@@ -837,7 +926,10 @@ mod tests {
         for v in &mesh.vertices {
             let [nx, ny, nz] = v.normal;
             let len = (nx * nx + ny * ny + nz * nz).sqrt();
-            assert!((len - 1.0).abs() < 1e-5, "normal must be unit length, got {len}");
+            assert!(
+                (len - 1.0).abs() < 1e-5,
+                "normal must be unit length, got {len}"
+            );
         }
     }
 
@@ -859,14 +951,14 @@ mod tests {
         let mesh = generate_cube();
         let mut normals: std::collections::HashSet<[i32; 3]> = std::collections::HashSet::new();
         for v in &mesh.vertices {
-            let key = [
-                v.normal[0] as i32,
-                v.normal[1] as i32,
-                v.normal[2] as i32,
-            ];
+            let key = [v.normal[0] as i32, v.normal[1] as i32, v.normal[2] as i32];
             normals.insert(key);
         }
-        assert_eq!(normals.len(), 6, "cube must have exactly 6 distinct face normals");
+        assert_eq!(
+            normals.len(),
+            6,
+            "cube must have exactly 6 distinct face normals"
+        );
     }
 
     #[test]
@@ -888,7 +980,11 @@ mod tests {
     fn test_generate_cube_vertex_bytes() {
         let mesh = generate_cube();
         let bytes: &[u8] = bytemuck::cast_slice(&mesh.vertices);
-        assert_eq!(bytes.len(), 24 * 64, "24 vertices × 64 bytes each = 1536 bytes");
+        assert_eq!(
+            bytes.len(),
+            24 * 64,
+            "24 vertices × 64 bytes each = 1536 bytes"
+        );
     }
 
     /// Regression test: all 6 faces must have CCW winding when viewed from outside.
@@ -904,26 +1000,26 @@ mod tests {
             let n = mesh.vertices[base].normal;
 
             // Triangle 0: indices [0, 1, 2]
-            let e1 = [v[1][0]-v[0][0], v[1][1]-v[0][1], v[1][2]-v[0][2]];
-            let e2 = [v[2][0]-v[0][0], v[2][1]-v[0][1], v[2][2]-v[0][2]];
+            let e1 = [v[1][0] - v[0][0], v[1][1] - v[0][1], v[1][2] - v[0][2]];
+            let e2 = [v[2][0] - v[0][0], v[2][1] - v[0][1], v[2][2] - v[0][2]];
             let cross = [
-                e1[1]*e2[2] - e1[2]*e2[1],
-                e1[2]*e2[0] - e1[0]*e2[2],
-                e1[0]*e2[1] - e1[1]*e2[0],
+                e1[1] * e2[2] - e1[2] * e2[1],
+                e1[2] * e2[0] - e1[0] * e2[2],
+                e1[0] * e2[1] - e1[1] * e2[0],
             ];
-            let dot = cross[0]*n[0] + cross[1]*n[1] + cross[2]*n[2];
+            let dot = cross[0] * n[0] + cross[1] * n[1] + cross[2] * n[2];
             assert!(dot > 0.0,
                 "face {face_idx} tri0 [0,1,2]: cross product points inward (dot={dot:.4}, normal={n:?})");
 
             // Triangle 1: indices [0, 2, 3]
-            let e1 = [v[2][0]-v[0][0], v[2][1]-v[0][1], v[2][2]-v[0][2]];
-            let e2 = [v[3][0]-v[0][0], v[3][1]-v[0][1], v[3][2]-v[0][2]];
+            let e1 = [v[2][0] - v[0][0], v[2][1] - v[0][1], v[2][2] - v[0][2]];
+            let e2 = [v[3][0] - v[0][0], v[3][1] - v[0][1], v[3][2] - v[0][2]];
             let cross = [
-                e1[1]*e2[2] - e1[2]*e2[1],
-                e1[2]*e2[0] - e1[0]*e2[2],
-                e1[0]*e2[1] - e1[1]*e2[0],
+                e1[1] * e2[2] - e1[2] * e2[1],
+                e1[2] * e2[0] - e1[0] * e2[2],
+                e1[0] * e2[1] - e1[1] * e2[0],
             ];
-            let dot = cross[0]*n[0] + cross[1]*n[1] + cross[2]*n[2];
+            let dot = cross[0] * n[0] + cross[1] * n[1] + cross[2] * n[2];
             assert!(dot > 0.0,
                 "face {face_idx} tri1 [0,2,3]: cross product points inward (dot={dot:.4}, normal={n:?})");
         }
@@ -932,7 +1028,9 @@ mod tests {
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     fn make_manager(budget_mb: f64) -> ResourceManager {
-        ResourceManager::new(ResourceManagerConfig { streaming_budget_mb: budget_mb })
+        ResourceManager::new(ResourceManagerConfig {
+            streaming_budget_mb: budget_mb,
+        })
     }
 
     /// Write a tiny PNG to a temp path using the `image` crate.
@@ -1053,7 +1151,10 @@ mod tests {
         let mgr = make_manager(256.0);
         let h1 = mgr.load_image("nonexistent_dedupe.png");
         let h2 = mgr.load_image("nonexistent_dedupe.png");
-        assert!(h1.ptr_eq(&h2), "same path must return same underlying asset");
+        assert!(
+            h1.ptr_eq(&h2),
+            "same path must return same underlying asset"
+        );
     }
 
     #[test]
@@ -1061,7 +1162,10 @@ mod tests {
         let mgr = make_manager(256.0);
         let h1 = mgr.load_image("file_a.png");
         let h2 = mgr.load_image("file_b.png");
-        assert!(!h1.ptr_eq(&h2), "different paths must yield distinct handles");
+        assert!(
+            !h1.ptr_eq(&h2),
+            "different paths must yield distinct handles"
+        );
     }
 
     // ── Manager: memory accounting ───────────────────────────────────────────
@@ -1080,7 +1184,11 @@ mod tests {
         // Insert a READY asset with no external handles, trigger eviction.
         let mut st = ManagerState::new(0.0); // budget = 0 bytes
         let (inner, _) = st.get_or_insert("image:test.png");
-        let data = AssetData::Image(ImageData { width: 1, height: 1, pixels: vec![0u8; 4] });
+        let data = AssetData::Image(ImageData {
+            width: 1,
+            height: 1,
+            pixels: vec![0u8; 4],
+        });
         let size = data.size_bytes();
         inner.set_ready(data);
         drop(inner); // release the extra Arc — only the cache entry holds it now
@@ -1096,12 +1204,19 @@ mod tests {
         let mut st = ManagerState::new(0.0);
         let (inner, _) = st.get_or_insert("image:held.png");
         // Keep inner alive (simulates a live handle)
-        let data = AssetData::Image(ImageData { width: 1, height: 1, pixels: vec![0u8; 4] });
+        let data = AssetData::Image(ImageData {
+            width: 1,
+            height: 1,
+            pixels: vec![0u8; 4],
+        });
         let size = data.size_bytes();
         inner.set_ready(data);
         st.used_bytes = size;
         st.evict_if_over_budget();
-        assert!(!st.cache.is_empty(), "asset with live handle must not be evicted");
+        assert!(
+            !st.cache.is_empty(),
+            "asset with live handle must not be evicted"
+        );
         drop(inner);
     }
 
@@ -1115,7 +1230,10 @@ mod tests {
         let start = Instant::now();
         let h = mgr.load_image("nonexistent_timing.png");
         let elapsed = start.elapsed();
-        assert!(elapsed < Duration::from_millis(1), "load_image must return in <1ms");
+        assert!(
+            elapsed < Duration::from_millis(1),
+            "load_image must return in <1ms"
+        );
         assert_eq!(h.state(), HandleState::Pending);
     }
 
@@ -1127,7 +1245,10 @@ mod tests {
         let mgr = make_manager(256.0);
         let h = mgr.load_image(&path);
         assert_eq!(h.state(), HandleState::Pending);
-        assert!(poll_until_done(&mgr, &[&h], 500), "handle should become READY");
+        assert!(
+            poll_until_done(&mgr, &[&h], 500),
+            "handle should become READY"
+        );
         assert_eq!(h.state(), HandleState::Ready);
         assert!(h.get_data().is_some());
     }
@@ -1141,7 +1262,10 @@ mod tests {
         assert!(poll_until_done(&mgr, &[&h], 500));
         assert_eq!(h.state(), HandleState::Failed);
         let err = h.error().unwrap();
-        assert!(err.contains("does_not_exist.png"), "error must mention the path");
+        assert!(
+            err.contains("does_not_exist.png"),
+            "error must mention the path"
+        );
     }
 
     /// T-RES-04: deduplication — same path returns same handle (ptr_eq).
@@ -1202,7 +1326,7 @@ mod tests {
             _ => panic!("expected Sound"),
         };
         assert_eq!(snd.samples.len(), 44100);
-        assert!(snd.samples.iter().all(|&s| s >= -1.0 && s <= 1.0));
+        assert!(snd.samples.iter().all(|&s| (-1.0..=1.0).contains(&s)));
     }
 
     /// T-RES-11: spritesheet — 128x32 with 4 cols → 4 frames of 32x32.
@@ -1282,8 +1406,7 @@ mod tests {
     #[test]
     fn test_generate_cube_uv_pattern() {
         let mesh = generate_cube();
-        let expected_uvs: [[f32; 2]; 4] =
-            [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+        let expected_uvs: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
         for face in 0..6 {
             let base = face * 4;
             for (i, &expected) in expected_uvs.iter().enumerate() {
@@ -1303,11 +1426,11 @@ mod tests {
         let mesh = generate_cube();
         // (axis_index, expected_signed_value) per face in declaration order
         let expected: [(usize, f32); 6] = [
-            (0,  0.5), // +X
+            (0, 0.5),  // +X
             (0, -0.5), // -X
-            (1,  0.5), // +Y
+            (1, 0.5),  // +Y
             (1, -0.5), // -Y
-            (2,  0.5), // +Z
+            (2, 0.5),  // +Z
             (2, -0.5), // -Z
         ];
         for (face, (axis, val)) in expected.iter().enumerate() {
@@ -1341,7 +1464,11 @@ mod tests {
 
     #[test]
     fn test_asset_data_size_bytes_image() {
-        let d = AssetData::Image(ImageData { width: 4, height: 4, pixels: vec![0u8; 64] });
+        let d = AssetData::Image(ImageData {
+            width: 4,
+            height: 4,
+            pixels: vec![0u8; 64],
+        });
         assert_eq!(d.size_bytes(), 64);
     }
 
@@ -1377,7 +1504,11 @@ mod tests {
     #[test]
     fn test_asset_data_size_bytes_spritesheet() {
         let d = AssetData::Spritesheet(SpritesheetData {
-            image: ImageData { width: 4, height: 4, pixels: vec![0u8; 64] },
+            image: ImageData {
+                width: 4,
+                height: 4,
+                pixels: vec![0u8; 64],
+            },
             frames: vec![],
         });
         assert_eq!(d.size_bytes(), 64);
@@ -1387,19 +1518,25 @@ mod tests {
 
     #[test]
     fn test_cache_key_image_prefix() {
-        let req = DecodeRequest::Image { path: "foo/bar.png".to_string() };
+        let req = DecodeRequest::Image {
+            path: "foo/bar.png".to_string(),
+        };
         assert_eq!(req.cache_key(), "image:foo/bar.png");
     }
 
     #[test]
     fn test_cache_key_mesh_prefix() {
-        let req = DecodeRequest::Mesh { path: "model.glb".to_string() };
+        let req = DecodeRequest::Mesh {
+            path: "model.glb".to_string(),
+        };
         assert_eq!(req.cache_key(), "mesh:model.glb");
     }
 
     #[test]
     fn test_cache_key_sound_prefix() {
-        let req = DecodeRequest::Sound { path: "boom.wav".to_string() };
+        let req = DecodeRequest::Sound {
+            path: "boom.wav".to_string(),
+        };
         assert_eq!(req.cache_key(), "sound:boom.wav");
     }
 
@@ -1415,8 +1552,14 @@ mod tests {
 
     #[test]
     fn test_cache_key_font_differs_by_size() {
-        let req1 = DecodeRequest::Font { path: "font.ttf".to_string(), size: 12.0 };
-        let req2 = DecodeRequest::Font { path: "font.ttf".to_string(), size: 14.0 };
+        let req1 = DecodeRequest::Font {
+            path: "font.ttf".to_string(),
+            size: 12.0,
+        };
+        let req2 = DecodeRequest::Font {
+            path: "font.ttf".to_string(),
+            size: 14.0,
+        };
         assert_ne!(
             req1.cache_key(),
             req2.cache_key(),
@@ -1439,8 +1582,14 @@ mod tests {
         let mut st = ManagerState::new(256.0);
         let (inner1, _) = st.get_or_insert("image:a.png");
         let (inner2, is_new) = st.get_or_insert("image:a.png");
-        assert!(!is_new, "second call with same key must return is_new=false");
-        assert!(Arc::ptr_eq(&inner1, &inner2), "same key must return the same Arc");
+        assert!(
+            !is_new,
+            "second call with same key must return is_new=false"
+        );
+        assert!(
+            Arc::ptr_eq(&inner1, &inner2),
+            "same key must return the same Arc"
+        );
     }
 
     // ── ManagerState::on_decode_complete ─────────────────────────────────────
@@ -1449,8 +1598,11 @@ mod tests {
     fn test_decode_complete_success_marks_ready_and_accounts_bytes() {
         let mut st = ManagerState::new(256.0);
         let (inner, _) = st.get_or_insert("image:x.png");
-        let data =
-            AssetData::Image(ImageData { width: 2, height: 2, pixels: vec![0u8; 16] });
+        let data = AssetData::Image(ImageData {
+            width: 2,
+            height: 2,
+            pixels: vec![0u8; 16],
+        });
         st.on_decode_complete("image:x.png".to_string(), Arc::clone(&inner), Ok(data));
         assert_eq!(inner.handle_state(), HandleState::Ready);
         assert_eq!(st.memory_used_bytes(), 16);
@@ -1562,13 +1714,19 @@ mod tests {
 
         let mgr = make_manager(256.0);
         let h = mgr.load_image(path_str);
-        assert!(poll_until_done(&mgr, &[&h], 500), "handle must settle within timeout");
+        assert!(
+            poll_until_done(&mgr, &[&h], 500),
+            "handle must settle within timeout"
+        );
         assert_eq!(
             h.state(),
             HandleState::Failed,
             "corrupted file must result in Failed, not panic"
         );
-        assert!(h.error().is_some(), "failed handle must carry an error message");
+        assert!(
+            h.error().is_some(),
+            "failed handle must carry an error message"
+        );
     }
 
     // ── T-RES-18: eviction under budget pressure ─────────────────────────────
@@ -1632,7 +1790,10 @@ mod tests {
         let mgr = make_manager(256.0);
         let h1 = mgr.load_image(&path);
         let h2 = mgr.load_image(&path);
-        assert!(h1.ptr_eq(&h2), "same path loaded twice must share the same handle");
+        assert!(
+            h1.ptr_eq(&h2),
+            "same path loaded twice must share the same handle"
+        );
         assert!(poll_until_done(&mgr, &[&h1, &h2], 500));
         assert!(h1.is_ready());
         assert!(h2.is_ready());
@@ -1645,12 +1806,14 @@ mod tests {
     fn t_res_21_load_nonexistent_file() {
         let mgr = make_manager(256.0);
         let h = mgr.load_image("/tmp/rython_test_absolutely_does_not_exist_12345.png");
-        assert!(poll_until_done(&mgr, &[&h], 500), "handle must settle within timeout");
-        assert_eq!(h.state(), HandleState::Failed);
-        let err = h.error().expect("failed handle must carry an error message");
         assert!(
-            !err.is_empty(),
-            "error message must not be empty"
+            poll_until_done(&mgr, &[&h], 500),
+            "handle must settle within timeout"
         );
+        assert_eq!(h.state(), HandleState::Failed);
+        let err = h
+            .error()
+            .expect("failed handle must carry an error message");
+        assert!(!err.is_empty(), "error message must not be empty");
     }
 }

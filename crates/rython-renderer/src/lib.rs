@@ -6,8 +6,8 @@ pub mod config;
 pub mod gpu;
 pub mod light;
 pub mod queue;
-pub mod shadow;
 pub mod shaders;
+pub mod shadow;
 
 pub use camera::Camera;
 pub use command::{
@@ -15,10 +15,13 @@ pub use command::{
     DrawLine, DrawMesh, DrawRect, DrawText,
 };
 pub use config::{RendererConfig, SceneSettings};
-pub use gpu::{BindGroupLayouts, GpuContext, GpuUploadRequest, MeshBuffers, Pipelines, RendererError, RendererState};
+pub use gpu::{
+    BindGroupLayouts, GpuContext, GpuUploadRequest, MeshBuffers, Pipelines, RendererError,
+    RendererState,
+};
 pub use light::{GpuLight, LightBuffer, MAX_LIGHTS};
 pub use queue::CommandQueue;
-pub use shadow::{LightMatrices, ShadowMap, ShadowSettings};
 pub use shaders::{
     validate_wgsl, ShaderError, IMAGE_WGSL, MESH_WGSL, PRIMITIVE_WGSL, SHADOW_WGSL, TEXT_WGSL,
 };
+pub use shadow::{LightMatrices, ShadowMap, ShadowSettings};

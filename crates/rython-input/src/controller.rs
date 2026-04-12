@@ -16,8 +16,16 @@ fn eval_axis(
 ) -> f32 {
     match binding {
         AxisBinding::KBAxis { negative, positive } => {
-            let neg = if keys.contains(negative) { -1.0_f32 } else { 0.0 };
-            let pos = if keys.contains(positive) { 1.0_f32 } else { 0.0 };
+            let neg = if keys.contains(negative) {
+                -1.0_f32
+            } else {
+                0.0
+            };
+            let pos = if keys.contains(positive) {
+                1.0_f32
+            } else {
+                0.0
+            };
             (neg + pos).clamp(-1.0, 1.0)
         }
         AxisBinding::MouseAxis { axis } => match axis {
@@ -162,7 +170,11 @@ impl PlayerController {
     }
 
     pub fn active_backend(&self) -> &str {
-        if self.gamepad_connected { "gamepad" } else { "keyboard_mouse" }
+        if self.gamepad_connected {
+            "gamepad"
+        } else {
+            "keyboard_mouse"
+        }
     }
 
     pub fn gamepad_info(&self) -> Option<&str> {
@@ -182,16 +194,28 @@ impl PlayerController {
         // ── Step 2: apply raw events ──────────────────────────────────────────
         for event in events {
             match event {
-                RawInputEvent::KeyPressed(key) => { self.current_keys.insert(*key); }
-                RawInputEvent::KeyReleased(key) => { self.current_keys.remove(*key); }
+                RawInputEvent::KeyPressed(key) => {
+                    self.current_keys.insert(*key);
+                }
+                RawInputEvent::KeyReleased(key) => {
+                    self.current_keys.remove(*key);
+                }
                 RawInputEvent::MouseMoved { dx, dy } => {
                     self.mouse_delta.0 += dx;
                     self.mouse_delta.1 += dy;
                 }
-                RawInputEvent::MouseButtonPressed(btn) => { self.current_mouse_buttons.insert(*btn); }
-                RawInputEvent::MouseButtonReleased(btn) => { self.current_mouse_buttons.remove(*btn); }
-                RawInputEvent::GamepadButtonPressed(btn) => { self.current_gamepad_buttons.insert(*btn); }
-                RawInputEvent::GamepadButtonReleased(btn) => { self.current_gamepad_buttons.remove(*btn); }
+                RawInputEvent::MouseButtonPressed(btn) => {
+                    self.current_mouse_buttons.insert(*btn);
+                }
+                RawInputEvent::MouseButtonReleased(btn) => {
+                    self.current_mouse_buttons.remove(*btn);
+                }
+                RawInputEvent::GamepadButtonPressed(btn) => {
+                    self.current_gamepad_buttons.insert(*btn);
+                }
+                RawInputEvent::GamepadButtonReleased(btn) => {
+                    self.current_gamepad_buttons.remove(*btn);
+                }
                 RawInputEvent::GamepadAxisChanged { axis, value } => {
                     self.gamepad_axes.insert(*axis, *value);
                 }
@@ -228,7 +252,8 @@ impl PlayerController {
             if let Some(map) = self.maps.get(map_name) {
                 // Collect borrowed &str references — avoids cloning action name Strings.
                 let axis_actions: Vec<&str> = map.all_axis_actions().map(String::as_str).collect();
-                let button_actions: Vec<&str> = map.all_button_actions().map(String::as_str).collect();
+                let button_actions: Vec<&str> =
+                    map.all_button_actions().map(String::as_str).collect();
 
                 if !locked {
                     for &action in &axis_actions {
@@ -243,7 +268,11 @@ impl PlayerController {
 
                         // Emit an axis-change event when the value meaningfully
                         // crosses the deadzone boundary or changes while active.
-                        let prev = self.previous_axis_values.get(action).copied().unwrap_or(0.0);
+                        let prev = self
+                            .previous_axis_values
+                            .get(action)
+                            .copied()
+                            .unwrap_or(0.0);
                         let prev_active = prev.abs() > AXIS_DEADZONE;
                         let curr_active = value.abs() > AXIS_DEADZONE;
                         let deadzone_crossed = prev_active != curr_active;
@@ -275,9 +304,15 @@ impl PlayerController {
                         new_snapshot.set_button(action.to_owned(), pressed, held, released);
 
                         if pressed {
-                            new_events.push(InputActionEvent { action: action.to_owned(), value: 1.0 });
+                            new_events.push(InputActionEvent {
+                                action: action.to_owned(),
+                                value: 1.0,
+                            });
                         } else if released {
-                            new_events.push(InputActionEvent { action: action.to_owned(), value: 0.0 });
+                            new_events.push(InputActionEvent {
+                                action: action.to_owned(),
+                                value: 0.0,
+                            });
                         }
                     }
                 }

@@ -1,11 +1,11 @@
-use rython_core::{EngineError, EngineConfig, NamedEvent, ScriptError, TaskError};
 use rython_core::types::priorities;
+use rython_core::{EngineConfig, EngineError, NamedEvent, ScriptError, TaskError};
 
 // T-ERR-01: EngineError Wraps TaskError
 #[test]
 fn t_err_01_engine_error_wraps_task_error() {
     let source: Box<dyn std::error::Error + Send + Sync + 'static> =
-        Box::new(std::io::Error::new(std::io::ErrorKind::Other, "test failure"));
+        Box::new(std::io::Error::other("test failure"));
 
     let task_err = TaskError::Failed { source };
     let engine_err: EngineError = task_err.into();
@@ -15,12 +15,18 @@ fn t_err_01_engine_error_wraps_task_error() {
 
     // to_string() must contain the inner message
     let msg = engine_err.to_string();
-    assert!(msg.contains("test failure"), "expected 'test failure' in: {msg}");
+    assert!(
+        msg.contains("test failure"),
+        "expected 'test failure' in: {msg}"
+    );
 
     // The original error is accessible via std::error::Error::source()
     use std::error::Error;
     if let EngineError::Task(ref te) = engine_err {
-        assert!(te.source().is_some(), "TaskError::Failed should have a source");
+        assert!(
+            te.source().is_some(),
+            "TaskError::Failed should have a source"
+        );
     }
 }
 
@@ -45,11 +51,15 @@ fn t_err_02_engine_error_wraps_script_error() {
 fn t_err_05_script_error_python_exception() {
     let err = ScriptError::PythonException {
         script: "enemy.py".to_string(),
-        exception: "AttributeError: 'CollisionEvent' has no attribute 'damage'\n  line 15".to_string(),
+        exception: "AttributeError: 'CollisionEvent' has no attribute 'damage'\n  line 15"
+            .to_string(),
     };
     let msg = err.to_string();
     assert!(msg.contains("enemy.py"), "expected 'enemy.py' in: {msg}");
-    assert!(msg.contains("AttributeError"), "expected 'AttributeError' in: {msg}");
+    assert!(
+        msg.contains("AttributeError"),
+        "expected 'AttributeError' in: {msg}"
+    );
     assert!(msg.contains("line 15"), "expected 'line 15' in: {msg}");
 }
 
@@ -74,8 +84,14 @@ fn t_err_07_script_error_reload_failed() {
         reason: "SyntaxError: invalid syntax at line 5".to_string(),
     };
     let msg = err.to_string();
-    assert!(msg.contains("scripts/enemy.py"), "expected file path in: {msg}");
-    assert!(msg.contains("SyntaxError"), "expected error description in: {msg}");
+    assert!(
+        msg.contains("scripts/enemy.py"),
+        "expected file path in: {msg}"
+    );
+    assert!(
+        msg.contains("SyntaxError"),
+        "expected error description in: {msg}"
+    );
 }
 
 // T-ERR-08: Error propagation chain — Python to Engine
@@ -95,10 +111,7 @@ fn t_err_08_error_propagation_chain() {
     .into();
 
     let task_err = TaskError::Failed {
-        source: Box::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            engine_with_script.to_string(),
-        )),
+        source: Box::new(std::io::Error::other(engine_with_script.to_string())),
     };
 
     // Layer 1: EngineError::Task wraps TaskError
@@ -122,17 +135,20 @@ fn t_err_03_task_error_panicked() {
         message: "index out of bounds".to_string(),
     };
     let msg = err.to_string();
-    assert!(msg.contains("index out of bounds"), "expected panic message in: {msg}");
+    assert!(
+        msg.contains("index out of bounds"),
+        "expected panic message in: {msg}"
+    );
 }
 
 // T-ERR-04: TaskError::Cancelled and TimedOut are unit-like variants
 #[test]
 fn t_err_04_task_error_cancelled_and_timed_out() {
     let cancelled = TaskError::Cancelled;
-    assert!(cancelled.to_string().contains("cancelled") || cancelled.to_string().len() > 0);
+    assert!(cancelled.to_string().contains("cancelled") || !cancelled.to_string().is_empty());
 
     let timed_out = TaskError::TimedOut;
-    assert!(timed_out.to_string().contains("timed out") || timed_out.to_string().len() > 0);
+    assert!(timed_out.to_string().contains("timed out") || !timed_out.to_string().is_empty());
 
     // Both convert to EngineError::Task
     let e1: EngineError = cancelled.into();
@@ -149,8 +165,14 @@ fn t_err_09_engine_error_module() {
         message: "failed to initialise broadphase".to_string(),
     };
     let msg = err.to_string();
-    assert!(msg.contains("PhysicsModule"), "expected module name in: {msg}");
-    assert!(msg.contains("failed to initialise broadphase"), "expected message in: {msg}");
+    assert!(
+        msg.contains("PhysicsModule"),
+        "expected module name in: {msg}"
+    );
+    assert!(
+        msg.contains("failed to initialise broadphase"),
+        "expected message in: {msg}"
+    );
 }
 
 // T-ERR-10: EngineError string variants round-trip through to_string()
@@ -176,7 +198,10 @@ fn t_err_11_engine_error_io_from() {
     let engine_err: EngineError = io_err.into();
     assert!(matches!(engine_err, EngineError::Io(_)));
     let msg = engine_err.to_string();
-    assert!(msg.contains("scene.json not found"), "expected io message in: {msg}");
+    assert!(
+        msg.contains("scene.json not found"),
+        "expected io message in: {msg}"
+    );
 }
 
 // ─── T-EVT: NamedEvent edge cases ─────────────────────────────────────────────
@@ -234,7 +259,10 @@ fn t_evt_05_named_event_debug_contains_name() {
         payload: serde_json::Value::Bool(true),
     };
     let dbg = format!("{:?}", ev);
-    assert!(dbg.contains("jump"), "expected event name in Debug output: {dbg}");
+    assert!(
+        dbg.contains("jump"),
+        "expected event name in Debug output: {dbg}"
+    );
 }
 
 // ─── T-CFG: Config defaults and serde round-trip ──────────────────────────────
@@ -299,29 +327,30 @@ fn t_cfg_05_engine_config_partial_override() {
 
 // T-TYP-01: Priority constants are in strictly ascending order
 #[test]
+#[allow(clippy::assertions_on_constants)]
 fn t_typ_01_priority_constants_ordering() {
     assert!(priorities::MODULE_LIFECYCLE < priorities::ENGINE_SETUP);
-    assert!(priorities::ENGINE_SETUP     < priorities::PRE_UPDATE);
-    assert!(priorities::PRE_UPDATE       < priorities::GAME_EARLY);
-    assert!(priorities::GAME_EARLY       < priorities::GAME_UPDATE);
-    assert!(priorities::GAME_UPDATE      < priorities::GAME_LATE);
-    assert!(priorities::GAME_LATE        < priorities::RENDER_ENQUEUE);
-    assert!(priorities::RENDER_ENQUEUE   < priorities::RENDER_EXECUTE);
-    assert!(priorities::RENDER_EXECUTE   < priorities::IDLE);
+    assert!(priorities::ENGINE_SETUP < priorities::PRE_UPDATE);
+    assert!(priorities::PRE_UPDATE < priorities::GAME_EARLY);
+    assert!(priorities::GAME_EARLY < priorities::GAME_UPDATE);
+    assert!(priorities::GAME_UPDATE < priorities::GAME_LATE);
+    assert!(priorities::GAME_LATE < priorities::RENDER_ENQUEUE);
+    assert!(priorities::RENDER_ENQUEUE < priorities::RENDER_EXECUTE);
+    assert!(priorities::RENDER_EXECUTE < priorities::IDLE);
 }
 
 // T-TYP-02: Priority constants have expected absolute values
 #[test]
 fn t_typ_02_priority_constant_values() {
-    assert_eq!(priorities::MODULE_LIFECYCLE,  0);
-    assert_eq!(priorities::ENGINE_SETUP,      5);
-    assert_eq!(priorities::PRE_UPDATE,       10);
-    assert_eq!(priorities::GAME_EARLY,       15);
-    assert_eq!(priorities::GAME_UPDATE,      20);
-    assert_eq!(priorities::GAME_LATE,        25);
-    assert_eq!(priorities::RENDER_ENQUEUE,   30);
-    assert_eq!(priorities::RENDER_EXECUTE,   35);
-    assert_eq!(priorities::IDLE,             40);
+    assert_eq!(priorities::MODULE_LIFECYCLE, 0);
+    assert_eq!(priorities::ENGINE_SETUP, 5);
+    assert_eq!(priorities::PRE_UPDATE, 10);
+    assert_eq!(priorities::GAME_EARLY, 15);
+    assert_eq!(priorities::GAME_UPDATE, 20);
+    assert_eq!(priorities::GAME_LATE, 25);
+    assert_eq!(priorities::RENDER_ENQUEUE, 30);
+    assert_eq!(priorities::RENDER_EXECUTE, 35);
+    assert_eq!(priorities::IDLE, 40);
 }
 
 // ─── T-CFG-06..08: Malformed JSON edge cases ─────────────────────────────────
@@ -331,7 +360,10 @@ fn t_typ_02_priority_constant_values() {
 fn t_cfg_06_malformed_json_wrong_type() {
     let json = r#"{"scheduler": {"target_fps": "sixty"}}"#;
     let result = serde_json::from_str::<EngineConfig>(json);
-    assert!(result.is_err(), "target_fps as string must fail deserialization");
+    assert!(
+        result.is_err(),
+        "target_fps as string must fail deserialization"
+    );
 }
 
 // T-CFG-07: Unknown keys in JSON are silently ignored (serde default behavior)
@@ -339,7 +371,10 @@ fn t_cfg_06_malformed_json_wrong_type() {
 fn t_cfg_07_malformed_json_unknown_keys_ignored() {
     let json = r#"{"unknown_field": true, "scheduler": {"target_fps": 90}}"#;
     let cfg: EngineConfig = serde_json::from_str(json).expect("unknown keys should be ignored");
-    assert_eq!(cfg.scheduler.target_fps, 90, "known field must have the provided value");
+    assert_eq!(
+        cfg.scheduler.target_fps, 90,
+        "known field must have the provided value"
+    );
     // Remaining fields should be defaults
     assert_eq!(cfg.scheduler.spin_threshold_us, 1000);
     assert!(cfg.scheduler.parallel_threads.is_none());
@@ -361,7 +396,7 @@ fn t_cfg_08_malformed_json_completely_invalid() {
 #[test]
 fn t_err_12_engine_error_display_all_variants() {
     let task_err = TaskError::Failed {
-        source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, "task inner")),
+        source: Box::new(std::io::Error::other("task inner")),
     };
 
     let variants: Vec<EngineError> = vec![
@@ -379,7 +414,10 @@ fn t_err_12_engine_error_display_all_variants() {
         EngineError::Physics("solver diverged".to_string()),
         EngineError::Audio("device unavailable".to_string()),
         EngineError::Config("bad value".to_string()),
-        EngineError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "file missing")),
+        EngineError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "file missing",
+        )),
     ];
 
     let expected_substrings = [
@@ -422,7 +460,9 @@ fn t_err_13_error_source_chain_traversal() {
     assert!(!msg_0.is_empty(), "EngineError Display must not be empty");
 
     // Level 1: TaskError::Failed (via source())
-    let source_1 = engine_err.source().expect("EngineError::Task must have a source");
+    let source_1 = engine_err
+        .source()
+        .expect("EngineError::Task must have a source");
     let msg_1 = source_1.to_string();
     assert!(
         msg_1.contains("connection lost"),
@@ -430,7 +470,9 @@ fn t_err_13_error_source_chain_traversal() {
     );
 
     // Level 2: io::Error (via source() on TaskError::Failed)
-    let source_2 = source_1.source().expect("TaskError::Failed must have a source");
+    let source_2 = source_1
+        .source()
+        .expect("TaskError::Failed must have a source");
     let msg_2 = source_2.to_string();
     assert!(
         msg_2.contains("connection lost"),
@@ -446,7 +488,10 @@ fn t_err_13_error_source_chain_traversal() {
             depth += 1;
         }
     }
-    assert!(depth >= 2, "error source chain must be at least 2 levels deep, got {depth}");
+    assert!(
+        depth >= 2,
+        "error source chain must be at least 2 levels deep, got {depth}"
+    );
 }
 
 // ─── T-EVT-06..07: NamedEvent edge cases ─────────────────────────────────────
@@ -475,8 +520,15 @@ fn t_evt_07_named_event_large_payload() {
     let cloned = ev.clone();
 
     let original_arr = ev.payload.as_array().expect("payload must be an array");
-    let cloned_arr = cloned.payload.as_array().expect("cloned payload must be an array");
-    assert_eq!(original_arr.len(), 1000, "original array must have 1000 elements");
+    let cloned_arr = cloned
+        .payload
+        .as_array()
+        .expect("cloned payload must be an array");
+    assert_eq!(
+        original_arr.len(),
+        1000,
+        "original array must have 1000 elements"
+    );
     assert_eq!(
         cloned_arr.len(),
         original_arr.len(),

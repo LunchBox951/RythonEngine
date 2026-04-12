@@ -8,4 +8,7 @@ pub mod task;
 pub use frame_pacer::FramePacer;
 pub use group::GroupState;
 pub use scheduler::{RemoteSender, TaskScheduler};
-pub use task::{BgComplete, BackgroundTask, ParallelTask, RecurringTask, RemoteTask, SequentialTask};
+pub use task::{
+    BackgroundTask, BgCallback, BgComplete, BgResult, BgTaskFn, GroupCallback, ParallelTask,
+    RecurringTask, RemoteTask, SequentialTask,
+};

@@ -1,10 +1,7 @@
-use rython_core::{EngineError, GroupId, OwnerId};
-use std::any::Any;
+use crate::task::{BgResult, GroupCallback};
+use rython_core::{GroupId, OwnerId};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-
-type BgResult = Result<Box<dyn Any + Send + 'static>, EngineError>;
-type GroupCallback = Box<dyn FnOnce(Vec<BgResult>) -> Result<(), EngineError> + Send + 'static>;
 
 /// Tracks the state shared between the group and its member tasks.
 pub struct GroupState {

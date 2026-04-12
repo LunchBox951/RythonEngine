@@ -11,10 +11,10 @@ pub mod types;
 
 pub use components::Component;
 pub use config::{EngineConfig, SchedulerConfig, WindowConfig};
-pub use project::{ProjectConfig, ScriptAssociation};
 pub use errors::{EngineError, ScriptError, TaskError};
 pub use events::{Event, HandlerId, NamedEvent};
 pub use math::*;
+pub use project::{ProjectConfig, ScriptAssociation};
 pub use scheduler_trait::SchedulerHandle;
-pub use types::{GroupId, OwnerId, Priority, TaskId};
 pub use types::priorities;
+pub use types::{GroupId, OwnerId, Priority, TaskId};

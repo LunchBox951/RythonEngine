@@ -5,18 +5,13 @@ use rython_ecs::EntityId;
 /// Identifier for a UI widget (Phase 4).
 pub type WidgetId = u64;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub enum Selection {
+    #[default]
     None,
     Entity(EntityId),
     Widget(WidgetId),
     Asset(PathBuf),
-}
-
-impl Default for Selection {
-    fn default() -> Self {
-        Selection::None
-    }
 }
 
 /// Tracks the current editor selection, including multi-entity selection.
@@ -264,8 +259,10 @@ mod tests {
 
     #[test]
     fn selected_entity_returns_none_for_widget_selection() {
-        let mut s = SelectionState::default();
-        s.current = Selection::Widget(42);
+        let s = SelectionState {
+            current: Selection::Widget(42),
+            ..Default::default()
+        };
         assert_eq!(s.selected_entity(), None);
     }
 

@@ -179,7 +179,12 @@ impl EditorWidget {
 
 // ── Snapshot type for undo/redo ───────────────────────────────────────────────
 
-type Snapshot = (HashMap<WidgetId, EditorWidget>, Vec<WidgetId>, WidgetId, Theme);
+type Snapshot = (
+    HashMap<WidgetId, EditorWidget>,
+    Vec<WidgetId>,
+    WidgetId,
+    Theme,
+);
 
 // ── UiEditorPanel ─────────────────────────────────────────────────────────────
 
@@ -213,7 +218,12 @@ impl UiEditorPanel {
     // ── Undo/Redo ─────────────────────────────────────────────────────────────
 
     fn snapshot(&self) -> Snapshot {
-        (self.widgets.clone(), self.root_order.clone(), self.next_id, self.theme.clone())
+        (
+            self.widgets.clone(),
+            self.root_order.clone(),
+            self.next_id,
+            self.theme.clone(),
+        )
     }
 
     fn push_undo(&mut self) {
@@ -297,8 +307,11 @@ impl UiEditorPanel {
     }
 
     fn delete_subtree(&mut self, id: WidgetId) {
-        let children: Vec<WidgetId> =
-            self.widgets.get(&id).map(|w| w.children.clone()).unwrap_or_default();
+        let children: Vec<WidgetId> = self
+            .widgets
+            .get(&id)
+            .map(|w| w.children.clone())
+            .unwrap_or_default();
         for child_id in children {
             self.delete_subtree(child_id);
         }
@@ -323,7 +336,11 @@ impl UiEditorPanel {
         self.widgets.insert(new_id, new_w);
 
         if new_parent.is_none() {
-            let pos = self.root_order.iter().position(|&rid| rid == id).unwrap_or(0);
+            let pos = self
+                .root_order
+                .iter()
+                .position(|&rid| rid == id)
+                .unwrap_or(0);
             let insert_at = (pos + 1).min(self.root_order.len());
             self.root_order.insert(insert_at, new_id);
         } else if let Some(pid) = new_parent {
@@ -580,8 +597,7 @@ impl UiEditorPanel {
             }
             if ui.button("Load").clicked() {
                 if let Some(root) = project_root {
-                    let auto_path =
-                        root.join("ui").join(format!("{}.json", self.file_name_buf));
+                    let auto_path = root.join("ui").join(format!("{}.json", self.file_name_buf));
                     if auto_path.exists() {
                         let _ = self.load_from_file(&auto_path);
                         sel.current = Selection::None;
@@ -654,7 +670,10 @@ impl UiEditorPanel {
                 .selected_text(WIDGET_KINDS[self.add_kind_idx].0)
                 .show_ui(ui, |ui| {
                     for (i, (label, _)) in WIDGET_KINDS.iter().enumerate() {
-                        if ui.selectable_label(self.add_kind_idx == i, *label).clicked() {
+                        if ui
+                            .selectable_label(self.add_kind_idx == i, *label)
+                            .clicked()
+                        {
                             self.add_kind_idx = i;
                         }
                     }
@@ -677,17 +696,19 @@ impl UiEditorPanel {
 
         ui.separator();
 
-        egui::ScrollArea::vertical().id_salt("ui_tree_scroll").show(ui, |ui| {
-            let roots = self.root_order.clone();
-            let mut actions: Vec<TreeAction> = Vec::new();
-            let sel_id = widget_sel_id(sel);
-            for root_id in roots {
-                show_tree_node(ui, root_id, &self.widgets, sel_id, &mut actions);
-            }
-            for action in actions {
-                self.apply_tree_action(action, sel);
-            }
-        });
+        egui::ScrollArea::vertical()
+            .id_salt("ui_tree_scroll")
+            .show(ui, |ui| {
+                let roots = self.root_order.clone();
+                let mut actions: Vec<TreeAction> = Vec::new();
+                let sel_id = widget_sel_id(sel);
+                for root_id in roots {
+                    show_tree_node(ui, root_id, &self.widgets, sel_id, &mut actions);
+                }
+                for action in actions {
+                    self.apply_tree_action(action, sel);
+                }
+            });
     }
 
     // ── Preview column ────────────────────────────────────────────────────────
@@ -707,7 +728,8 @@ impl UiEditorPanel {
         );
 
         // Background + frame
-        ui.painter().rect_filled(preview_rect, 3.0, egui::Color32::from_rgb(12, 12, 18));
+        ui.painter()
+            .rect_filled(preview_rect, 3.0, egui::Color32::from_rgb(12, 12, 18));
         ui.painter().rect_stroke(
             preview_rect,
             3.0,
@@ -744,9 +766,11 @@ impl UiEditorPanel {
                 let mut w = self.widgets[&id].clone();
                 let mut changed = false;
 
-                egui::ScrollArea::vertical().id_salt("ui_props_scroll").show(ui, |ui| {
-                    show_widget_props(ui, &mut w, &mut changed);
-                });
+                egui::ScrollArea::vertical()
+                    .id_salt("ui_props_scroll")
+                    .show(ui, |ui| {
+                        show_widget_props(ui, &mut w, &mut changed);
+                    });
 
                 if changed {
                     self.push_undo();
@@ -761,9 +785,11 @@ impl UiEditorPanel {
         ui.separator();
         let mut theme = self.theme.clone();
         let mut theme_changed = false;
-        egui::ScrollArea::vertical().id_salt("ui_theme_scroll").show(ui, |ui| {
-            show_theme_editor(ui, &mut theme, &mut theme_changed);
-        });
+        egui::ScrollArea::vertical()
+            .id_salt("ui_theme_scroll")
+            .show(ui, |ui| {
+                show_theme_editor(ui, &mut theme, &mut theme_changed);
+            });
         if theme_changed {
             self.push_undo();
             self.theme = theme;
@@ -854,8 +880,7 @@ fn draw_preview_node(
     let py = rect.min.y + w.abs_y * rect.height();
     let pw = (w.w * rect.width()).max(2.0);
     let ph = (w.h * rect.height()).max(2.0);
-    let widget_rect =
-        egui::Rect::from_min_size(egui::Pos2::new(px, py), egui::Vec2::new(pw, ph));
+    let widget_rect = egui::Rect::from_min_size(egui::Pos2::new(px, py), egui::Vec2::new(pw, ph));
 
     // Background
     let bg = w.color.map(arr_to_egui).unwrap_or_else(|| match w.kind {
@@ -890,8 +915,10 @@ fn draw_preview_node(
     }
 
     // Text
-    let show_text =
-        matches!(w.kind, WidgetKind::Label | WidgetKind::Button | WidgetKind::TextInput);
+    let show_text = matches!(
+        w.kind,
+        WidgetKind::Label | WidgetKind::Button | WidgetKind::TextInput
+    );
     if show_text {
         let text = if w.text.is_empty() && w.kind == WidgetKind::TextInput {
             w.placeholder.as_str()
@@ -933,16 +960,24 @@ fn show_widget_props(ui: &mut egui::Ui, w: &mut EditorWidget, changed: &mut bool
     ui.label(egui::RichText::new("Geometry").italics());
     egui::Grid::new("wg_geom").num_columns(2).show(ui, |ui| {
         ui.label("X");
-        *changed |= ui.add(egui::DragValue::new(&mut w.x).speed(0.002)).changed();
+        *changed |= ui
+            .add(egui::DragValue::new(&mut w.x).speed(0.002))
+            .changed();
         ui.end_row();
         ui.label("Y");
-        *changed |= ui.add(egui::DragValue::new(&mut w.y).speed(0.002)).changed();
+        *changed |= ui
+            .add(egui::DragValue::new(&mut w.y).speed(0.002))
+            .changed();
         ui.end_row();
         ui.label("W");
-        *changed |= ui.add(egui::DragValue::new(&mut w.w).speed(0.002)).changed();
+        *changed |= ui
+            .add(egui::DragValue::new(&mut w.w).speed(0.002))
+            .changed();
         ui.end_row();
         ui.label("H");
-        *changed |= ui.add(egui::DragValue::new(&mut w.h).speed(0.002)).changed();
+        *changed |= ui
+            .add(egui::DragValue::new(&mut w.h).speed(0.002))
+            .changed();
         ui.end_row();
     });
 
@@ -973,7 +1008,11 @@ fn show_widget_props(ui: &mut egui::Ui, w: &mut EditorWidget, changed: &mut bool
     ui.horizontal(|ui| {
         let mut has_color = w.color.is_some();
         if ui.checkbox(&mut has_color, "Custom Color").changed() {
-            w.color = if has_color { Some([100, 100, 120, 255]) } else { None };
+            w.color = if has_color {
+                Some([100, 100, 120, 255])
+            } else {
+                None
+            };
             *changed = true;
         }
     });
@@ -991,21 +1030,29 @@ fn show_widget_props(ui: &mut egui::Ui, w: &mut EditorWidget, changed: &mut bool
 
     match w.kind {
         WidgetKind::Label | WidgetKind::Button => {
-            egui::Grid::new("wg_text_props").num_columns(2).show(ui, |ui| {
-                ui.label("Text");
-                *changed |= ui.text_edit_singleline(&mut w.text).changed();
-                ui.end_row();
-                ui.label("Font ID");
-                *changed |= ui.text_edit_singleline(&mut w.font_id).changed();
-                ui.end_row();
-                ui.label("Font Size");
-                *changed |= ui.add(egui::DragValue::new(&mut w.font_size).speed(1.0)).changed();
-                ui.end_row();
-            });
+            egui::Grid::new("wg_text_props")
+                .num_columns(2)
+                .show(ui, |ui| {
+                    ui.label("Text");
+                    *changed |= ui.text_edit_singleline(&mut w.text).changed();
+                    ui.end_row();
+                    ui.label("Font ID");
+                    *changed |= ui.text_edit_singleline(&mut w.font_id).changed();
+                    ui.end_row();
+                    ui.label("Font Size");
+                    *changed |= ui
+                        .add(egui::DragValue::new(&mut w.font_size).speed(1.0))
+                        .changed();
+                    ui.end_row();
+                });
             ui.horizontal(|ui| {
                 let mut has_tc = w.text_color.is_some();
                 if ui.checkbox(&mut has_tc, "Custom Text Color").changed() {
-                    w.text_color = if has_tc { Some([220, 220, 220, 255]) } else { None };
+                    w.text_color = if has_tc {
+                        Some([220, 220, 220, 255])
+                    } else {
+                        None
+                    };
                     *changed = true;
                 }
             });
@@ -1018,29 +1065,40 @@ fn show_widget_props(ui: &mut egui::Ui, w: &mut EditorWidget, changed: &mut bool
             }
         }
         WidgetKind::TextInput => {
-            egui::Grid::new("wg_ti_props").num_columns(2).show(ui, |ui| {
-                ui.label("Placeholder");
-                *changed |= ui.text_edit_singleline(&mut w.placeholder).changed();
-                ui.end_row();
-                ui.label("Font ID");
-                *changed |= ui.text_edit_singleline(&mut w.font_id).changed();
-                ui.end_row();
-                ui.label("Font Size");
-                *changed |= ui.add(egui::DragValue::new(&mut w.font_size).speed(1.0)).changed();
-                ui.end_row();
-            });
+            egui::Grid::new("wg_ti_props")
+                .num_columns(2)
+                .show(ui, |ui| {
+                    ui.label("Placeholder");
+                    *changed |= ui.text_edit_singleline(&mut w.placeholder).changed();
+                    ui.end_row();
+                    ui.label("Font ID");
+                    *changed |= ui.text_edit_singleline(&mut w.font_id).changed();
+                    ui.end_row();
+                    ui.label("Font Size");
+                    *changed |= ui
+                        .add(egui::DragValue::new(&mut w.font_size).speed(1.0))
+                        .changed();
+                    ui.end_row();
+                });
         }
         WidgetKind::Panel => {
-            egui::Grid::new("wg_panel_props").num_columns(2).show(ui, |ui| {
-                ui.label("Border Width");
-                *changed |=
-                    ui.add(egui::DragValue::new(&mut w.border_width).speed(0.1)).changed();
-                ui.end_row();
-            });
+            egui::Grid::new("wg_panel_props")
+                .num_columns(2)
+                .show(ui, |ui| {
+                    ui.label("Border Width");
+                    *changed |= ui
+                        .add(egui::DragValue::new(&mut w.border_width).speed(0.1))
+                        .changed();
+                    ui.end_row();
+                });
             ui.horizontal(|ui| {
                 let mut has_bc = w.border_color.is_some();
                 if ui.checkbox(&mut has_bc, "Border Color").changed() {
-                    w.border_color = if has_bc { Some([100, 100, 120, 255]) } else { None };
+                    w.border_color = if has_bc {
+                        Some([100, 100, 120, 255])
+                    } else {
+                        None
+                    };
                     *changed = true;
                 }
             });
@@ -1053,12 +1111,15 @@ fn show_widget_props(ui: &mut egui::Ui, w: &mut EditorWidget, changed: &mut bool
             }
         }
         WidgetKind::ScrollView => {
-            egui::Grid::new("wg_sv_props").num_columns(2).show(ui, |ui| {
-                ui.label("Scroll Y");
-                *changed |=
-                    ui.add(egui::DragValue::new(&mut w.scroll_y).speed(0.01)).changed();
-                ui.end_row();
-            });
+            egui::Grid::new("wg_sv_props")
+                .num_columns(2)
+                .show(ui, |ui| {
+                    ui.label("Scroll Y");
+                    *changed |= ui
+                        .add(egui::DragValue::new(&mut w.scroll_y).speed(0.01))
+                        .changed();
+                    ui.end_row();
+                });
         }
     }
 }
@@ -1066,46 +1127,57 @@ fn show_widget_props(ui: &mut egui::Ui, w: &mut EditorWidget, changed: &mut bool
 // ── Theme editor ──────────────────────────────────────────────────────────────
 
 fn show_theme_editor(ui: &mut egui::Ui, theme: &mut Theme, changed: &mut bool) {
-    egui::Grid::new("theme_scalars").num_columns(2).show(ui, |ui| {
-        ui.label("Font ID");
-        *changed |= ui.text_edit_singleline(&mut theme.font_id).changed();
-        ui.end_row();
-        ui.label("Font Size");
-        *changed |= ui.add(egui::DragValue::new(&mut theme.font_size).speed(1.0)).changed();
-        ui.end_row();
-        ui.label("Border Width");
-        *changed |=
-            ui.add(egui::DragValue::new(&mut theme.border_width).speed(0.1)).changed();
-        ui.end_row();
-        ui.label("Padding");
-        *changed |= ui.add(egui::DragValue::new(&mut theme.padding).speed(0.001)).changed();
-        ui.end_row();
-        ui.label("Spacing");
-        *changed |= ui.add(egui::DragValue::new(&mut theme.spacing).speed(0.001)).changed();
-        ui.end_row();
-    });
+    egui::Grid::new("theme_scalars")
+        .num_columns(2)
+        .show(ui, |ui| {
+            ui.label("Font ID");
+            *changed |= ui.text_edit_singleline(&mut theme.font_id).changed();
+            ui.end_row();
+            ui.label("Font Size");
+            *changed |= ui
+                .add(egui::DragValue::new(&mut theme.font_size).speed(1.0))
+                .changed();
+            ui.end_row();
+            ui.label("Border Width");
+            *changed |= ui
+                .add(egui::DragValue::new(&mut theme.border_width).speed(0.1))
+                .changed();
+            ui.end_row();
+            ui.label("Padding");
+            *changed |= ui
+                .add(egui::DragValue::new(&mut theme.padding).speed(0.001))
+                .changed();
+            ui.end_row();
+            ui.label("Spacing");
+            *changed |= ui
+                .add(egui::DragValue::new(&mut theme.spacing).speed(0.001))
+                .changed();
+            ui.end_row();
+        });
 
     ui.separator();
     ui.label(egui::RichText::new("Colors").italics());
-    egui::Grid::new("theme_colors").num_columns(2).show(ui, |ui| {
-        let fields: &mut [(&str, &mut Color)] = &mut [
-            ("Text", &mut theme.text_color),
-            ("Button", &mut theme.button_color),
-            ("Button Hover", &mut theme.button_hover_color),
-            ("Button Active", &mut theme.button_active_color),
-            ("Panel", &mut theme.panel_color),
-            ("Border", &mut theme.border_color),
-        ];
-        for (label, color) in fields.iter_mut() {
-            ui.label(*label);
-            let mut c32 = color_to_egui(**color);
-            if ui.color_edit_button_srgba(&mut c32).changed() {
-                **color = egui_to_color(c32);
-                *changed = true;
+    egui::Grid::new("theme_colors")
+        .num_columns(2)
+        .show(ui, |ui| {
+            let fields: &mut [(&str, &mut Color)] = &mut [
+                ("Text", &mut theme.text_color),
+                ("Button", &mut theme.button_color),
+                ("Button Hover", &mut theme.button_hover_color),
+                ("Button Active", &mut theme.button_active_color),
+                ("Panel", &mut theme.panel_color),
+                ("Border", &mut theme.border_color),
+            ];
+            for (label, color) in fields.iter_mut() {
+                ui.label(*label);
+                let mut c32 = color_to_egui(**color);
+                if ui.color_edit_button_srgba(&mut c32).changed() {
+                    **color = egui_to_color(c32);
+                    *changed = true;
+                }
+                ui.end_row();
             }
-            ui.end_row();
-        }
-    });
+        });
 }
 
 // ── Helper functions ──────────────────────────────────────────────────────────
@@ -1178,7 +1250,9 @@ fn widget_sel_id(sel: &SelectionState) -> Option<WidgetId> {
 fn load_theme(v: &Value) -> Theme {
     let def = Theme::default();
     let read_color = |key: &str, fallback: Color| -> Color {
-        let Some(arr) = v[key].as_array() else { return fallback };
+        let Some(arr) = v[key].as_array() else {
+            return fallback;
+        };
         if arr.len() < 4 {
             return fallback;
         }
@@ -1198,7 +1272,9 @@ fn load_theme(v: &Value) -> Theme {
         button_active_color: read_color("button_active_color", def.button_active_color),
         panel_color: read_color("panel_color", def.panel_color),
         border_color: read_color("border_color", def.border_color),
-        border_width: v["border_width"].as_f64().unwrap_or(def.border_width as f64) as f32,
+        border_width: v["border_width"]
+            .as_f64()
+            .unwrap_or(def.border_width as f64) as f32,
         padding: v["padding"].as_f64().unwrap_or(def.padding as f64) as f32,
         spacing: v["spacing"].as_f64().unwrap_or(def.spacing as f64) as f32,
     }

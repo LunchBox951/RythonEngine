@@ -18,6 +18,7 @@ const ALL_COMPONENT_TYPES: &[&str] = &[
     "BillboardComponent",
 ];
 
+#[derive(Default)]
 pub struct ComponentInspectorPanel;
 
 impl ComponentInspectorPanel {
@@ -40,12 +41,24 @@ impl ComponentInspectorPanel {
         // Build the present-type list cheaply using has::<T>() checks
         // instead of snapshot_entity which serializes all component data.
         let mut present: Vec<&str> = Vec::new();
-        if scene.components.has::<TransformComponent>(entity) { present.push("TransformComponent"); }
-        if scene.components.has::<MeshComponent>(entity) { present.push("MeshComponent"); }
-        if scene.components.has::<TagComponent>(entity) { present.push("TagComponent"); }
-        if scene.components.has::<RigidBodyComponent>(entity) { present.push("RigidBodyComponent"); }
-        if scene.components.has::<ColliderComponent>(entity) { present.push("ColliderComponent"); }
-        if scene.components.has::<BillboardComponent>(entity) { present.push("BillboardComponent"); }
+        if scene.components.has::<TransformComponent>(entity) {
+            present.push("TransformComponent");
+        }
+        if scene.components.has::<MeshComponent>(entity) {
+            present.push("MeshComponent");
+        }
+        if scene.components.has::<TagComponent>(entity) {
+            present.push("TagComponent");
+        }
+        if scene.components.has::<RigidBodyComponent>(entity) {
+            present.push("RigidBodyComponent");
+        }
+        if scene.components.has::<ColliderComponent>(entity) {
+            present.push("ColliderComponent");
+        }
+        if scene.components.has::<BillboardComponent>(entity) {
+            present.push("BillboardComponent");
+        }
 
         // Render each present component
         for type_name in &present {
@@ -68,24 +81,26 @@ impl ComponentInspectorPanel {
                             }
                         });
                     })
-                    .body(|ui| {
-                        match type_name {
-                            "TransformComponent" => {
-                                show_transform(ui, entity, scene, undo, project_dirty);
-                            }
-                            "MeshComponent" => { show_mesh(ui, entity, scene, undo, project_dirty, asset_browser); }
-                            "TagComponent" => { show_tag(ui, entity, scene, undo, project_dirty); }
-                            "RigidBodyComponent" => {
-                                show_rigid_body(ui, entity, scene, undo, project_dirty);
-                            }
-                            "ColliderComponent" => {
-                                show_collider(ui, entity, scene, undo, project_dirty);
-                            }
-                            "BillboardComponent" => {
-                                show_billboard(ui, entity, scene, undo, project_dirty);
-                            }
-                            _ => {}
+                    .body(|ui| match type_name {
+                        "TransformComponent" => {
+                            show_transform(ui, entity, scene, undo, project_dirty);
                         }
+                        "MeshComponent" => {
+                            show_mesh(ui, entity, scene, undo, project_dirty, asset_browser);
+                        }
+                        "TagComponent" => {
+                            show_tag(ui, entity, scene, undo, project_dirty);
+                        }
+                        "RigidBodyComponent" => {
+                            show_rigid_body(ui, entity, scene, undo, project_dirty);
+                        }
+                        "ColliderComponent" => {
+                            show_collider(ui, entity, scene, undo, project_dirty);
+                        }
+                        "BillboardComponent" => {
+                            show_billboard(ui, entity, scene, undo, project_dirty);
+                        }
+                        _ => {}
                     });
             });
 
@@ -150,19 +165,28 @@ fn show_transform(
     let mut rot_z_deg = t.rot_z.to_degrees();
     egui::Grid::new("rot").num_columns(2).show(ui, |ui| {
         ui.label("X");
-        if ui.add(egui::DragValue::new(&mut rot_x_deg).speed(1.0)).changed() {
+        if ui
+            .add(egui::DragValue::new(&mut rot_x_deg).speed(1.0))
+            .changed()
+        {
             t.rot_x = rot_x_deg.to_radians();
             changed = true;
         }
         ui.end_row();
         ui.label("Y");
-        if ui.add(egui::DragValue::new(&mut rot_y_deg).speed(1.0)).changed() {
+        if ui
+            .add(egui::DragValue::new(&mut rot_y_deg).speed(1.0))
+            .changed()
+        {
             t.rot_y = rot_y_deg.to_radians();
             changed = true;
         }
         ui.end_row();
         ui.label("Z");
-        if ui.add(egui::DragValue::new(&mut rot_z_deg).speed(1.0)).changed() {
+        if ui
+            .add(egui::DragValue::new(&mut rot_z_deg).speed(1.0))
+            .changed()
+        {
             t.rot_z = rot_z_deg.to_radians();
             changed = true;
         }
@@ -178,7 +202,10 @@ fn show_transform(
 
     egui::Grid::new("scale").num_columns(2).show(ui, |ui| {
         ui.label("X");
-        if ui.add(egui::DragValue::new(&mut t.scale_x).speed(0.01)).changed() {
+        if ui
+            .add(egui::DragValue::new(&mut t.scale_x).speed(0.01))
+            .changed()
+        {
             if uniform {
                 t.scale_y = t.scale_x;
                 t.scale_z = t.scale_x;
@@ -188,10 +215,14 @@ fn show_transform(
         ui.end_row();
         if !uniform {
             ui.label("Y");
-            changed |= ui.add(egui::DragValue::new(&mut t.scale_y).speed(0.01)).changed();
+            changed |= ui
+                .add(egui::DragValue::new(&mut t.scale_y).speed(0.01))
+                .changed();
             ui.end_row();
             ui.label("Z");
-            changed |= ui.add(egui::DragValue::new(&mut t.scale_z).speed(0.01)).changed();
+            changed |= ui
+                .add(egui::DragValue::new(&mut t.scale_z).speed(0.01))
+                .changed();
             ui.end_row();
         }
     });
@@ -228,26 +259,36 @@ fn show_mesh(
 
     // Helper: check if a dragged asset should be dropped onto a field.
     // Returns the stem (asset ID without extension) if it's the right category.
-    let check_drop = |ui: &egui::Ui, resp: &egui::Response, accept_cat: AssetCategory| -> Option<String> {
-        let drag = asset_browser.drag_payload.as_ref()?;
-        let ext = drag.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-        if AssetCategory::from_extension(&ext) != accept_cat {
-            return None;
-        }
-        if resp.hovered() {
-            // Highlight the drop target
-            ui.painter().rect_stroke(resp.rect, 2.0, egui::Stroke::new(2.0, egui::Color32::YELLOW), egui::StrokeKind::Middle);
-            if ui.ctx().input(|i| i.pointer.any_released()) {
-                let stem = drag
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("")
-                    .to_string();
-                return Some(stem);
+    let check_drop =
+        |ui: &egui::Ui, resp: &egui::Response, accept_cat: AssetCategory| -> Option<String> {
+            let drag = asset_browser.drag_payload.as_ref()?;
+            let ext = drag
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            if AssetCategory::from_extension(&ext) != accept_cat {
+                return None;
             }
-        }
-        None
-    };
+            if resp.hovered() {
+                // Highlight the drop target
+                ui.painter().rect_stroke(
+                    resp.rect,
+                    2.0,
+                    egui::Stroke::new(2.0, egui::Color32::YELLOW),
+                    egui::StrokeKind::Middle,
+                );
+                if ui.ctx().input(|i| i.pointer.any_released()) {
+                    let stem = drag
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_string();
+                    return Some(stem);
+                }
+            }
+            None
+        };
 
     egui::Grid::new("mesh").num_columns(2).show(ui, |ui| {
         ui.label("Mesh ID");
@@ -275,7 +316,9 @@ fn show_mesh(
             .changed();
         ui.end_row();
         ui.label("Yaw Offset");
-        changed |= ui.add(egui::DragValue::new(&mut m.yaw_offset).speed(0.1)).changed();
+        changed |= ui
+            .add(egui::DragValue::new(&mut m.yaw_offset).speed(0.1))
+            .changed();
         ui.end_row();
     });
 
@@ -333,7 +376,7 @@ fn show_tag(
             changed = true;
         }
     });
-    ui.data_mut(|d| *d.get_persisted_mut_or_insert_with(new_tag_id, || String::new()) = new_tag);
+    ui.data_mut(|d| *d.get_persisted_mut_or_insert_with(new_tag_id, String::new) = new_tag);
 
     if changed {
         scene.components.insert(entity, tag.clone());
@@ -369,17 +412,24 @@ fn show_rigid_body(
             .selected_text(&rb.body_type)
             .show_ui(ui, |ui| {
                 for opt in &["dynamic", "static", "kinematic"] {
-                    if ui.selectable_value(&mut rb.body_type, opt.to_string(), *opt).changed() {
+                    if ui
+                        .selectable_value(&mut rb.body_type, opt.to_string(), *opt)
+                        .changed()
+                    {
                         changed = true;
                     }
                 }
             });
         ui.end_row();
         ui.label("Mass");
-        changed |= ui.add(egui::DragValue::new(&mut rb.mass).speed(0.1)).changed();
+        changed |= ui
+            .add(egui::DragValue::new(&mut rb.mass).speed(0.1))
+            .changed();
         ui.end_row();
         ui.label("Gravity Factor");
-        changed |= ui.add(egui::DragValue::new(&mut rb.gravity_factor).speed(0.01)).changed();
+        changed |= ui
+            .add(egui::DragValue::new(&mut rb.gravity_factor).speed(0.01))
+            .changed();
         ui.end_row();
     });
 
@@ -417,20 +467,29 @@ fn show_collider(
             .selected_text(&col.shape)
             .show_ui(ui, |ui| {
                 for opt in &["box", "sphere", "capsule"] {
-                    if ui.selectable_value(&mut col.shape, opt.to_string(), *opt).changed() {
+                    if ui
+                        .selectable_value(&mut col.shape, opt.to_string(), *opt)
+                        .changed()
+                    {
                         changed = true;
                     }
                 }
             });
         ui.end_row();
         ui.label("Size X");
-        changed |= ui.add(egui::DragValue::new(&mut col.size[0]).speed(0.01)).changed();
+        changed |= ui
+            .add(egui::DragValue::new(&mut col.size[0]).speed(0.01))
+            .changed();
         ui.end_row();
         ui.label("Size Y");
-        changed |= ui.add(egui::DragValue::new(&mut col.size[1]).speed(0.01)).changed();
+        changed |= ui
+            .add(egui::DragValue::new(&mut col.size[1]).speed(0.01))
+            .changed();
         ui.end_row();
         ui.label("Size Z");
-        changed |= ui.add(egui::DragValue::new(&mut col.size[2]).speed(0.01)).changed();
+        changed |= ui
+            .add(egui::DragValue::new(&mut col.size[2]).speed(0.01))
+            .changed();
         ui.end_row();
         ui.label("Is Trigger");
         changed |= ui.checkbox(&mut col.is_trigger, "").changed();
@@ -470,22 +529,34 @@ fn show_billboard(
         changed |= ui.text_edit_singleline(&mut b.asset_id).changed();
         ui.end_row();
         ui.label("Width");
-        changed |= ui.add(egui::DragValue::new(&mut b.width).speed(0.01)).changed();
+        changed |= ui
+            .add(egui::DragValue::new(&mut b.width).speed(0.01))
+            .changed();
         ui.end_row();
         ui.label("Height");
-        changed |= ui.add(egui::DragValue::new(&mut b.height).speed(0.01)).changed();
+        changed |= ui
+            .add(egui::DragValue::new(&mut b.height).speed(0.01))
+            .changed();
         ui.end_row();
         ui.label("UV Rect X");
-        changed |= ui.add(egui::DragValue::new(&mut b.uv_rect[0]).speed(0.01)).changed();
+        changed |= ui
+            .add(egui::DragValue::new(&mut b.uv_rect[0]).speed(0.01))
+            .changed();
         ui.end_row();
         ui.label("UV Rect Y");
-        changed |= ui.add(egui::DragValue::new(&mut b.uv_rect[1]).speed(0.01)).changed();
+        changed |= ui
+            .add(egui::DragValue::new(&mut b.uv_rect[1]).speed(0.01))
+            .changed();
         ui.end_row();
         ui.label("UV Rect W");
-        changed |= ui.add(egui::DragValue::new(&mut b.uv_rect[2]).speed(0.01)).changed();
+        changed |= ui
+            .add(egui::DragValue::new(&mut b.uv_rect[2]).speed(0.01))
+            .changed();
         ui.end_row();
         ui.label("UV Rect H");
-        changed |= ui.add(egui::DragValue::new(&mut b.uv_rect[3]).speed(0.01)).changed();
+        changed |= ui
+            .add(egui::DragValue::new(&mut b.uv_rect[3]).speed(0.01))
+            .changed();
         ui.end_row();
         ui.label("Alpha");
         changed |= ui

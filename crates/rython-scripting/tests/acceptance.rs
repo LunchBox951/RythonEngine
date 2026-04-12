@@ -7,15 +7,15 @@ use std::ffi::CString;
 use std::sync::{Arc, Mutex};
 
 use pyo3::prelude::*;
-use rython_ecs::Scene;
 use rython_ecs::component::{MeshComponent, TagComponent, TransformComponent};
+use rython_ecs::Scene;
 use rython_renderer::DrawCommand;
 use rython_scripting::{
-    clear_recurring_callbacks, drain_draw_commands, ensure_rython_module, flush_python_bg_completions,
-    flush_python_bg_tasks, flush_python_par_tasks, flush_python_seq_tasks,
-    flush_recurring_callbacks, gil_dispatch_count, register_script_class, reset_gil_dispatch_count,
-    reset_quit_requested, set_active_scene, set_elapsed_secs, was_quit_requested, ScriptComponent,
-    ScriptSystem,
+    clear_recurring_callbacks, drain_draw_commands, ensure_rython_module,
+    flush_python_bg_completions, flush_python_bg_tasks, flush_python_par_tasks,
+    flush_python_seq_tasks, flush_recurring_callbacks, gil_dispatch_count, register_script_class,
+    reset_gil_dispatch_count, reset_quit_requested, set_active_scene, set_elapsed_secs,
+    was_quit_requested, ScriptComponent, ScriptSystem,
 };
 
 // ─── Test serialisation guard ─────────────────────────────────────────────────
@@ -35,13 +35,12 @@ fn setup(scene: &Arc<Scene>) {
 
 fn spawn_with_script(scene: &Arc<Scene>, class_name: &str) -> rython_ecs::EntityId {
     use std::any::TypeId;
-    let handle = scene.queue_spawn(vec![
-        (
-            TypeId::of::<ScriptComponent>(),
-            Box::new(ScriptComponent { class_name: class_name.to_string() })
-                as Box<dyn rython_ecs::component::Component>,
-        ),
-    ]);
+    let handle = scene.queue_spawn(vec![(
+        TypeId::of::<ScriptComponent>(),
+        Box::new(ScriptComponent {
+            class_name: class_name.to_string(),
+        }) as Box<dyn rython_ecs::component::Component>,
+    )]);
     scene.drain_commands();
     handle.get().expect("entity id")
 }
@@ -65,8 +64,9 @@ fn spawn_with_transform_and_script(
         ),
         (
             TypeId::of::<ScriptComponent>(),
-            Box::new(ScriptComponent { class_name: class_name.to_string() })
-                as Box<dyn rython_ecs::component::Component>,
+            Box::new(ScriptComponent {
+                class_name: class_name.to_string(),
+            }) as Box<dyn rython_ecs::component::Component>,
         ),
     ]);
     scene.drain_commands();
@@ -82,12 +82,26 @@ fn t_script_01_python_module_import() {
     setup(&scene);
 
     Python::attach(|py| {
-        py.run(c"import rython", None, None).expect("import rython failed");
+        py.run(c"import rython", None, None)
+            .expect("import rython failed");
 
         let rython = py.import("rython").expect("rython");
-        for attr in ["scene", "renderer", "physics", "audio", "input", "ui",
-                     "resources", "scheduler", "modules", "camera", "throttle"] {
-            let val = rython.getattr(attr).unwrap_or_else(|_| panic!("rython.{attr} missing"));
+        for attr in [
+            "scene",
+            "renderer",
+            "physics",
+            "audio",
+            "input",
+            "ui",
+            "resources",
+            "scheduler",
+            "modules",
+            "camera",
+            "throttle",
+        ] {
+            let val = rython
+                .getattr(attr)
+                .unwrap_or_else(|_| panic!("rython.{attr} missing"));
             assert!(!val.is_none(), "rython.{attr} should not be None");
         }
     });
@@ -109,20 +123,29 @@ class TestScript02:
     def __init__(self, entity):
         self.entity = entity
 ",
-            None, None,
-        ).unwrap();
+            None,
+            None,
+        )
+        .unwrap();
 
         let main = py.import("__main__").unwrap();
-        register_script_class("TestScript02", main.getattr("TestScript02").unwrap().unbind());
+        register_script_class(
+            "TestScript02",
+            main.getattr("TestScript02").unwrap().unbind(),
+        );
 
         let entity_id = spawn_with_script(&scene, "TestScript02");
         sys.flush(py);
 
         let inst = sys.get_instance(entity_id).expect("instance should exist");
-        let py_id: u64 = inst.bind(py)
-            .getattr("entity").unwrap()
-            .getattr("id").unwrap()
-            .extract().unwrap();
+        let py_id: u64 = inst
+            .bind(py)
+            .getattr("entity")
+            .unwrap()
+            .getattr("id")
+            .unwrap()
+            .extract()
+            .unwrap();
         assert_eq!(py_id, entity_id.0);
     });
 }
@@ -146,8 +169,10 @@ class SpawnScript:
     def on_spawn(self):
         self.spawned = True
 ",
-            None, None,
-        ).unwrap();
+            None,
+            None,
+        )
+        .unwrap();
 
         let main = py.import("__main__").unwrap();
         register_script_class("SpawnScript", main.getattr("SpawnScript").unwrap().unbind());
@@ -181,11 +206,16 @@ class DespawnScript:
         global despawn_flag_04
         despawn_flag_04 = True
 ",
-            None, None,
-        ).unwrap();
+            None,
+            None,
+        )
+        .unwrap();
 
         let main = py.import("__main__").unwrap();
-        register_script_class("DespawnScript", main.getattr("DespawnScript").unwrap().unbind());
+        register_script_class(
+            "DespawnScript",
+            main.getattr("DespawnScript").unwrap().unbind(),
+        );
 
         let entity_id = spawn_with_script(&scene, "DespawnScript");
         sys.flush(py);
@@ -223,11 +253,16 @@ class CollisionScript:
         collision_other_id_05 = other.id
         collision_normal_x_05 = normal.x
 ",
-            None, None,
-        ).unwrap();
+            None,
+            None,
+        )
+        .unwrap();
 
         let main = py.import("__main__").unwrap();
-        register_script_class("CollisionScript", main.getattr("CollisionScript").unwrap().unbind());
+        register_script_class(
+            "CollisionScript",
+            main.getattr("CollisionScript").unwrap().unbind(),
+        );
 
         let entity_a = spawn_with_script(&scene, "CollisionScript");
         let entity_b = spawn_empty(&scene);
@@ -236,11 +271,23 @@ class CollisionScript:
         sys.queue_collision(entity_a, entity_b, [1.0, 0.0, 0.0]);
         sys.flush(py);
 
-        let called: bool = main.getattr("collision_called_05").unwrap().extract().unwrap();
+        let called: bool = main
+            .getattr("collision_called_05")
+            .unwrap()
+            .extract()
+            .unwrap();
         assert!(called, "on_collision should have been called");
-        let other_id: u64 = main.getattr("collision_other_id_05").unwrap().extract().unwrap();
+        let other_id: u64 = main
+            .getattr("collision_other_id_05")
+            .unwrap()
+            .extract()
+            .unwrap();
         assert_eq!(other_id, entity_b.0);
-        let nx: f32 = main.getattr("collision_normal_x_05").unwrap().extract().unwrap();
+        let nx: f32 = main
+            .getattr("collision_normal_x_05")
+            .unwrap()
+            .extract()
+            .unwrap();
         assert!((nx - 1.0).abs() < 1e-5, "normal.x should be 1.0");
     });
 }
@@ -269,11 +316,16 @@ class TriggerScript:
         global trigger_exit_06
         trigger_exit_06 += 1
 ",
-            None, None,
-        ).unwrap();
+            None,
+            None,
+        )
+        .unwrap();
 
         let main = py.import("__main__").unwrap();
-        register_script_class("TriggerScript", main.getattr("TriggerScript").unwrap().unbind());
+        register_script_class(
+            "TriggerScript",
+            main.getattr("TriggerScript").unwrap().unbind(),
+        );
 
         let entity = spawn_with_script(&scene, "TriggerScript");
         let other = spawn_empty(&scene);
@@ -313,8 +365,10 @@ class InputScript:
         input_name_07 = action
         input_val_07 = value
 ",
-            None, None,
-        ).unwrap();
+            None,
+            None,
+        )
+        .unwrap();
 
         let main = py.import("__main__").unwrap();
         register_script_class("InputScript", main.getattr("InputScript").unwrap().unbind());
@@ -352,8 +406,10 @@ def on_my_event(**kwargs):
 rython.scene.subscribe('MyEvent08', on_my_event)
 rython.scene.emit('MyEvent08', data=42)
 ",
-            None, None,
-        ).unwrap();
+            None,
+            None,
+        )
+        .unwrap();
 
         let main = py.import("__main__").unwrap();
         let data: i64 = main.getattr("received_data_08").unwrap().extract().unwrap();
@@ -370,9 +426,10 @@ fn t_script_09_entity_transform_read_write() {
     setup(&scene);
 
     use std::any::TypeId;
-    let handle = scene.queue_spawn(vec![
-        (TypeId::of::<TransformComponent>(), Box::new(TransformComponent::default()) as Box<dyn rython_ecs::component::Component>),
-    ]);
+    let handle = scene.queue_spawn(vec![(
+        TypeId::of::<TransformComponent>(),
+        Box::new(TransformComponent::default()) as Box<dyn rython_ecs::component::Component>,
+    )]);
     scene.drain_commands();
     let entity_id = handle.get().expect("entity id");
 
@@ -385,7 +442,8 @@ fn t_script_09_entity_transform_read_write() {
         py.run(cstr.as_c_str(), None, None).expect("transform r/w");
     });
 
-    let x = scene.components
+    let x = scene
+        .components
         .get_ref::<TransformComponent, _, _>(entity_id, |t| t.x)
         .expect("transform component");
     assert!((x - 15.0).abs() < 1e-5, "ECS x should be 15.0, got {x}");
@@ -436,8 +494,10 @@ assert abs(scaled.x - 2.0) < 1e-5
 length = rython.Vec3(3, 4, 0).length()
 assert abs(length - 5.0) < 1e-5
 ",
-            None, None,
-        ).expect("Vec3 arithmetic failed");
+            None,
+            None,
+        )
+        .expect("Vec3 arithmetic failed");
     });
 }
 
@@ -459,8 +519,10 @@ class CrashScript:
     def on_collision(self, other, normal):
         raise ValueError('test error')
 ",
-            None, None,
-        ).unwrap();
+            None,
+            None,
+        )
+        .unwrap();
 
         let main = py.import("__main__").unwrap();
         register_script_class("CrashScript", main.getattr("CrashScript").unwrap().unbind());
@@ -475,8 +537,14 @@ class CrashScript:
         let errors = sys.drain_errors();
         assert!(!errors.is_empty(), "error should be logged");
         let combined = errors.join("\n");
-        assert!(combined.contains("ValueError"), "log must contain 'ValueError'");
-        assert!(combined.contains("test error"), "log must contain 'test error'");
+        assert!(
+            combined.contains("ValueError"),
+            "log must contain 'ValueError'"
+        );
+        assert!(
+            combined.contains("test error"),
+            "log must contain 'test error'"
+        );
     });
 }
 
@@ -498,14 +566,21 @@ class MultiErrorScript:
     def on_collision(self, other, normal):
         raise RuntimeError('multi error')
 ",
-            None, None,
-        ).unwrap();
+            None,
+            None,
+        )
+        .unwrap();
 
         let main = py.import("__main__").unwrap();
-        register_script_class("MultiErrorScript", main.getattr("MultiErrorScript").unwrap().unbind());
+        register_script_class(
+            "MultiErrorScript",
+            main.getattr("MultiErrorScript").unwrap().unbind(),
+        );
 
         let dummy = spawn_empty(&scene);
-        let entities: Vec<_> = (0..3).map(|_| spawn_with_script(&scene, "MultiErrorScript")).collect();
+        let entities: Vec<_> = (0..3)
+            .map(|_| spawn_with_script(&scene, "MultiErrorScript"))
+            .collect();
         sys.flush(py);
 
         for &eid in &entities {
@@ -551,7 +626,13 @@ fn t_script_14_hot_reload_file_change_detection() {
         sys.flush(py);
 
         // Verify V1 is active
-        let v1: i64 = main.getattr("HotReload14").unwrap().getattr("VERSION").unwrap().extract().unwrap();
+        let v1: i64 = main
+            .getattr("HotReload14")
+            .unwrap()
+            .getattr("VERSION")
+            .unwrap()
+            .extract()
+            .unwrap();
         assert_eq!(v1, 1, "version 1 should be loaded initially");
 
         // Simulate file change: write version 2 to the same file
@@ -567,10 +648,17 @@ fn t_script_14_hot_reload_file_change_detection() {
         py.run(cstr_v2.as_c_str(), None, None).unwrap();
 
         let class_v2 = main.getattr("HotReload14").unwrap().unbind();
-        sys.reload_entity_script(py, entity, class_v2).expect("reload v2");
+        sys.reload_entity_script(py, entity, class_v2)
+            .expect("reload v2");
 
         // Verify V2 is now active
-        let v2: i64 = main.getattr("HotReload14").unwrap().getattr("VERSION").unwrap().extract().unwrap();
+        let v2: i64 = main
+            .getattr("HotReload14")
+            .unwrap()
+            .getattr("VERSION")
+            .unwrap()
+            .extract()
+            .unwrap();
         assert_eq!(v2, 2, "version 2 should be loaded after file change");
     });
 }
@@ -604,8 +692,10 @@ class HotScriptV2:
         global _flag_v2_15
         _flag_v2_15 = True
 ",
-            None, None,
-        ).unwrap();
+            None,
+            None,
+        )
+        .unwrap();
 
         let main = py.import("__main__").unwrap();
         register_script_class("HotScriptV1", main.getattr("HotScriptV1").unwrap().unbind());
@@ -615,7 +705,8 @@ class HotScriptV2:
         sys.flush(py);
 
         let class_v2 = main.getattr("HotScriptV2").unwrap().unbind();
-        sys.reload_entity_script(py, entity, class_v2).expect("reload");
+        sys.reload_entity_script(py, entity, class_v2)
+            .expect("reload");
 
         sys.queue_collision(entity, dummy, [1.0, 0.0, 0.0]);
         sys.flush(py);
@@ -653,7 +744,10 @@ fn t_script_16_hot_reload_syntax_error_resilience() {
         py.run(cstr_v1.as_c_str(), None, None).unwrap();
 
         let main = py.import("__main__").unwrap();
-        register_script_class("Resilience16", main.getattr("Resilience16").unwrap().unbind());
+        register_script_class(
+            "Resilience16",
+            main.getattr("Resilience16").unwrap().unbind(),
+        );
 
         let entity = spawn_with_script(&scene, "Resilience16");
         let dummy = spawn_empty(&scene);
@@ -663,10 +757,17 @@ fn t_script_16_hot_reload_syntax_error_resilience() {
         sys.queue_collision(entity, dummy, [0.0, 1.0, 0.0]);
         sys.flush(py);
         let errors_before = sys.drain_errors();
-        assert!(errors_before.is_empty(), "valid script should produce no errors");
+        assert!(
+            errors_before.is_empty(),
+            "valid script should produce no errors"
+        );
 
         // Write invalid Python syntax to the same file
-        std::fs::write(&script_path, b"class Resilience16:\n    def __init__(self BROKEN\n").unwrap();
+        std::fs::write(
+            &script_path,
+            b"class Resilience16:\n    def __init__(self BROKEN\n",
+        )
+        .unwrap();
 
         // Attempt to reload from the broken file — py.run should fail
         let code_bad = std::fs::read_to_string(&script_path).unwrap();
@@ -674,7 +775,10 @@ fn t_script_16_hot_reload_syntax_error_resilience() {
         let reload_result = py.run(cstr_bad.as_c_str(), None, None);
 
         // The reload should fail due to syntax error
-        assert!(reload_result.is_err(), "loading invalid syntax should return an error");
+        assert!(
+            reload_result.is_err(),
+            "loading invalid syntax should return an error"
+        );
 
         // The old valid script should still be active — test by dispatching another collision
         sys.queue_collision(entity, dummy, [1.0, 0.0, 0.0]);
@@ -682,7 +786,10 @@ fn t_script_16_hot_reload_syntax_error_resilience() {
 
         // The old instance should still be present and handle events
         let instance = sys.get_instance(entity);
-        assert!(instance.is_some(), "old script instance should still be active after failed reload");
+        assert!(
+            instance.is_some(),
+            "old script instance should still be active after failed reload"
+        );
     });
 }
 
@@ -703,25 +810,45 @@ class PersistScript17:
     def __init__(self, entity):
         self.entity = entity
 ",
-            None, None,
-        ).unwrap();
+            None,
+            None,
+        )
+        .unwrap();
 
         let main = py.import("__main__").unwrap();
-        register_script_class("PersistScript17", main.getattr("PersistScript17").unwrap().unbind());
+        register_script_class(
+            "PersistScript17",
+            main.getattr("PersistScript17").unwrap().unbind(),
+        );
 
         let entity = spawn_with_transform_and_script(
             &scene,
             "PersistScript17",
-            TransformComponent { x: 10.0, y: 20.0, z: 30.0, ..Default::default() },
+            TransformComponent {
+                x: 10.0,
+                y: 20.0,
+                z: 30.0,
+                ..Default::default()
+            },
         );
         sys.flush(py);
 
         let class2 = main.getattr("PersistScript17").unwrap().unbind();
-        sys.reload_entity_script(py, entity, class2).expect("reload");
+        sys.reload_entity_script(py, entity, class2)
+            .expect("reload");
 
-        let x = scene.components.get_ref::<TransformComponent, _, _>(entity, |t| t.x).unwrap();
-        let y = scene.components.get_ref::<TransformComponent, _, _>(entity, |t| t.y).unwrap();
-        let z = scene.components.get_ref::<TransformComponent, _, _>(entity, |t| t.z).unwrap();
+        let x = scene
+            .components
+            .get_ref::<TransformComponent, _, _>(entity, |t| t.x)
+            .unwrap();
+        let y = scene
+            .components
+            .get_ref::<TransformComponent, _, _>(entity, |t| t.y)
+            .unwrap();
+        let z = scene
+            .components
+            .get_ref::<TransformComponent, _, _>(entity, |t| t.z)
+            .unwrap();
         assert!((x - 10.0).abs() < 1e-5);
         assert!((y - 20.0).abs() < 1e-5);
         assert!((z - 30.0).abs() < 1e-5);
@@ -759,12 +886,21 @@ fn t_script_18_release_bundle_loading() {
         assert_eq!(val, 99);
 
         let rython = py.import("rython").expect("rython");
-        assert!(!rython.getattr("scene").unwrap().is_none(), "rython.scene accessible");
+        assert!(
+            !rython.getattr("scene").unwrap().is_none(),
+            "rython.scene accessible"
+        );
 
         // Clean up
         let sys = py.import("sys").unwrap();
-        sys.getattr("path").unwrap().call_method1("remove", (&bundle_str,)).ok();
-        sys.getattr("modules").unwrap().del_item("bundle_test_18").ok();
+        sys.getattr("path")
+            .unwrap()
+            .call_method1("remove", (&bundle_str,))
+            .ok();
+        sys.getattr("modules")
+            .unwrap()
+            .del_item("bundle_test_18")
+            .ok();
     });
 }
 
@@ -786,11 +922,16 @@ class BatchScript19:
     def on_collision(self, other, normal):
         pass
 ",
-            None, None,
-        ).unwrap();
+            None,
+            None,
+        )
+        .unwrap();
 
         let main = py.import("__main__").unwrap();
-        register_script_class("BatchScript19", main.getattr("BatchScript19").unwrap().unbind());
+        register_script_class(
+            "BatchScript19",
+            main.getattr("BatchScript19").unwrap().unbind(),
+        );
 
         let entity = spawn_with_script(&scene, "BatchScript19");
         let dummy = spawn_empty(&scene);
@@ -807,7 +948,10 @@ class BatchScript19:
         sys.flush(py);
 
         let count = gil_dispatch_count();
-        assert!(count <= 2, "GIL acquired at most 2 times per frame, got {count}");
+        assert!(
+            count <= 2,
+            "GIL acquired at most 2 times per frame, got {count}"
+        );
     });
 }
 
@@ -828,12 +972,22 @@ entity_21 = rython.scene.spawn(
     mesh='cube_mesh',
 )
 ",
-            None, None,
-        ).expect("spawn with mesh kwarg");
+            None,
+            None,
+        )
+        .expect("spawn with mesh kwarg");
 
         let main = py.import("__main__").unwrap();
-        let eid: u64 = main.getattr("entity_21").unwrap().getattr("id").unwrap().extract().unwrap();
-        let mesh = scene.components.get::<MeshComponent>(rython_ecs::EntityId(eid));
+        let eid: u64 = main
+            .getattr("entity_21")
+            .unwrap()
+            .getattr("id")
+            .unwrap()
+            .extract()
+            .unwrap();
+        let mesh = scene
+            .components
+            .get::<MeshComponent>(rython_ecs::EntityId(eid));
         assert!(mesh.is_some(), "MeshComponent should be present");
         assert_eq!(mesh.unwrap().mesh_id, "cube_mesh");
     });
@@ -853,16 +1007,32 @@ fn t_script_22_spawn_with_tags_kwarg() {
 import rython
 entity_22 = rython.scene.spawn(tags=['player', 'cube'])
 ",
-            None, None,
-        ).expect("spawn with tags kwarg");
+            None,
+            None,
+        )
+        .expect("spawn with tags kwarg");
 
         let main = py.import("__main__").unwrap();
-        let eid: u64 = main.getattr("entity_22").unwrap().getattr("id").unwrap().extract().unwrap();
-        let tags = scene.components.get::<TagComponent>(rython_ecs::EntityId(eid));
+        let eid: u64 = main
+            .getattr("entity_22")
+            .unwrap()
+            .getattr("id")
+            .unwrap()
+            .extract()
+            .unwrap();
+        let tags = scene
+            .components
+            .get::<TagComponent>(rython_ecs::EntityId(eid));
         assert!(tags.is_some(), "TagComponent should be present");
         let tags = tags.unwrap();
-        assert!(tags.tags.contains(&"player".to_string()), "should have 'player' tag");
-        assert!(tags.tags.contains(&"cube".to_string()), "should have 'cube' tag");
+        assert!(
+            tags.tags.contains(&"player".to_string()),
+            "should have 'player' tag"
+        );
+        assert!(
+            tags.tags.contains(&"cube".to_string()),
+            "should have 'cube' tag"
+        );
     });
 }
 
@@ -884,8 +1054,10 @@ cam_px = rython.camera.pos_x
 cam_py = rython.camera.pos_y
 cam_pz = rython.camera.pos_z
 ",
-            None, None,
-        ).expect("camera API");
+            None,
+            None,
+        )
+        .expect("camera API");
 
         let main = py.import("__main__").unwrap();
         let px: f32 = main.getattr("cam_px").unwrap().extract().unwrap();
@@ -916,8 +1088,10 @@ def on_tick_24():
     tick_count_24 += 1
 rython.scheduler.register_recurring(on_tick_24)
 ",
-            None, None,
-        ).expect("register_recurring");
+            None,
+            None,
+        )
+        .expect("register_recurring");
 
         flush_recurring_callbacks(py);
         flush_recurring_callbacks(py);
@@ -946,8 +1120,10 @@ fn t_script_25_renderer_draw_text() {
 import rython
 rython.renderer.draw_text('Hello World', font_id='main', x=0.1, y=0.9, size=24)
 ",
-            None, None,
-        ).expect("draw_text");
+            None,
+            None,
+        )
+        .expect("draw_text");
     });
 
     let cmds = drain_draw_commands();
@@ -970,15 +1146,24 @@ fn t_script_26_time_elapsed() {
     let scene = Arc::new(Scene::new());
     setup(&scene);
 
-    set_elapsed_secs(3.14);
+    #[allow(clippy::approx_constant)]
+    const TEST_VALUE: f64 = 3.14;
+    set_elapsed_secs(TEST_VALUE);
 
     Python::attach(|py| {
-        py.run(c"import rython; elapsed_26 = rython.time.elapsed", None, None)
-            .expect("time.elapsed");
+        py.run(
+            c"import rython; elapsed_26 = rython.time.elapsed",
+            None,
+            None,
+        )
+        .expect("time.elapsed");
 
         let main = py.import("__main__").unwrap();
         let t: f64 = main.getattr("elapsed_26").unwrap().extract().unwrap();
-        assert!((t - 3.14).abs() < 1e-6, "elapsed should be 3.14, got {t}");
+        assert!(
+            (t - TEST_VALUE).abs() < 1e-6,
+            "elapsed should be {TEST_VALUE}, got {t}"
+        );
     });
 }
 
@@ -998,7 +1183,10 @@ fn t_script_27_engine_request_quit() {
             .expect("request_quit");
     });
 
-    assert!(was_quit_requested(), "quit flag should be set after request_quit()");
+    assert!(
+        was_quit_requested(),
+        "quit flag should be set after request_quit()"
+    );
     reset_quit_requested(); // clean up for future tests
 }
 
@@ -1031,7 +1219,10 @@ rython.scene.emit('test_28')
 
         let main = py.import("__main__").unwrap();
         let count: i64 = main.getattr("count_28").unwrap().extract().unwrap();
-        assert_eq!(count, 1, "handler should fire once before unsubscribe, not after");
+        assert_eq!(
+            count, 1,
+            "handler should fire once before unsubscribe, not after"
+        );
     });
 }
 
@@ -1128,7 +1319,10 @@ fn t_script_31_axis_change_events() {
     let mut map = InputMap::new("test31");
     map.bind_axis(
         "horizontal",
-        AxisBinding::KBAxis { negative: KeyCode::D, positive: KeyCode::A },
+        AxisBinding::KBAxis {
+            negative: KeyCode::D,
+            positive: KeyCode::A,
+        },
     );
     pc.register_map(map);
 
@@ -1141,8 +1335,14 @@ fn t_script_31_axis_change_events() {
     {
         let evs = pc.pending_events();
         let guard = evs.lock().unwrap();
-        let axis_evs: Vec<_> = guard.iter().filter(|e| e.action.starts_with("axis:")).collect();
-        assert!(!axis_evs.is_empty(), "axis change event expected when key pressed above deadzone");
+        let axis_evs: Vec<_> = guard
+            .iter()
+            .filter(|e| e.action.starts_with("axis:"))
+            .collect();
+        assert!(
+            !axis_evs.is_empty(),
+            "axis change event expected when key pressed above deadzone"
+        );
         let ev = axis_evs[0];
         assert_eq!(ev.action, "axis:horizontal");
         assert!((ev.value - 1.0).abs() < 1e-5, "axis value should be 1.0");
@@ -1154,7 +1354,10 @@ fn t_script_31_axis_change_events() {
     {
         let evs = pc.pending_events();
         let guard = evs.lock().unwrap();
-        let axis_evs: Vec<_> = guard.iter().filter(|e| e.action.starts_with("axis:")).collect();
+        let axis_evs: Vec<_> = guard
+            .iter()
+            .filter(|e| e.action.starts_with("axis:"))
+            .collect();
         assert!(axis_evs.is_empty(), "no axis event when value unchanged");
     }
     pc.pending_events().lock().unwrap().clear();
@@ -1164,11 +1367,20 @@ fn t_script_31_axis_change_events() {
     {
         let evs = pc.pending_events();
         let guard = evs.lock().unwrap();
-        let axis_evs: Vec<_> = guard.iter().filter(|e| e.action.starts_with("axis:")).collect();
-        assert!(!axis_evs.is_empty(), "axis change event expected when key released");
+        let axis_evs: Vec<_> = guard
+            .iter()
+            .filter(|e| e.action.starts_with("axis:"))
+            .collect();
+        assert!(
+            !axis_evs.is_empty(),
+            "axis change event expected when key released"
+        );
         let ev = axis_evs[0];
         assert_eq!(ev.action, "axis:horizontal");
-        assert!(ev.value.abs() < 1e-5, "axis value should be 0.0 after release");
+        assert!(
+            ev.value.abs() < 1e-5,
+            "axis value should be 0.0 after release"
+        );
     }
 }
 
@@ -1222,15 +1434,25 @@ fn t_script_20_entry_point_execution() {
 
     Python::attach(|py| {
         let sys = py.import("sys").unwrap();
-        sys.getattr("path").unwrap().call_method1("insert", (0i32, &dir_str)).unwrap();
+        sys.getattr("path")
+            .unwrap()
+            .call_method1("insert", (0i32, &dir_str))
+            .unwrap();
 
         rython_scripting::call_entry_point(py, "ep_main_20").expect("entry point");
 
         let module = py.import("ep_main_20").unwrap();
-        let called: bool = module.getattr("_init_called_20").unwrap().extract().unwrap();
+        let called: bool = module
+            .getattr("_init_called_20")
+            .unwrap()
+            .extract()
+            .unwrap();
         assert!(called, "init() should have been called");
 
-        sys.getattr("path").unwrap().call_method1("remove", (&dir_str,)).ok();
+        sys.getattr("path")
+            .unwrap()
+            .call_method1("remove", (&dir_str,))
+            .ok();
         sys.getattr("modules").unwrap().del_item("ep_main_20").ok();
     });
 }
@@ -1262,8 +1484,18 @@ fn t_script_34_json_bool_to_py() {
     Python::attach(|py| {
         let val = serde_json::json!({ "t": true, "f": false });
         let dict = rython_scripting::bridge::json_to_py_dict(py, &val).expect("json_to_py_dict");
-        let t: bool = dict.get_item("t").unwrap().expect("key 't'").extract().unwrap();
-        let f: bool = dict.get_item("f").unwrap().expect("key 'f'").extract().unwrap();
+        let t: bool = dict
+            .get_item("t")
+            .unwrap()
+            .expect("key 't'")
+            .extract()
+            .unwrap();
+        let f: bool = dict
+            .get_item("f")
+            .unwrap()
+            .expect("key 'f'")
+            .extract()
+            .unwrap();
         assert!(t, "JSON true must become Python True");
         assert!(!f, "JSON false must become Python False");
     });
@@ -1278,12 +1510,27 @@ fn t_script_35_json_number_to_py() {
     setup(&scene);
 
     Python::attach(|py| {
-        let val = serde_json::json!({ "i": 42i64, "fl": 3.14f64 });
+        #[allow(clippy::approx_constant)]
+        const JSON_FLOAT: f64 = 3.14;
+        let val = serde_json::json!({ "i": 42i64, "fl": JSON_FLOAT });
         let dict = rython_scripting::bridge::json_to_py_dict(py, &val).expect("json_to_py_dict");
-        let i: i64 = dict.get_item("i").unwrap().expect("key 'i'").extract().unwrap();
-        let fl: f64 = dict.get_item("fl").unwrap().expect("key 'fl'").extract().unwrap();
+        let i: i64 = dict
+            .get_item("i")
+            .unwrap()
+            .expect("key 'i'")
+            .extract()
+            .unwrap();
+        let fl: f64 = dict
+            .get_item("fl")
+            .unwrap()
+            .expect("key 'fl'")
+            .extract()
+            .unwrap();
         assert_eq!(i, 42, "JSON integer must map to Python int");
-        assert!((fl - 3.14).abs() < 1e-9, "JSON float must map to Python float");
+        assert!(
+            (fl - JSON_FLOAT).abs() < 1e-9,
+            "JSON float must map to Python float"
+        );
     });
 }
 
@@ -1298,7 +1545,12 @@ fn t_script_36_json_string_to_py() {
     Python::attach(|py| {
         let val = serde_json::json!({ "s": "hello world" });
         let dict = rython_scripting::bridge::json_to_py_dict(py, &val).expect("json_to_py_dict");
-        let s: String = dict.get_item("s").unwrap().expect("key 's'").extract().unwrap();
+        let s: String = dict
+            .get_item("s")
+            .unwrap()
+            .expect("key 's'")
+            .extract()
+            .unwrap();
         assert_eq!(s, "hello world", "JSON string must map to Python str");
     });
 }
@@ -1322,7 +1574,10 @@ fn t_script_37_json_array_to_py() {
         assert!(e1);
         let e2: String = arr.get_item(2).unwrap().extract().unwrap();
         assert_eq!(e2, "x");
-        assert!(arr.get_item(3).unwrap().is_none(), "null array element must be Python None");
+        assert!(
+            arr.get_item(3).unwrap().is_none(),
+            "null array element must be Python None"
+        );
     });
 }
 
@@ -1369,8 +1624,10 @@ rython.scene.subscribe('multi_39', handler_a_39)
 rython.scene.subscribe('multi_39', handler_b_39)
 rython.scene.emit('multi_39')
 ",
-            None, None,
-        ).expect("multiple subscribers");
+            None,
+            None,
+        )
+        .expect("multiple subscribers");
 
         let main = py.import("__main__").unwrap();
         let a: i64 = main.getattr("count_a_39").unwrap().extract().unwrap();
@@ -1392,8 +1649,10 @@ fn t_script_40_emit_no_subscribers() {
         // Must not panic
         py.run(
             c"import rython; rython.scene.emit('orphan_event_40')",
-            None, None,
-        ).expect("emit with no subscribers must not panic");
+            None,
+            None,
+        )
+        .expect("emit with no subscribers must not panic");
     });
 }
 
@@ -1413,8 +1672,10 @@ def noop_41(**kwargs): pass
 hid1 = rython.scene.subscribe('unique_id_41', noop_41)
 hid2 = rython.scene.subscribe('unique_id_41', noop_41)
 ",
-            None, None,
-        ).expect("subscribe unique IDs");
+            None,
+            None,
+        )
+        .expect("subscribe unique IDs");
 
         let main = py.import("__main__").unwrap();
         let id1: i64 = main.getattr("hid1").unwrap().extract().unwrap();
@@ -1452,8 +1713,10 @@ rython.scheduler.on_timer(1.0, on_early_42)
 # fire_at = 5.0 + 5.0 = 10.0
 rython.scheduler.on_timer(5.0, on_late_42)
 ",
-            None, None,
-        ).expect("timer setup");
+            None,
+            None,
+        )
+        .expect("timer setup");
 
         // elapsed=7.0: early fires, late does not
         set_elapsed_secs(7.0);
@@ -1462,8 +1725,14 @@ rython.scheduler.on_timer(5.0, on_late_42)
         let main = py.import("__main__").unwrap();
         let early: i64 = main.getattr("fired_early_42").unwrap().extract().unwrap();
         let late: i64 = main.getattr("fired_late_42").unwrap().extract().unwrap();
-        assert_eq!(early, 1, "early timer (fire_at=6.0) must fire at elapsed=7.0");
-        assert_eq!(late, 0, "late timer (fire_at=10.0) must NOT fire at elapsed=7.0");
+        assert_eq!(
+            early, 1,
+            "early timer (fire_at=6.0) must fire at elapsed=7.0"
+        );
+        assert_eq!(
+            late, 0,
+            "late timer (fire_at=10.0) must NOT fire at elapsed=7.0"
+        );
 
         // elapsed=11.0: late fires
         set_elapsed_secs(11.0);
@@ -1496,15 +1765,20 @@ def on_exact_43():
 # fire_at = 100.0 + 2.5 = 102.5
 rython.scheduler.on_timer(2.5, on_exact_43)
 ",
-            None, None,
-        ).expect("timer setup");
+            None,
+            None,
+        )
+        .expect("timer setup");
 
         // elapsed == fire_at exactly: must fire (>= check)
         set_elapsed_secs(102.5);
         flush_timers(py);
         let main = py.import("__main__").unwrap();
         let fired: i64 = main.getattr("exact_fired_43").unwrap().extract().unwrap();
-        assert_eq!(fired, 1, "timer must fire when elapsed == fire_at (>= boundary)");
+        assert_eq!(
+            fired, 1,
+            "timer must fire when elapsed == fire_at (>= boundary)"
+        );
     });
 }
 
@@ -1533,14 +1807,19 @@ def safe_timer_44():
 rython.scheduler.on_timer(0.0, bad_timer_44)
 rython.scheduler.on_timer(0.0, safe_timer_44)
 ",
-            None, None,
-        ).expect("timer setup");
+            None,
+            None,
+        )
+        .expect("timer setup");
 
         flush_timers(py); // must not panic despite bad_timer raising
 
         let main = py.import("__main__").unwrap();
         let safe: i64 = main.getattr("safe_fired_44").unwrap().extract().unwrap();
-        assert_eq!(safe, 1, "safe timer must fire even after another timer raised an exception");
+        assert_eq!(
+            safe, 1,
+            "safe timer must fire even after another timer raised an exception"
+        );
     });
 }
 
@@ -1553,7 +1832,10 @@ fn t_script_45_get_script_class_unknown() {
     setup(&scene);
 
     let result = rython_scripting::get_script_class("CompletelyUnknownClass_45");
-    assert!(result.is_none(), "get_script_class for unregistered name must return None");
+    assert!(
+        result.is_none(),
+        "get_script_class for unregistered name must return None"
+    );
 }
 
 // ─── T-SCRIPT-46: Bridge — drain_draw_commands second drain is empty ──────────
@@ -1568,15 +1850,24 @@ fn t_script_46_drain_draw_commands_idempotent() {
     Python::attach(|py| {
         py.run(
             c"import rython; rython.renderer.draw_text('X', font_id='f', x=0.0, y=0.0, size=10)",
-            None, None,
-        ).expect("draw_text");
+            None,
+            None,
+        )
+        .expect("draw_text");
     });
 
     let first = drain_draw_commands();
-    assert_eq!(first.len(), 1, "first drain must contain the enqueued command");
+    assert_eq!(
+        first.len(),
+        1,
+        "first drain must contain the enqueued command"
+    );
 
     let second = drain_draw_commands();
-    assert!(second.is_empty(), "second drain must return empty after first consumed all");
+    assert!(
+        second.is_empty(),
+        "second drain must return empty after first consumed all"
+    );
 }
 
 // ─── T-SCRIPT-47: Bridge — register_script_class overwrites duplicate name ────
@@ -1598,8 +1889,10 @@ class ScriptV2_47:
     VERSION = 2
     def __init__(self, entity): self.entity = entity
 ",
-            None, None,
-        ).unwrap();
+            None,
+            None,
+        )
+        .unwrap();
 
         let main = py.import("__main__").unwrap();
         let v1 = main.getattr("ScriptV1_47").unwrap().unbind();
@@ -1723,7 +2016,10 @@ handle_49 = rython.scheduler.submit_background(bg_task_49)
         if done {
             break;
         }
-        assert!(std::time::Instant::now() < deadline, "background task timed out");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "background task timed out"
+        );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 
@@ -1772,7 +2068,10 @@ rython.scheduler.run_sequential(seq_task_50)
         flush_python_seq_tasks(py);
 
         let called: bool = main.getattr("seq_called_50").unwrap().extract().unwrap();
-        assert!(called, "sequential task must run after flush_python_seq_tasks");
+        assert!(
+            called,
+            "sequential task must run after flush_python_seq_tasks"
+        );
 
         // A second flush must not re-run it (one-shot)
         py.run(c"seq_called_50 = False", None, None).unwrap();
@@ -1811,8 +2110,15 @@ handle_51.on_complete(on_done_51)
 
         flush_python_par_tasks(py);
 
-        let called: bool = main.getattr("complete_called_51").unwrap().extract().unwrap();
-        assert!(called, "on_complete callback must fire after parallel task completes");
+        let called: bool = main
+            .getattr("complete_called_51")
+            .unwrap()
+            .extract()
+            .unwrap();
+        assert!(
+            called,
+            "on_complete callback must fire after parallel task completes"
+        );
     });
 }
 
@@ -1857,7 +2163,10 @@ handle_52 = rython.scheduler.submit_parallel(failing_task_52)
             .unwrap()
             .extract()
             .unwrap();
-        assert!(error.is_some(), "error message must be populated for failed task");
+        assert!(
+            error.is_some(),
+            "error message must be populated for failed task"
+        );
         assert!(
             error.unwrap().contains("boom 52"),
             "error message must include original exception text"
@@ -1899,14 +2208,19 @@ rython.scene.subscribe('event_b_53', on_event_b_53)
 # Kick off the chain
 rython.scene.emit('event_a_53', src='root')
 ",
-            None, None,
-        ).expect("recursive event emission must not crash");
+            None,
+            None,
+        )
+        .expect("recursive event emission must not crash");
 
         let main = py.import("__main__").unwrap();
         let a: i64 = main.getattr("depth_a_53").unwrap().extract().unwrap();
         let b: i64 = main.getattr("depth_b_53").unwrap().extract().unwrap();
         assert_eq!(a, 1, "event_a handler must fire once");
-        assert_eq!(b, 1, "event_b handler must fire once (triggered by event_a handler)");
+        assert_eq!(
+            b, 1,
+            "event_b handler must fire once (triggered by event_a handler)"
+        );
     });
 }
 
@@ -1919,13 +2233,12 @@ fn t_script_54_stale_entity_ref_after_despawn() {
     setup(&scene);
 
     Python::attach(|py| {
-        let code = format!(
-            "\
+        let code = "\
 import rython
 entity_54 = rython.scene.spawn(transform=rython.Transform(x=5.0, y=10.0, z=15.0))
 eid_54 = entity_54.id
 "
-        );
+        .to_string();
         let cstr = CString::new(code).unwrap();
         py.run(cstr.as_c_str(), None, None).expect("spawn entity");
 
@@ -1943,8 +2256,10 @@ tx_54 = entity_54.transform.x
 ty_54 = entity_54.transform.y
 tz_54 = entity_54.transform.z
 ",
-            None, None,
-        ).expect("stale entity transform access must not crash");
+            None,
+            None,
+        )
+        .expect("stale entity transform access must not crash");
 
         let tx: f64 = main.getattr("tx_54").unwrap().extract().unwrap();
         let ty: f64 = main.getattr("ty_54").unwrap().extract().unwrap();
@@ -1978,8 +2293,10 @@ def throttled_fn_55():
     global call_count_55
     call_count_55 += 1
 ",
-            None, None,
-        ).expect("throttle setup");
+            None,
+            None,
+        )
+        .expect("throttle setup");
 
         let main = py.import("__main__").unwrap();
 
@@ -1988,14 +2305,15 @@ def throttled_fn_55():
         for frame in 0..120 {
             let t = (frame as f64) * dt;
             set_elapsed_secs(t);
-            py.run(c"throttled_fn_55()", None, None).expect("throttle call");
+            py.run(c"throttled_fn_55()", None, None)
+                .expect("throttle call");
         }
 
         let count: i64 = main.getattr("call_count_55").unwrap().extract().unwrap();
         // At hz=1, should fire approximately once per second → ~2 times over 2 seconds
         // Allow some tolerance for boundary effects (first call fires immediately at t=0)
         assert!(
-            count >= 2 && count <= 3,
+            (2..=3).contains(&count),
             "throttle(hz=1) over 2 seconds should fire ~2-3 times, got {count}"
         );
         assert!(
@@ -2029,8 +2347,10 @@ def self_removing_handler_56(**kwargs):
 
 hid_56 = rython.scene.subscribe('self_remove_56', self_removing_handler_56)
 ",
-            None, None,
-        ).expect("event unsubscribe setup");
+            None,
+            None,
+        )
+        .expect("event unsubscribe setup");
 
         let main = py.import("__main__").unwrap();
 
@@ -2044,6 +2364,9 @@ hid_56 = rython.scene.subscribe('self_remove_56', self_removing_handler_56)
         py.run(c"rython.scene.emit('self_remove_56')", None, None)
             .expect("second emit must not crash");
         let count: i64 = main.getattr("fire_count_56").unwrap().extract().unwrap();
-        assert_eq!(count, 1, "handler must not fire again after unsubscribing during dispatch");
+        assert_eq!(
+            count, 1,
+            "handler must not fire again after unsubscribing during dispatch"
+        );
     });
 }
