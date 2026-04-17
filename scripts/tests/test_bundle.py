@@ -130,6 +130,63 @@ def test_assert_no_pth_files_rejects_offender():
         assert raised, "assert_no_pth_files must fail loudly on a .pth file"
 
 
+# ── Symlink guard (mirrors the .pth guard pair) ──────────────────────────────
+
+def test_assert_no_symlinks_passes_on_clean_tree():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "a.so").write_bytes(b"ext")
+        (root / "sub").mkdir()
+        (root / "sub" / "b.so").write_bytes(b"ext")
+        # Should not raise / SystemExit.
+        bundle.assert_no_symlinks(root, "fixture")
+
+
+def test_assert_no_symlinks_rejects_file_symlink():
+    if not hasattr(os, "symlink"):
+        return  # Windows without privilege — skip
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        target = td_path / "real.so"
+        target.write_bytes(b"real")
+        root = td_path / "root"
+        root.mkdir()
+        try:
+            os.symlink(target, root / "link.so")
+        except (OSError, NotImplementedError):
+            return  # no symlink privilege
+        raised = False
+        try:
+            bundle.assert_no_symlinks(root, "fixture")
+        except SystemExit:
+            raised = True
+        assert raised, "assert_no_symlinks must fail loudly on a file symlink"
+
+
+def test_assert_no_symlinks_rejects_directory_symlink():
+    """Directory symlinks are the concrete C3 vector — Rust's tree_hash
+    silently skips them, so any survivor creates an untracked file-set gap."""
+    if not hasattr(os, "symlink"):
+        return
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        external = td_path / "external"
+        external.mkdir()
+        (external / "hidden.so").write_bytes(b"hidden")
+        root = td_path / "root"
+        root.mkdir()
+        try:
+            os.symlink(external, root / "alias", target_is_directory=True)
+        except (OSError, NotImplementedError):
+            return
+        raised = False
+        try:
+            bundle.assert_no_symlinks(root, "fixture")
+        except SystemExit:
+            raised = True
+        assert raised, "assert_no_symlinks must fail loudly on a directory symlink"
+
+
 # ── Symlink handling ─────────────────────────────────────────────────────────
 
 def test_tree_hash_skips_symlinked_directory():
@@ -210,6 +267,12 @@ def main() -> int:
          test_assert_no_pth_files_passes_on_clean_tree),
         ("test_assert_no_pth_files_rejects_offender",
          test_assert_no_pth_files_rejects_offender),
+        ("test_assert_no_symlinks_passes_on_clean_tree",
+         test_assert_no_symlinks_passes_on_clean_tree),
+        ("test_assert_no_symlinks_rejects_file_symlink",
+         test_assert_no_symlinks_rejects_file_symlink),
+        ("test_assert_no_symlinks_rejects_directory_symlink",
+         test_assert_no_symlinks_rejects_directory_symlink),
     ]
     failed = 0
     for name, fn in tests:
