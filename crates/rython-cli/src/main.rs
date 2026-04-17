@@ -1144,7 +1144,8 @@ fn resolve_mode(args: &CliArgs) -> Result<(ScriptingConfig, EngineConfig), Resol
         // tampered stdlib / bundle / extension tree cannot execute code.
         let seal = release_seal::verify(&proj_dir)?;
         log::info!(
-            "release seal verified (bundle {}, stdlib {}, lib-dynload {})",
+            "release seal verified (libpython {}, bundle {}, stdlib {}, lib-dynload {})",
+            release_seal::short_hex(release_seal::LIBPYTHON_HASH.unwrap_or("")),
             release_seal::short_hex(release_seal::BUNDLE_HASH.unwrap_or("")),
             release_seal::short_hex(release_seal::STDLIB_HASH.unwrap_or("")),
             release_seal::short_hex(release_seal::LIBDYNLOAD_HASH.unwrap_or("")),
@@ -1165,12 +1166,31 @@ fn resolve_mode(args: &CliArgs) -> Result<(ScriptingConfig, EngineConfig), Resol
         // * `PYTHONDONTWRITEBYTECODE=1` prevents runtime-written `.pyc` files
         //   from sitting alongside the sealed stdlib zip where they would
         //   escape all hash coverage.
+        // * `PYTHONSAFEPATH=1` (Python 3.11+) suppresses the implicit prepend
+        //   of CWD / script-dir onto `sys.path`.
+        // * `PYTHONBREAKPOINT=0` disables `breakpoint()` dispatch — otherwise
+        //   a game script calling `breakpoint()` with an attacker-controlled
+        //   environment executes whatever callable the env var names.
+        // * All other PYTHON* startup-shaping vars are cleared so a
+        //   user-controlled environment cannot redirect the interpreter into
+        //   an unexpected startup path.
         let python_home = proj_dir.join("python");
         unsafe {
             std::env::set_var("PYTHONHOME", &python_home);
             std::env::set_var("PYTHONNOUSERSITE", "1");
-            std::env::remove_var("PYTHONPATH");
             std::env::set_var("PYTHONDONTWRITEBYTECODE", "1");
+            std::env::set_var("PYTHONSAFEPATH", "1");
+            std::env::set_var("PYTHONBREAKPOINT", "0");
+            std::env::remove_var("PYTHONPATH");
+            std::env::remove_var("PYTHONSTARTUP");
+            std::env::remove_var("PYTHONEXECUTABLE");
+            std::env::remove_var("PYTHONINSPECT");
+            std::env::remove_var("PYTHONDEBUG");
+            std::env::remove_var("PYTHONVERBOSE");
+            std::env::remove_var("PYTHONWARNINGS");
+            std::env::remove_var("PYTHONOPTIMIZE");
+            std::env::remove_var("PYTHONUSERBASE");
+            std::env::remove_var("PYTHONDEVMODE");
         }
 
         // Entry point comes from the compile-time constant (via the seal) —

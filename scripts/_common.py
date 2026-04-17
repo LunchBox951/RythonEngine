@@ -16,4 +16,10 @@ STDLIB_EXCLUDES = frozenset({
     "ensurepip",
     "__pycache__",
     "site-packages",
+    "lib2to3",
 })
+
+# File suffix processed by CPython's `site` module at startup. A `.pth` file
+# anywhere on `sys.path` can inject arbitrary directories — so no sealed
+# release distribution may contain one, and `bundle.py` aborts if it finds any.
+PTH_SUFFIX = ".pth"

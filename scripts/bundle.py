@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import py_compile
 import shutil
 import sys
@@ -47,7 +48,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from _common import STDLIB_EXCLUDES
+from _common import PTH_SUFFIX, STDLIB_EXCLUDES
 
 
 # ── Args ──────────────────────────────────────────────────────────────────────
@@ -73,15 +74,26 @@ def sha256_file(path: Path) -> str:
 def tree_hash(root: Path) -> str:
     """Canonical tree hash — mirrors release_seal::tree_hash in Rust.
 
-    For every regular file under `root`, sorted by forward-slash relative
-    path (bytewise ascending), feed into one outer SHA-256:
+    Symlinks are skipped on both sides (neither descended as directories nor
+    hashed as files). Rust's `entry.file_type()` naturally ignores them; we
+    match that with `os.walk(followlinks=False)` plus an explicit
+    `is_symlink()` check on files. Keeping both sides symlink-agnostic avoids
+    cross-language drift on platforms where `package.py` creates the
+    `python/lib64 -> python/lib` compatibility symlink.
+
+    For every regular file found, sorted by forward-slash relative path
+    (bytewise ascending), feed into one outer SHA-256:
         relpath_bytes || 0x00 || sha256(file_bytes)  (raw, not hex)
     """
     files: list[tuple[str, Path]] = []
-    for path in root.rglob("*"):
-        if path.is_file():
-            rel = path.relative_to(root).as_posix()
-            files.append((rel, path))
+    for dirpath, _dirnames, filenames in os.walk(root, followlinks=False):
+        base = Path(dirpath)
+        for fname in filenames:
+            fpath = base / fname
+            if fpath.is_symlink():
+                continue
+            rel = fpath.relative_to(root).as_posix()
+            files.append((rel, fpath))
     files.sort(key=lambda t: t[0].encode())
 
     outer = hashlib.sha256()
@@ -203,6 +215,10 @@ def copy_lib_dynload(out_dir: Path) -> Path:
     Returns the directory that was populated (always `<out_dir>/lib-dynload`
     regardless of platform — the Rust side picks the right subdir at runtime
     based on `cfg!(windows)`).
+
+    Aborts if any `.pth` file is copied. The extension-module directory is on
+    `sys.path` at runtime, so a stray `.pth` file shipped here would be
+    processed by `site.py` and could inject attacker-controlled directories.
     """
     dest = out_dir / "lib-dynload"
     if dest.exists():
@@ -224,7 +240,75 @@ def copy_lib_dynload(out_dir: Path) -> Path:
             shutil.copytree(item, target)
         else:
             shutil.copy2(item, target)
+
+    assert_no_pth_files(dest, "lib-dynload")
     return dest
+
+
+def assert_no_pth_files(tree: Path, label: str) -> None:
+    """Fail loudly if any `.pth` file exists under `tree`.
+
+    Called on every directory that will land on `sys.path` in the sealed
+    release layout. A `.pth` file in any of these directories is processed
+    by `site.py` at interpreter startup and can inject arbitrary
+    attacker-controlled entries into `sys.path`, defeating the whole seal.
+    """
+    offenders = [p for p in tree.rglob(f"*{PTH_SUFFIX}") if p.is_file()]
+    if offenders:
+        listing = "\n  ".join(str(p) for p in offenders)
+        sys.exit(
+            f"FATAL: .pth file(s) found in {label} tree — refusing to seal:\n"
+            f"  {listing}\n"
+            "A .pth file at this location is processed by site.py at startup\n"
+            "and can inject attacker-controlled directories into sys.path."
+        )
+
+
+# ── libpython shared object ──────────────────────────────────────────────────
+
+def hash_libpython() -> tuple[str, str]:
+    """Hash the libpython shared object that will be bundled into the release
+    distribution, returning `(hex_digest, soname)`.
+
+    The soname must match exactly what `scripts/package.py` copies into
+    `python/lib/` (POSIX) or the dist root (Windows). Both scripts use the
+    same `sysconfig` probe so their views stay aligned.
+
+    The dynamic linker resolves this file before `main()` runs, so a
+    tampered libpython with `__attribute__((constructor))` executes code
+    before any Rust-side seal check can run. Verifying it in-process is
+    defence-in-depth: we cannot prevent the pre-`main()` execution, but we
+    can guarantee that a tampered distribution refuses to continue past the
+    seal check.
+    """
+    if sys.platform.startswith("win"):
+        ver = sysconfig.get_config_var("VERSION") or sysconfig.get_python_version()
+        digits = ver.replace(".", "")
+        soname = f"python{digits}.dll"
+        candidate = Path(sys.prefix) / soname
+        if not candidate.exists():
+            sys.exit(f"FATAL: could not locate libpython for sealing at {candidate}")
+        return sha256_file(candidate), soname
+
+    libdir = sysconfig.get_config_var("LIBDIR") or ""
+    instsoname = sysconfig.get_config_var("INSTSONAME") or ""
+    if libdir and instsoname:
+        candidate = Path(libdir) / instsoname
+        if candidate.exists():
+            # Match package.py:_patch_rpath_linux, which resolves symlinks
+            # before copying: we hash the real versioned file and pin its
+            # soname as the expected filename at the dist path.
+            return sha256_file(candidate.resolve()), instsoname
+
+    # Fallback: scan sys.prefix/lib for libpython*.so*
+    for p in sorted((Path(sys.prefix) / "lib").glob("libpython*.so*")):
+        if p.is_file() and not p.is_symlink():
+            return sha256_file(p), p.name
+
+    sys.exit(
+        "FATAL: could not locate libpython shared object for sealing.\n"
+        "Ensure the Python development libraries are installed."
+    )
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -255,16 +339,19 @@ def main() -> None:
     print(f"  out:     {out_dir}")
     print(f"  python:  {python_xy()}")
 
-    print("  [1/3] Compiling game .py → .pyc and zipping...")
+    print("  [1/4] Compiling game .py → .pyc and zipping...")
     bundle_path = out_dir / "game.bundle"
     build_game_bundle(game_dir, bundle_path)
 
-    print(f"  [2/3] Compiling stdlib → {zip_name}...")
+    print(f"  [2/4] Compiling stdlib → {zip_name}...")
     stdlib_path = out_dir / zip_name
     build_stdlib_zip(stdlib_path)
 
-    print("  [3/3] Copying lib-dynload extensions...")
+    print("  [3/4] Copying lib-dynload extensions...")
     dynload_dir = copy_lib_dynload(out_dir)
+
+    print("  [4/4] Hashing libpython runtime...")
+    libpython_hash, libpython_soname = hash_libpython()
 
     bundle_hash = sha256_file(bundle_path)
     stdlib_hash = sha256_file(stdlib_path)
@@ -274,6 +361,8 @@ def main() -> None:
         f"RYTHON_BUNDLE_HASH={bundle_hash}",
         f"RYTHON_STDLIB_HASH={stdlib_hash}",
         f"RYTHON_LIBDYNLOAD_HASH={libdyn_hash}",
+        f"RYTHON_LIBPYTHON_HASH={libpython_hash}",
+        f"RYTHON_LIBPYTHON_SONAME={libpython_soname}",
         f"RYTHON_STDLIB_ZIP_NAME={zip_name}",
         f"RYTHON_ENTRY_POINT={entry_point}",
         "RYTHON_SEALED=1",
@@ -286,6 +375,7 @@ def main() -> None:
     print(f"  bundle    sha256={bundle_hash[:12]}…  ({bundle_path.stat().st_size // 1024} KB)")
     print(f"  stdlib    sha256={stdlib_hash[:12]}…  ({stdlib_path.stat().st_size // 1024} KB)")
     print(f"  libdyn    sha256={libdyn_hash[:12]}…")
+    print(f"  libpython sha256={libpython_hash[:12]}…  ({libpython_soname})")
     print(f"  → {hashes_env}")
 
 

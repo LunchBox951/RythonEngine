@@ -13,6 +13,7 @@ Run standalone:
 from __future__ import annotations
 
 import hashlib
+import os
 import sys
 import tempfile
 import zipfile
@@ -105,6 +106,91 @@ def test_build_game_bundle_produces_pyc_entries():
         assert "game/scripts/main.pyc" in names, names
 
 
+# ── .pth guard ───────────────────────────────────────────────────────────────
+
+def test_assert_no_pth_files_passes_on_clean_tree():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "a.so").write_bytes(b"ext")
+        (root / "sub").mkdir()
+        (root / "sub" / "b.so").write_bytes(b"ext")
+        # Should not raise / SystemExit.
+        bundle.assert_no_pth_files(root, "fixture")
+
+
+def test_assert_no_pth_files_rejects_offender():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "evil.pth").write_text("import os\n")
+        raised = False
+        try:
+            bundle.assert_no_pth_files(root, "fixture")
+        except SystemExit:
+            raised = True
+        assert raised, "assert_no_pth_files must fail loudly on a .pth file"
+
+
+# ── Symlink handling ─────────────────────────────────────────────────────────
+
+def test_tree_hash_skips_symlinked_directory():
+    """Rust's `collect_files` skips symlinks (they report neither
+    `is_file()` nor `is_dir()` on the dirent). The Python side must match.
+    """
+    if not hasattr(os, "symlink"):
+        return  # Windows without privilege — skip
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        root = td_path / "root"
+        root.mkdir()
+        (root / "plain.txt").write_bytes(b"payload")
+
+        sibling = td_path / "sibling"
+        sibling.mkdir()
+        (sibling / "hidden.txt").write_bytes(b"not-in-tree")
+
+        try:
+            os.symlink(sibling, root / "symlinked-dir", target_is_directory=True)
+        except (OSError, NotImplementedError):
+            return  # no symlink privilege
+
+        got = bundle.tree_hash(root)
+        # Should equal hashing a tree with only `plain.txt`.
+        with tempfile.TemporaryDirectory() as td2:
+            plain = Path(td2)
+            (plain / "plain.txt").write_bytes(b"payload")
+            expected = bundle.tree_hash(plain)
+        assert got == expected, (
+            "tree_hash followed a symlinked directory — Rust side does not, "
+            "so cross-language hashes will drift."
+        )
+
+
+def test_tree_hash_skips_symlinked_file():
+    if not hasattr(os, "symlink"):
+        return
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        root = td_path / "root"
+        root.mkdir()
+        (root / "real.txt").write_bytes(b"payload")
+
+        target = td_path / "external.txt"
+        target.write_bytes(b"not-in-tree")
+
+        try:
+            os.symlink(target, root / "link.txt")
+        except (OSError, NotImplementedError):
+            return
+
+        got = bundle.tree_hash(root)
+        # Should equal hashing a tree with only `real.txt`.
+        with tempfile.TemporaryDirectory() as td2:
+            plain = Path(td2)
+            (plain / "real.txt").write_bytes(b"payload")
+            expected = bundle.tree_hash(plain)
+        assert got == expected
+
+
 # ── Driver ───────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -112,10 +198,18 @@ def main() -> int:
         ("test_tree_hash_vector", test_tree_hash_vector),
         ("test_tree_hash_empty_dir", test_tree_hash_empty_dir),
         ("test_tree_hash_sort_is_bytewise", test_tree_hash_sort_is_bytewise),
+        ("test_tree_hash_skips_symlinked_directory",
+         test_tree_hash_skips_symlinked_directory),
+        ("test_tree_hash_skips_symlinked_file",
+         test_tree_hash_skips_symlinked_file),
         ("test_sha256_file_matches_hashlib", test_sha256_file_matches_hashlib),
         ("test_stdlib_zip_name_format", test_stdlib_zip_name_format),
         ("test_build_game_bundle_produces_pyc_entries",
          test_build_game_bundle_produces_pyc_entries),
+        ("test_assert_no_pth_files_passes_on_clean_tree",
+         test_assert_no_pth_files_passes_on_clean_tree),
+        ("test_assert_no_pth_files_rejects_offender",
+         test_assert_no_pth_files_rejects_offender),
     ]
     failed = 0
     for name, fn in tests:
