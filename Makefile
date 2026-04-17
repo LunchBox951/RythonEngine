@@ -30,7 +30,7 @@ seal-bundle:
 # `env $(cat hashes.env)` injects RYTHON_*_HASH into cargo's env so that
 # build.rs forwards them to rustc as compile-time constants.
 dist: seal-bundle
-	env $$(cat $(BUNDLE_DIR)/hashes.env | grep -v '^$$' | xargs) cargo build --release
+	env $$(cat $(BUNDLE_DIR)/hashes.env | grep -v '^$$' | xargs) cargo build --release --locked
 	python3 scripts/package.py \
 	    --platform   $(PLATFORM) \
 	    --arch       $(ARCH) \

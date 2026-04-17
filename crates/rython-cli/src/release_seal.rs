@@ -127,11 +127,21 @@ fn verify_inner(
     //    constructor from firing, but we can guarantee the sealed binary
     //    refuses to continue past this point, denying the attacker a
     //    Python-side beachhead.
+    //
+    //    No separate `exists()` check: that would open a TOCTOU window
+    //    between the stat call and the file open. Instead, `hex_sha256_file`
+    //    opens the file once and we map `NotFound` to the friendly error
+    //    inline — the hash is computed on whatever bytes the open returns,
+    //    so a swap between the two syscalls can no longer yield the
+    //    legitimate file's existence signal with the attacker's bytes.
     let libpython_path = libpython_path(proj_dir, libpython_soname);
-    if !libpython_path.exists() {
-        return Err(SealError::LibpythonNotFound { path: libpython_path });
-    }
-    let libpython_actual = hex_sha256_file(&libpython_path)?;
+    let libpython_actual = match hex_sha256_file(&libpython_path) {
+        Ok(hex) => hex,
+        Err(SealError::Io { source, .. }) if source.kind() == io::ErrorKind::NotFound => {
+            return Err(SealError::LibpythonNotFound { path: libpython_path });
+        }
+        Err(e) => return Err(e),
+    };
     if !const_time_eq(&libpython_actual, libpython_expected) {
         return Err(SealError::LibpythonMismatch {
             expected: libpython_expected.to_string(),

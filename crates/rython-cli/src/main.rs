@@ -349,6 +349,10 @@ struct App {
     physics_world: Arc<parking_lot::Mutex<rython_physics::PhysicsWorld>>,
     // UI wiring
     ui_manager: Arc<parking_lot::Mutex<UIManager>>,
+    // Startup error captured from `resumed()` — surfaced by `run_windowed`
+    // after the event loop exits, since `ApplicationHandler` methods
+    // return `()` and cannot propagate `Result` directly.
+    init_error: Option<String>,
 }
 
 impl App {
@@ -374,7 +378,17 @@ impl App {
             cursor_pos: (0.0, 0.0),
             physics_world,
             ui_manager,
+            init_error: None,
         }
+    }
+
+    /// Record a fatal init error and ask the event loop to exit.
+    /// The error is retrieved by `run_windowed` after the loop returns.
+    fn fail_init(&mut self, event_loop: &ActiveEventLoop, msg: String) {
+        log::error!("{msg}");
+        eprintln!("error: {msg}");
+        self.init_error = Some(msg);
+        event_loop.exit();
     }
 
     fn tick_and_render(&mut self, event_loop: &ActiveEventLoop) {
@@ -409,15 +423,31 @@ impl App {
         // Physics step
         self.physics_world.lock().sync_step(&self.scene);
 
-        // Input: tick player controller, publish snapshot, and emit input events
+        // Input: tick player controller, publish snapshot, and emit input events.
+        // Mirrors the headless loop's poison recovery so a panicking drainer on
+        // another thread doesn't crash the game on the next frame.
         {
-            let mut pc = self.player_controller.lock().unwrap();
+            let mut pc = match self.player_controller.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
             pc.tick(&self.raw_events);
-            let snapshot = pc.get_snapshot(0).unwrap().clone();
-            let input_events: Vec<InputActionEvent> =
-                std::mem::take(&mut pc.pending_events().lock().unwrap());
+            let snapshot = match pc.get_snapshot(0) {
+                Ok(s) => Some(s.clone()),
+                Err(_) => None,
+            };
+            let events_arc = pc.pending_events();
+            let input_events: Vec<InputActionEvent> = {
+                let mut guard = match events_arc.lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
+                std::mem::take(&mut *guard)
+            };
             drop(pc);
-            set_active_input(snapshot);
+            if let Some(snapshot) = snapshot {
+                set_active_input(snapshot);
+            }
             for ev in input_events {
                 self.scene.emit(
                     &format!("input:{}", ev.action),
@@ -699,23 +729,34 @@ impl ApplicationHandler for App {
                 self.window_config.height,
             ));
 
-        let window = Arc::new(
-            event_loop
-                .create_window(attrs)
-                .expect("failed to create window"),
-        );
+        let window = match event_loop.create_window(attrs) {
+            Ok(w) => Arc::new(w),
+            Err(e) => {
+                self.fail_init(event_loop, format!("failed to create window: {e}"));
+                return;
+            }
+        };
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
 
         // SAFETY: the window Arc keeps the window alive as long as the surface.
-        let surface = instance
-            .create_surface(Arc::clone(&window))
-            .expect("failed to create wgpu surface");
+        let surface = match instance.create_surface(Arc::clone(&window)) {
+            Ok(s) => s,
+            Err(e) => {
+                self.fail_init(event_loop, format!("failed to create wgpu surface: {e}"));
+                return;
+            }
+        };
 
-        let gpu = pollster::block_on(rython_renderer::GpuContext::new_for_surface(
+        let gpu = match pollster::block_on(rython_renderer::GpuContext::new_for_surface(
             instance, &surface, 4,
-        ))
-        .expect("failed to create GPU context");
+        )) {
+            Ok(g) => g,
+            Err(e) => {
+                self.fail_init(event_loop, format!("failed to create GPU context: {e}"));
+                return;
+            }
+        };
 
         let size = window.inner_size();
         let surface_cfg = wgpu::SurfaceConfiguration {
@@ -743,7 +784,10 @@ impl ApplicationHandler for App {
 
         // Boot engine
         if let Some(engine) = self.engine.as_mut() {
-            engine.boot().expect("engine boot failed");
+            if let Err(e) = engine.boot() {
+                self.fail_init(event_loop, format!("engine boot failed: {e}"));
+                return;
+            }
         }
     }
 
@@ -832,10 +876,14 @@ impl ApplicationHandler for App {
     }
 }
 
-fn run_windowed(engine_config: EngineConfig, scripting_config: ScriptingConfig) {
+fn run_windowed(
+    engine_config: EngineConfig,
+    scripting_config: ScriptingConfig,
+) -> Result<(), String> {
     let (engine, scene, physics_world, ui_manager, player_controller) =
         build_engine(&engine_config, scripting_config);
-    let event_loop = EventLoop::new().expect("failed to create event loop");
+    let event_loop = EventLoop::new()
+        .map_err(|e| format!("failed to create event loop: {e}"))?;
     let mut app = App::new(
         engine,
         scene,
@@ -844,7 +892,13 @@ fn run_windowed(engine_config: EngineConfig, scripting_config: ScriptingConfig) 
         ui_manager,
         player_controller,
     );
-    event_loop.run_app(&mut app).expect("event loop error");
+    event_loop
+        .run_app(&mut app)
+        .map_err(|e| format!("event loop error: {e}"))?;
+    if let Some(msg) = app.init_error.take() {
+        return Err(msg);
+    }
+    Ok(())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1191,6 +1245,25 @@ fn resolve_mode(args: &CliArgs) -> Result<(ScriptingConfig, EngineConfig), Resol
             std::env::remove_var("PYTHONOPTIMIZE");
             std::env::remove_var("PYTHONUSERBASE");
             std::env::remove_var("PYTHONDEVMODE");
+            // Codec / locale / startup-mode levers — any of these can alter
+            // how CPython initializes before user code runs, so an attacker
+            // with pre-launch env control must not be able to set them.
+            std::env::remove_var("PYTHONIOENCODING");
+            std::env::remove_var("PYTHONUTF8");
+            std::env::remove_var("PYTHONCOERCECLOCALE");
+            std::env::remove_var("PYTHONLEGACYWINDOWSFSENCODING");
+            std::env::remove_var("PYTHONLEGACYWINDOWSSTDIO");
+            // Diagnostic / allocator hooks — enable tracers and alternate
+            // allocators that can perturb deterministic startup.
+            std::env::remove_var("PYTHONASYNCIODEBUG");
+            std::env::remove_var("PYTHONTRACEMALLOC");
+            std::env::remove_var("PYTHONMALLOC");
+            std::env::remove_var("PYTHONMALLOCSTATS");
+            std::env::remove_var("PYTHONFAULTHANDLER");
+            std::env::remove_var("PYTHONPROFILEIMPORTTIME");
+            std::env::remove_var("PYTHONHASHSEED");
+            std::env::remove_var("PYTHONPYCACHEPREFIX");
+            std::env::remove_var("PYTHONPLATLIBDIR");
         }
 
         // Entry point comes from the compile-time constant (via the seal) —
@@ -1248,7 +1321,9 @@ fn main() {
 
     if cli.headless {
         run_headless(engine_config, scripting_config);
-    } else {
-        run_windowed(engine_config, scripting_config);
+    } else if let Err(e) = run_windowed(engine_config, scripting_config) {
+        eprintln!("error: {e}");
+        log::error!("{e}");
+        std::process::exit(1);
     }
 }

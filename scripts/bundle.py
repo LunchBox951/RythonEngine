@@ -219,6 +219,17 @@ def copy_lib_dynload(out_dir: Path) -> Path:
     Aborts if any `.pth` file is copied. The extension-module directory is on
     `sys.path` at runtime, so a stray `.pth` file shipped here would be
     processed by `site.py` and could inject attacker-controlled directories.
+
+    Symlink handling: we *dereference* every symlink at copy time so the
+    bundle contains only real files. This is load-bearing for hash agreement.
+    `release_seal::tree_hash` on the Rust side uses `DirEntry::file_type()`,
+    which on Linux returns the lstat-style type — symlinked directories fall
+    into neither `is_dir()` nor `is_file()` and are silently skipped. If any
+    symlink survived into the shipped `lib-dynload/`, Rust would skip it
+    while `bundle.py::tree_hash` (also `followlinks=False`) would also skip
+    it — *but the dynamic loader would then fail* to open the missing
+    extension. Dereferencing here guarantees real files at both hash time
+    and load time.
     """
     dest = out_dir / "lib-dynload"
     if dest.exists():
@@ -237,12 +248,38 @@ def copy_lib_dynload(out_dir: Path) -> Path:
     for item in src.iterdir():
         target = dest / item.name
         if item.is_dir():
-            shutil.copytree(item, target)
+            # symlinks=False (explicit) dereferences any symlinks encountered
+            # during recursion, writing real files at the destination.
+            # dirs_exist_ok=False because we just rmtree'd + mkdir'd dest.
+            shutil.copytree(item, target, symlinks=False)
         else:
-            shutil.copy2(item, target)
+            # follow_symlinks=True (default, made explicit) dereferences
+            # top-level file symlinks so the bundled file is a real file.
+            shutil.copy2(item, target, follow_symlinks=True)
 
+    assert_no_symlinks(dest, "lib-dynload")
     assert_no_pth_files(dest, "lib-dynload")
     return dest
+
+
+def assert_no_symlinks(tree: Path, label: str) -> None:
+    """Fail loudly if any symlink survives under `tree`.
+
+    `release_seal::tree_hash` on the Rust side silently skips symlinks via
+    `DirEntry::file_type()`; a symlink in the bundle would be invisible to
+    the hash but visible to the dynamic loader — a gap an attacker could
+    exploit to swap in an untracked shared object. Dereferencing at copy
+    time + this assertion close that gap.
+    """
+    offenders = [p for p in tree.rglob("*") if p.is_symlink()]
+    if offenders:
+        listing = "\n  ".join(str(p) for p in offenders)
+        sys.exit(
+            f"FATAL: symlink(s) survived into {label} tree — refusing to seal:\n"
+            f"  {listing}\n"
+            "Symlinks are silently skipped by release_seal::tree_hash on the\n"
+            "Rust side, creating an untracked file-set gap in the seal."
+        )
 
 
 def assert_no_pth_files(tree: Path, label: str) -> None:
