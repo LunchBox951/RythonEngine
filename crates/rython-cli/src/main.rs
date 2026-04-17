@@ -1,5 +1,7 @@
 #![deny(warnings)]
 
+mod release_seal;
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -1091,15 +1093,44 @@ mod tests {
 ///   1. `--project <dir>` was given explicitly
 ///   2. `project.json` + `python/` exist adjacent to the binary (release dist)
 ///   3. Fall back to Dev mode using `--script-dir` / `--entry-point`
-fn resolve_mode(args: &CliArgs) -> Result<(ScriptingConfig, EngineConfig), String> {
+/// Error returned by `resolve_mode`. Wraps `SealError` separately so `main`
+/// can map a seal failure to exit code 78 (EX_CONFIG) while other failures
+/// exit with 1.
+enum ResolveError {
+    Seal(release_seal::SealError),
+    Other(String),
+}
+
+impl std::fmt::Display for ResolveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Seal(e) => write!(f, "release-seal verification failed: {e}"),
+            Self::Other(s) => f.write_str(s),
+        }
+    }
+}
+
+impl From<String> for ResolveError {
+    fn from(s: String) -> Self {
+        Self::Other(s)
+    }
+}
+
+impl From<release_seal::SealError> for ResolveError {
+    fn from(e: release_seal::SealError) -> Self {
+        Self::Seal(e)
+    }
+}
+
+fn resolve_mode(args: &CliArgs) -> Result<(ScriptingConfig, EngineConfig), ResolveError> {
     let project_dir: Option<std::path::PathBuf> = if let Some(ref p) = args.project_path {
         Some(std::path::PathBuf::from(p))
     } else {
-        let exe =
-            std::env::current_exe().map_err(|e| format!("could not determine exe path: {e}"))?;
+        let exe = std::env::current_exe()
+            .map_err(|e| ResolveError::Other(format!("could not determine exe path: {e}")))?;
         let exe_dir = exe
             .parent()
-            .ok_or_else(|| "exe has no parent directory".to_string())?;
+            .ok_or_else(|| ResolveError::Other("exe has no parent directory".to_string()))?;
         if exe_dir.join("project.json").exists() && exe_dir.join("python").is_dir() {
             Some(exe_dir.to_path_buf())
         } else {
@@ -1108,25 +1139,46 @@ fn resolve_mode(args: &CliArgs) -> Result<(ScriptingConfig, EngineConfig), Strin
     };
 
     if let Some(proj_dir) = project_dir {
-        let proj_json = std::fs::read_to_string(proj_dir.join("project.json"))
-            .map_err(|e| format!("failed to read project.json: {e}"))?;
-        let project: ProjectConfig = serde_json::from_str(&proj_json)
-            .map_err(|e| format!("failed to parse project.json: {e}"))?;
+        // Verify the on-disk distribution against hashes baked into this
+        // binary at compile time. Runs BEFORE anything touches Python so a
+        // tampered stdlib / bundle / extension tree cannot execute code.
+        let seal = release_seal::verify(&proj_dir)?;
+        log::info!(
+            "release seal verified (bundle {}, stdlib {}, lib-dynload {})",
+            release_seal::short_hex(release_seal::BUNDLE_HASH.unwrap_or("")),
+            release_seal::short_hex(release_seal::STDLIB_HASH.unwrap_or("")),
+            release_seal::short_hex(release_seal::LIBDYNLOAD_HASH.unwrap_or("")),
+        );
 
-        // Set PYTHONHOME before the GIL is ever acquired. At this point the
-        // process is single-threaded, so set_var is safe.
+        let proj_json = std::fs::read_to_string(proj_dir.join("project.json"))
+            .map_err(|e| ResolveError::Other(format!("failed to read project.json: {e}")))?;
+        let project: ProjectConfig = serde_json::from_str(&proj_json)
+            .map_err(|e| ResolveError::Other(format!("failed to parse project.json: {e}")))?;
+
+        // Set Python environment before the GIL is ever acquired. At this
+        // point the process is single-threaded, so set_var is safe.
+        //
+        // * `PYTHONHOME` pins the interpreter to the sealed distribution tree.
+        // * `PYTHONNOUSERSITE=1` disables `~/.local/lib/pythonX.Y/site-packages`.
+        // * `PYTHONPATH` is *removed*, not set to empty — setting it empty
+        //   inserts CWD into `sys.path` on some platforms.
+        // * `PYTHONDONTWRITEBYTECODE=1` prevents runtime-written `.pyc` files
+        //   from sitting alongside the sealed stdlib zip where they would
+        //   escape all hash coverage.
         let python_home = proj_dir.join("python");
         unsafe {
             std::env::set_var("PYTHONHOME", &python_home);
             std::env::set_var("PYTHONNOUSERSITE", "1");
-            std::env::set_var("PYTHONPATH", "");
+            std::env::remove_var("PYTHONPATH");
+            std::env::set_var("PYTHONDONTWRITEBYTECODE", "1");
         }
 
-        let bundle_path = proj_dir.join("game.bundle").to_string_lossy().into_owned();
+        // Entry point comes from the compile-time constant (via the seal) —
+        // project.json's `entry_point` is editor-only metadata in release mode.
         Ok((
             ScriptingConfig::Release {
-                bundle_path,
-                entry_point: project.entry_point,
+                bundle_path: seal.bundle_path.to_string_lossy().into_owned(),
+                entry_point: Some(seal.entry_point),
             },
             project.engine_config,
         ))
@@ -1142,7 +1194,8 @@ fn resolve_mode(args: &CliArgs) -> Result<(ScriptingConfig, EngineConfig), Strin
                             .map_err(|e| format!("invalid engine config {p}: {e}"))
                     })
             })
-            .transpose()?
+            .transpose()
+            .map_err(ResolveError::Other)?
             .unwrap_or_default();
         Ok((
             ScriptingConfig::Dev {
@@ -1165,7 +1218,11 @@ fn main() {
         Ok(pair) => pair,
         Err(e) => {
             eprintln!("error: {e}");
-            std::process::exit(1);
+            log::error!("{e}");
+            // EX_CONFIG (78) for seal mismatches — aids monitoring tooling
+            // in distinguishing tampering from run-of-the-mill config errors.
+            let code = if matches!(e, ResolveError::Seal(_)) { 78 } else { 1 };
+            std::process::exit(code);
         }
     };
 

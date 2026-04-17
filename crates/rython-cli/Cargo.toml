@@ -29,3 +29,8 @@ serde_json.workspace = true
 parking_lot.workspace = true
 pyo3 = { version = "0.28", features = ["auto-initialize"] }
 pollster = "0.4"
+sha2 = "0.10"
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

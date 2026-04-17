@@ -22,6 +22,10 @@ pub struct ProjectConfig {
     /// Scene filename without extension.
     pub default_scene: Option<String>,
     /// Python entry point module name.
+    ///
+    /// Editor-only metadata. Release binaries bake the entry point at compile
+    /// time (see `rython-cli/src/release_seal.rs`) so that a tampered
+    /// `project.json` cannot redirect execution to attacker-controlled code.
     pub entry_point: Option<String>,
     #[serde(default)]
     pub engine_config: EngineConfig,
