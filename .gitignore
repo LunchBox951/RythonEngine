@@ -33,3 +33,6 @@ Thumbs.db
 
 # Claude worktrees
 .claude/worktrees/*
+
+# Git worktrees
+.worktrees/
