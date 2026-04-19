@@ -94,9 +94,15 @@ pub struct VerifiedSeal {
 /// Returns a `VerifiedSeal` whose `entry_point` is the compile-time constant —
 /// the runtime `project.json` field is ignored in release mode.
 pub fn verify(proj_dir: &Path) -> Result<VerifiedSeal, SealError> {
-    let (bundle_expected, stdlib_expected, libdyn_expected, libpython_expected,
-         libpython_soname, zip_name, entry_point) =
-        sealed_constants().ok_or(SealError::Unsealed)?;
+    let (
+        bundle_expected,
+        stdlib_expected,
+        libdyn_expected,
+        libpython_expected,
+        libpython_soname,
+        zip_name,
+        entry_point,
+    ) = sealed_constants().ok_or(SealError::Unsealed)?;
     verify_inner(
         proj_dir,
         bundle_expected,
@@ -112,6 +118,7 @@ pub fn verify(proj_dir: &Path) -> Result<VerifiedSeal, SealError> {
 /// Inner verification with explicit expected values — extracted so tests can
 /// exercise the full hash-and-compare path without needing the compile-time
 /// constants to be set.
+#[allow(clippy::too_many_arguments)]
 fn verify_inner(
     proj_dir: &Path,
     bundle_expected: &str,
@@ -138,7 +145,9 @@ fn verify_inner(
     let libpython_actual = match hex_sha256_file(&libpython_path) {
         Ok(hex) => hex,
         Err(SealError::Io { source, .. }) if source.kind() == io::ErrorKind::NotFound => {
-            return Err(SealError::LibpythonNotFound { path: libpython_path });
+            return Err(SealError::LibpythonNotFound {
+                path: libpython_path,
+            });
         }
         Err(e) => return Err(e),
     };
@@ -291,10 +300,7 @@ fn absent_by_design_paths(proj_dir: &Path, dynload_dir: &Path) -> Vec<PathBuf> {
         vec![proj_dir.join("python").join("Lib").join("site-packages")]
     } else {
         match dynload_dir.parent() {
-            Some(parent) => vec![
-                parent.join("site-packages"),
-                parent.join("dist-packages"),
-            ],
+            Some(parent) => vec![parent.join("site-packages"), parent.join("dist-packages")],
             None => Vec::new(),
         }
     }
@@ -400,7 +406,7 @@ fn collect_files(
         } else if file_type.is_file() {
             let rel_path = path.strip_prefix(root).map_err(|_| SealError::Io {
                 path: path.clone(),
-                source: io::Error::new(io::ErrorKind::Other, "relative path outside tree root"),
+                source: io::Error::other("relative path outside tree root"),
             })?;
             // Explicit UTF-8 requirement — must match Python's `as_posix()`
             // byte-for-byte or the cross-language hash contract silently
@@ -479,8 +485,7 @@ mod tests {
 
         let got = tree_hash(dir.path()).unwrap();
         assert_eq!(
-            got,
-            "2b00599a262026e2bbde9ffc59a57a7a219e6ab6b5c6226f57f6862820b03736",
+            got, "2b00599a262026e2bbde9ffc59a57a7a219e6ab6b5c6226f57f6862820b03736",
             "tree_hash drift — Python side must match"
         );
     }
@@ -536,8 +541,7 @@ mod tests {
     fn verify_inner_happy_path() {
         let dir = tmp();
         let (b, s, l, p) = build_fixture(dir.path());
-        let seal =
-            verify_inner(dir.path(), &b, &s, &l, &p, SONAME, ZIP_NAME, ENTRY).unwrap();
+        let seal = verify_inner(dir.path(), &b, &s, &l, &p, SONAME, ZIP_NAME, ENTRY).unwrap();
         assert_eq!(seal.entry_point, ENTRY);
         assert_eq!(seal.bundle_path, dir.path().join("game.bundle"));
     }
@@ -548,8 +552,7 @@ mod tests {
         let dir = tmp();
         let (_, s, l, p) = build_fixture(dir.path());
         let bad = "0".repeat(64);
-        let err =
-            verify_inner(dir.path(), &bad, &s, &l, &p, SONAME, ZIP_NAME, ENTRY).unwrap_err();
+        let err = verify_inner(dir.path(), &bad, &s, &l, &p, SONAME, ZIP_NAME, ENTRY).unwrap_err();
         assert!(matches!(err, SealError::BundleMismatch { .. }));
     }
 
@@ -559,8 +562,7 @@ mod tests {
         let dir = tmp();
         let (b, _, l, p) = build_fixture(dir.path());
         let bad = "f".repeat(64);
-        let err =
-            verify_inner(dir.path(), &b, &bad, &l, &p, SONAME, ZIP_NAME, ENTRY).unwrap_err();
+        let err = verify_inner(dir.path(), &b, &bad, &l, &p, SONAME, ZIP_NAME, ENTRY).unwrap_err();
         assert!(matches!(err, SealError::StdlibMismatch { .. }));
     }
 
@@ -570,8 +572,7 @@ mod tests {
         let dir = tmp();
         let (b, s, _, p) = build_fixture(dir.path());
         let bad = "a".repeat(64);
-        let err =
-            verify_inner(dir.path(), &b, &s, &bad, &p, SONAME, ZIP_NAME, ENTRY).unwrap_err();
+        let err = verify_inner(dir.path(), &b, &s, &bad, &p, SONAME, ZIP_NAME, ENTRY).unwrap_err();
         assert!(matches!(err, SealError::LibDynloadMismatch { .. }));
     }
 
@@ -581,8 +582,7 @@ mod tests {
         let dir = tmp();
         let (b, s, l, _) = build_fixture(dir.path());
         let bad = "c".repeat(64);
-        let err =
-            verify_inner(dir.path(), &b, &s, &l, &bad, SONAME, ZIP_NAME, ENTRY).unwrap_err();
+        let err = verify_inner(dir.path(), &b, &s, &l, &bad, SONAME, ZIP_NAME, ENTRY).unwrap_err();
         assert!(matches!(err, SealError::LibpythonMismatch { .. }));
     }
 
@@ -592,8 +592,7 @@ mod tests {
         let dir = tmp();
         let (b, s, l, p) = build_fixture(dir.path());
         fs::remove_file(dir.path().join("python").join("lib").join(SONAME)).unwrap();
-        let err =
-            verify_inner(dir.path(), &b, &s, &l, &p, SONAME, ZIP_NAME, ENTRY).unwrap_err();
+        let err = verify_inner(dir.path(), &b, &s, &l, &p, SONAME, ZIP_NAME, ENTRY).unwrap_err();
         assert!(matches!(err, SealError::LibpythonNotFound { .. }));
     }
 
@@ -611,8 +610,7 @@ mod tests {
             .join("python3.13")
             .join("site-packages");
         fs::create_dir_all(&site_pkg).unwrap();
-        let err =
-            verify_inner(dir.path(), &b, &s, &l, &p, SONAME, ZIP_NAME, ENTRY).unwrap_err();
+        let err = verify_inner(dir.path(), &b, &s, &l, &p, SONAME, ZIP_NAME, ENTRY).unwrap_err();
         match err {
             SealError::UnexpectedPath { path } => assert_eq!(path, site_pkg),
             other => panic!("expected UnexpectedPath, got {other:?}"),
@@ -633,8 +631,7 @@ mod tests {
             .join("python3.13")
             .join("dist-packages");
         fs::create_dir_all(&dist_pkg).unwrap();
-        let err =
-            verify_inner(dir.path(), &b, &s, &l, &p, SONAME, ZIP_NAME, ENTRY).unwrap_err();
+        let err = verify_inner(dir.path(), &b, &s, &l, &p, SONAME, ZIP_NAME, ENTRY).unwrap_err();
         match err {
             SealError::UnexpectedPath { path } => assert_eq!(path, dist_pkg),
             other => panic!("expected UnexpectedPath, got {other:?}"),
@@ -698,8 +695,7 @@ mod tests {
         // Flip one byte in a lib-dynload file
         let tampered = dir.path().join("python/lib/python3.13/lib-dynload/_ssl.so");
         write(&tampered, b"TAMPERED");
-        let err =
-            verify_inner(dir.path(), &b, &s, &l, &p, SONAME, ZIP_NAME, ENTRY).unwrap_err();
+        let err = verify_inner(dir.path(), &b, &s, &l, &p, SONAME, ZIP_NAME, ENTRY).unwrap_err();
         assert!(matches!(err, SealError::LibDynloadMismatch { .. }));
     }
 

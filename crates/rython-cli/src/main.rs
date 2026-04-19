@@ -786,7 +786,6 @@ impl ApplicationHandler for App {
         if let Some(engine) = self.engine.as_mut() {
             if let Err(e) = engine.boot() {
                 self.fail_init(event_loop, format!("engine boot failed: {e}"));
-                return;
             }
         }
     }
@@ -882,8 +881,7 @@ fn run_windowed(
 ) -> Result<(), String> {
     let (engine, scene, physics_world, ui_manager, player_controller) =
         build_engine(&engine_config, scripting_config);
-    let event_loop = EventLoop::new()
-        .map_err(|e| format!("failed to create event loop: {e}"))?;
+    let event_loop = EventLoop::new().map_err(|e| format!("failed to create event loop: {e}"))?;
     let mut app = App::new(
         engine,
         scene,
@@ -1136,17 +1134,6 @@ mod tests {
 
 // ── Mode resolution ───────────────────────────────────────────────────────────
 
-/// Resolves whether to run in Dev or Release mode, and sets PYTHONHOME if
-/// a bundled Python runtime is found adjacent to the binary.
-///
-/// MUST be called before any PyO3 GIL acquisition: `auto-initialize` fires
-/// lazily on first GIL access, so PYTHONHOME must be in the environment
-/// before that point to take effect.
-///
-/// Priority:
-///   1. `--project <dir>` was given explicitly
-///   2. `project.json` + `python/` exist adjacent to the binary (release dist)
-///   3. Fall back to Dev mode using `--script-dir` / `--entry-point`
 /// Error returned by `resolve_mode`. Wraps `SealError` separately so `main`
 /// can map a seal failure to exit code 78 (EX_CONFIG) while other failures
 /// exit with 1.
@@ -1176,6 +1163,17 @@ impl From<release_seal::SealError> for ResolveError {
     }
 }
 
+/// Resolves whether to run in Dev or Release mode, and sets PYTHONHOME if
+/// a bundled Python runtime is found adjacent to the binary.
+///
+/// MUST be called before any PyO3 GIL acquisition: `auto-initialize` fires
+/// lazily on first GIL access, so PYTHONHOME must be in the environment
+/// before that point to take effect.
+///
+/// Priority:
+/// 1. `--project <dir>` was given explicitly
+/// 2. `project.json` + `python/` exist adjacent to the binary (release dist)
+/// 3. Fall back to Dev mode using `--script-dir` / `--entry-point`
 fn resolve_mode(args: &CliArgs) -> Result<(ScriptingConfig, EngineConfig), ResolveError> {
     let project_dir: Option<std::path::PathBuf> = if let Some(ref p) = args.project_path {
         Some(std::path::PathBuf::from(p))
@@ -1347,7 +1345,11 @@ fn main() {
             log::error!("{e}");
             // EX_CONFIG (78) for seal mismatches — aids monitoring tooling
             // in distinguishing tampering from run-of-the-mill config errors.
-            let code = if matches!(e, ResolveError::Seal(_)) { 78 } else { 1 };
+            let code = if matches!(e, ResolveError::Seal(_)) {
+                78
+            } else {
+                1
+            };
             std::process::exit(code);
         }
     };
