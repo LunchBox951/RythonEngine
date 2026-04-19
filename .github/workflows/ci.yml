@@ -48,9 +48,13 @@ jobs:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     needs: fmt
+    # macOS is intentionally excluded: timing-sensitive scheduler tests
+    # (t_sched_05, t_sched_06) flake on shared GitHub macOS runners. Local
+    # macOS builds are still supported via `make dist PLATFORM=macos` on a
+    # macOS host (use at your own risk — no CI coverage).
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
