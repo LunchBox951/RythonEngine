@@ -1,0 +1,38 @@
+{
+  "_comment": "Pinned python-build-standalone distributions used as both the PyO3 cross-compile input and the packaging source. Update by picking a release from https://github.com/astral-sh/python-build-standalone/releases and replacing the urls + sha256 values below.",
+  "python_version": "3.12",
+  "release_tag": "20260414",
+  "cpython_version": "3.12.13",
+  "targets": {
+    "linux-x86_64": {
+      "rust_triple": "x86_64-unknown-linux-gnu",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260414/cpython-3.12.13%2B20260414-x86_64-unknown-linux-gnu-install_only.tar.gz",
+      "sha256": "cdcf8724d46e4857f8db5ee9f4252dc2f5da34f7940294ec6b312389dd3f41e0"
+    },
+    "linux-aarch64": {
+      "rust_triple": "aarch64-unknown-linux-gnu",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260414/cpython-3.12.13%2B20260414-aarch64-unknown-linux-gnu-install_only.tar.gz",
+      "sha256": "355d981eafb9b2870af79ddc106ced7266b6f6d2101d8fbcb05620fa386642b9"
+    },
+    "windows-x86_64": {
+      "rust_triple": "x86_64-pc-windows-msvc",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260414/cpython-3.12.13%2B20260414-x86_64-pc-windows-msvc-install_only.tar.gz",
+      "sha256": "c5a9e011e284c49c48106ca177342f3e3f64e95b4c6652d4a382cc7c9bb1cc46"
+    },
+    "windows-aarch64": {
+      "rust_triple": "aarch64-pc-windows-msvc",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260414/cpython-3.12.13%2B20260414-aarch64-pc-windows-msvc-install_only.tar.gz",
+      "sha256": "f55326c894fde76fc0faffe95d2bce60be533c88a8c44c1b88bbbc17bf6a5cd5"
+    },
+    "macos-x86_64": {
+      "rust_triple": "x86_64-apple-darwin",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260414/cpython-3.12.13%2B20260414-x86_64-apple-darwin-install_only.tar.gz",
+      "sha256": "801b03fbe004181d55a02ebd8b4e04d74973e70d716062aebe3b3cf32e9be297"
+    },
+    "macos-aarch64": {
+      "rust_triple": "aarch64-apple-darwin",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260414/cpython-3.12.13%2B20260414-aarch64-apple-darwin-install_only.tar.gz",
+      "sha256": "8966b2bcd9fa03ba22c080ad15a86bc12e41a00122b16f4b3740e302261124d9"
+    }
+  }
+}

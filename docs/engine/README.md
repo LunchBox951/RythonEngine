@@ -16,6 +16,7 @@ For the Python scripting API, see [`docs/game/README.md`](../game/README.md).
 5. [Scheduler: Task-Driven Execution](#5-scheduler-task-driven-execution)
 6. [How to Create a New Engine Module](#6-how-to-create-a-new-engine-module)
 7. [Crate Reference](#7-crate-reference)
+8. [Cross-Platform Release Builds](#8-cross-platform-release-builds)
 
 ---
 
@@ -525,3 +526,83 @@ and multi-entity selection), `UndoStack` (command pattern with `BatchCommand`), 
 `~/.config/rython-editor/`). An `EditorTab` enum (Viewport / UiEditor) controls the central panel.
 `AssetBrowserPanel` supports drag-and-drop of assets into the scene. A `PlaySession` struct manages
 the play-in-editor child process and communicates via stdout/stderr channels.
+
+---
+
+## 8. Cross-Platform Release Builds
+
+`make dist` produces a self-contained distribution by cross-compiling against a
+**vendored target Python** that serves as both the PyO3 link input and the
+packaging source.
+
+### Supported targets
+
+| PLATFORM | ARCH    | Host requirement                         |
+|----------|---------|------------------------------------------|
+| linux    | x86_64  | any (Linux / Windows / macOS via zig)    |
+| linux    | aarch64 | any                                      |
+| windows  | x86_64  | any                                      |
+| windows  | aarch64 | any                                      |
+| macos    | x86_64  | **macOS host only** (install_name_tool)  |
+| macos    | aarch64 | **macOS host only**                      |
+
+### One-time setup
+
+```bash
+make setup-cross
+```
+
+Creates `.venv/`, installs `cargo-zigbuild` + `ziglang` (Zig toolchain for
+Linux cross) and `cargo-xwin` (Windows SDK + MSVC CRT for Windows cross), and
+registers the four non-Apple Rust targets via `rustup target add`.
+
+`cargo-xwin` downloads the Windows SDK + CRT on first Windows build (~700 MB,
+cached under `~/.cache/cargo-xwin/`). Linux cross-builds use Zig's bundled
+toolchain and need no extra SDK download.
+
+### Fetch the target Python
+
+```bash
+make bootstrap PLATFORM=windows ARCH=x86_64
+```
+
+Downloads a pinned `python-build-standalone` tarball (3.12, locked by SHA-256
+in `scripts/python_standalone_pins.json`) and extracts it to
+`vendor/python/<platform>-<arch>/python/`. `vendor/` is gitignored. The
+bootstrap is idempotent — re-running it on a populated tree is a no-op.
+
+### Build a distribution
+
+```bash
+# Any host → Windows:
+make dist-windows ARCH=x86_64
+
+# Any host → Linux:
+make dist-linux ARCH=aarch64
+
+# macOS host → macOS:
+make dist-macos ARCH=aarch64
+```
+
+Under the hood: Linux targets run `cargo zigbuild --release --target
+<triple>`, Windows targets run `cargo xwin build --release --target <triple>`
+(MSVC), and macOS targets run plain `cargo build --release --target <triple>`.
+PyO3 picks up the vendored libpython via `PYO3_CROSS_LIB_DIR` (for cross) or
+`PYO3_PYTHON` (when host triple == target triple). Output lands at
+`dist/<platform>-<arch>/<GameName>/`, self-contained with:
+
+- `<GameName>[.exe]` — the engine binary, RPATH-patched (Linux) or
+  install-name-patched (macOS) to find the bundled runtime
+- Bundled libpython (`libpython3.12.so.1.0` / `libpython3.12.dylib` /
+  `python312.dll`) plus VC++ runtime DLLs on Windows
+- `python/Lib/` or `python/lib/python3.12/` — the target-platform stdlib
+- `python/DLLs/` — extension modules (Windows only)
+- `game.bundle` — zipimport archive of all `game/**/*.py`
+- `project.json` + `game/` — non-Python assets (music, textures, UI JSON, …)
+
+### Updating the pinned Python
+
+Edit `scripts/python_standalone_pins.json` with new URLs + SHA-256 values
+picked from a [python-build-standalone release](https://github.com/astral-sh/python-build-standalone/releases).
+Re-run `make bootstrap PLATFORM=... ARCH=...` — the marker file comparison
+detects the new SHA and re-downloads.
