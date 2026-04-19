@@ -222,6 +222,35 @@ def test_tree_hash_rejects_symlinked_directory():
         assert raised, "tree_hash must reject a symlinked directory"
 
 
+def test_tree_hash_rejects_non_utf8_filename():
+    """Rust's `collect_files` returns `InvalidData` on non-UTF-8 filenames.
+    Python's `Path.as_posix()` uses surrogateescape on POSIX, producing a
+    `str` that `.encode("utf-8")` refuses. Without an explicit check this
+    fails deep in the sort lambda with a buried UnicodeEncodeError; the
+    guard surfaces which file and why.
+    """
+    if sys.platform.startswith("win"):
+        return  # NTFS is UTF-16; no way to create a non-UTF-8 name
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "root"
+        root.mkdir()
+        # Raw non-UTF-8 byte 0xFF — valid on most POSIX filesystems,
+        # indecodable as UTF-8.
+        root_bytes = os.fsencode(str(root))
+        bad_path_bytes = os.path.join(root_bytes, b"bad_\xff_name.txt")
+        try:
+            with open(bad_path_bytes, "wb") as fh:
+                fh.write(b"payload")
+        except OSError:
+            return  # filesystem refused (e.g. tmpfs with strict UTF-8 mount)
+        raised = False
+        try:
+            bundle.tree_hash(root)
+        except SystemExit:
+            raised = True
+        assert raised, "tree_hash must reject a non-UTF-8 filename"
+
+
 def test_tree_hash_rejects_symlinked_file():
     if not hasattr(os, "symlink"):
         return
@@ -256,6 +285,8 @@ def main() -> int:
         ("test_tree_hash_sort_is_bytewise", test_tree_hash_sort_is_bytewise),
         ("test_tree_hash_rejects_symlinked_directory",
          test_tree_hash_rejects_symlinked_directory),
+        ("test_tree_hash_rejects_non_utf8_filename",
+         test_tree_hash_rejects_non_utf8_filename),
         ("test_tree_hash_rejects_symlinked_file",
          test_tree_hash_rejects_symlinked_file),
         ("test_sha256_file_matches_hashlib", test_sha256_file_matches_hashlib),

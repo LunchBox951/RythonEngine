@@ -106,6 +106,23 @@ def tree_hash(root: Path) -> str:
                     "Rust's collect_files rejects these with UnexpectedPath; matching here."
                 )
             rel = fpath.relative_to(root).as_posix()
+            # Enforce byte-identical UTF-8 with Rust's `to_str()` check in
+            # `collect_files`. On POSIX with a non-UTF-8 locale, Python decodes
+            # filename bytes using surrogateescape — the resulting `str`
+            # contains surrogate code points that `.encode("utf-8")` refuses.
+            # Without this explicit check, the failure surfaces as a buried
+            # `UnicodeEncodeError` in the sort key lambda; with it, the
+            # developer sees exactly which file broke the UTF-8 contract.
+            try:
+                rel.encode("utf-8")
+            except UnicodeEncodeError:
+                sys.exit(
+                    f"FATAL: non-UTF-8 filename in sealed tree at {fpath} — "
+                    "refusing to hash.\n"
+                    "Rust's collect_files rejects non-UTF-8 names with "
+                    "InvalidData; the cross-language hash contract requires "
+                    "byte-identical UTF-8 relpaths."
+                )
             files.append((rel, fpath))
     files.sort(key=lambda t: t[0].encode())
 
