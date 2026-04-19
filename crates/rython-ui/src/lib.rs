@@ -1343,7 +1343,7 @@ mod tests {
         // entry and recomputing.
         let _ = btn;
         ui.compute_layout(); // normal path
-        // Remove child cleanly (the cleanup path):
+                             // Remove child cleanly (the cleanup path):
         ui.remove_widget(btn);
         ui.compute_layout(); // must not panic with an empty panel
     }

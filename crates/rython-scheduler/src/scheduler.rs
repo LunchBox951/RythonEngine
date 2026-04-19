@@ -285,7 +285,7 @@ impl TaskScheduler {
             // worker, `BgComplete` would never be sent, and the group's
             // `remaining` counter would never reach zero — leaking the group
             // forever and never firing its callback.
-            let result: BgResult = match std::panic::catch_unwind(AssertUnwindSafe(|| f())) {
+            let result: BgResult = match std::panic::catch_unwind(AssertUnwindSafe(f)) {
                 Ok(v) => Ok(Box::new(v) as Box<dyn Any + Send + 'static>),
                 Err(_) => Err(EngineError::Task(TaskError::Panicked {
                     message: "group background task panicked".to_string(),

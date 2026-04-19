@@ -923,10 +923,7 @@ fn t_inp_36_reset_keys_clears_held_state() {
     ctrl.reset_keys();
     ctrl.tick(&[]);
     let s = ctrl.get_snapshot(owner).unwrap();
-    assert!(
-        !s.held("jump"),
-        "jump must not be held after reset_keys()"
-    );
+    assert!(!s.held("jump"), "jump must not be held after reset_keys()");
     assert!(
         !s.pressed("jump"),
         "jump must not be pressed after reset_keys()"

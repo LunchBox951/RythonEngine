@@ -159,10 +159,7 @@ impl PhysicsWorld {
     ) {
         let locked_axes = self.compute_locked_axes();
 
-        let is_dynamic = !matches!(
-            rb_comp.body_type.as_str(),
-            "static" | "fixed" | "kinematic"
-        );
+        let is_dynamic = !matches!(rb_comp.body_type.as_str(), "static" | "fixed" | "kinematic");
         let rb_builder = match rb_comp.body_type.as_str() {
             "static" | "fixed" => RigidBodyBuilder::fixed(),
             "kinematic" => RigidBodyBuilder::kinematic_position_based(),

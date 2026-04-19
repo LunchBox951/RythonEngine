@@ -580,7 +580,9 @@ fn decode_wav(path: &str) -> Result<AssetData, String> {
 fn decode_font(path: &str, size: f32) -> Result<AssetData, String> {
     validate_asset_path(path)?;
     if !size.is_finite() || size <= 0.0 {
-        return Err(format!("{path}: font size must be finite and positive, got {size}"));
+        return Err(format!(
+            "{path}: font size must be finite and positive, got {size}"
+        ));
     }
     let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
     let font = fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default())

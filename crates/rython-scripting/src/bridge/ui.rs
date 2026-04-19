@@ -58,7 +58,7 @@ impl UIBridge {
         ui_store()
             .lock()
             .add_child(parent, child)
-            .map_err(|e| PyErr::new::<PyRuntimeError, _>(e))
+            .map_err(PyErr::new::<PyRuntimeError, _>)
     }
 
     /// Set the layout direction for a container widget.

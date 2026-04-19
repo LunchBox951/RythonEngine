@@ -279,8 +279,7 @@ fn run_headless(engine_config: EngineConfig, scripting_config: ScriptingConfig) 
         // event loop does (step 8 of the frame pipeline). Without this,
         // any physics body whose ECS transform cascades through a hierarchy
         // sees permanently stale child transforms in headless mode.
-        let _world_transforms =
-            TransformSystem::run(&scene.components, &scene.hierarchy);
+        let _world_transforms = TransformSystem::run(&scene.components, &scene.hierarchy);
         {
             // Recover from poison so a single panicking drainer doesn't kill
             // subsequent frames.

@@ -160,7 +160,9 @@ impl UIManager {
     /// parent/child cycle (including self-parenting).
     pub fn add_child(&mut self, parent_id: WidgetId, child_id: WidgetId) -> Result<(), String> {
         if parent_id == child_id {
-            return Err(format!("add_child: widget {parent_id} cannot be its own child"));
+            return Err(format!(
+                "add_child: widget {parent_id} cannot be its own child"
+            ));
         }
         if !self.widgets.contains_key(&parent_id) {
             return Err(format!("add_child: unknown parent widget id {parent_id}"));
@@ -451,9 +453,7 @@ impl UIManager {
             .widgets
             .values()
             .filter(|w| {
-                w.state != WidgetState::Disabled
-                    && self.is_visible(w.id)
-                    && w.contains_point(x, y)
+                w.state != WidgetState::Disabled && self.is_visible(w.id) && w.contains_point(x, y)
             })
             .map(|w| (w.id, w.z))
             .collect();
