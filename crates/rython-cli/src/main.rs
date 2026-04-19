@@ -1264,6 +1264,39 @@ fn resolve_mode(args: &CliArgs) -> Result<(ScriptingConfig, EngineConfig), Resol
             std::env::remove_var("PYTHONHASHSEED");
             std::env::remove_var("PYTHONPYCACHEPREFIX");
             std::env::remove_var("PYTHONPLATLIBDIR");
+
+            // Dynamic-linker preload / search-path levers. These affect the
+            // OS loader, not CPython — they were consumed before `main()`
+            // ran, so anything the current process already loaded via
+            // `LD_PRELOAD` or `DYLD_INSERT_LIBRARIES` cannot be undone here.
+            // Clearing them is about forward safety:
+            //   1. Any subprocess the game spawns (file dialogs, loggers,
+            //      `subprocess.run`, etc.) inherits our environment; we
+            //      don't want to propagate attacker-controlled preload.
+            //   2. If we ever re-exec ourselves, the fresh process should
+            //      come up with a clean search path.
+            // The libpython integrity hash (verified before this block) is
+            // what actually gates in-process tampering.
+            #[cfg(unix)]
+            {
+                std::env::remove_var("LD_PRELOAD");
+                std::env::remove_var("LD_AUDIT");
+                std::env::remove_var("LD_LIBRARY_PATH");
+                std::env::remove_var("LD_BIND_NOW");
+                std::env::remove_var("LD_DEBUG");
+                std::env::remove_var("LD_PROFILE");
+                std::env::remove_var("LD_USE_LOAD_BIAS");
+            }
+            #[cfg(target_os = "macos")]
+            {
+                std::env::remove_var("DYLD_INSERT_LIBRARIES");
+                std::env::remove_var("DYLD_LIBRARY_PATH");
+                std::env::remove_var("DYLD_FALLBACK_LIBRARY_PATH");
+                std::env::remove_var("DYLD_FRAMEWORK_PATH");
+                std::env::remove_var("DYLD_FALLBACK_FRAMEWORK_PATH");
+                std::env::remove_var("DYLD_IMAGE_SUFFIX");
+                std::env::remove_var("DYLD_PRINT_LIBRARIES");
+            }
         }
 
         // Entry point comes from the compile-time constant (via the seal) —
