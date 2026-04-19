@@ -189,9 +189,14 @@ def test_assert_no_symlinks_rejects_directory_symlink():
 
 # ── Symlink handling ─────────────────────────────────────────────────────────
 
-def test_tree_hash_skips_symlinked_directory():
-    """Rust's `collect_files` skips symlinks (they report neither
-    `is_file()` nor `is_dir()` on the dirent). The Python side must match.
+def test_tree_hash_rejects_symlinked_directory():
+    """Symmetric with Rust's `collect_files`, which now returns
+    `SealError::UnexpectedPath` on any `is_symlink()` entry. Previously both
+    sides silently skipped symlinks, leaving a runtime injection gap: an
+    attacker could drop `evil-dir -> /tmp/payload/` inside a hashed tree
+    without perturbing the hash. Rejecting here closes the Python side of
+    that gap — this function is reused by any tooling (CI, release checks)
+    that hashes a lib-dynload tree outside the full bundle.py pipeline.
     """
     if not hasattr(os, "symlink"):
         return  # Windows without privilege — skip
@@ -203,26 +208,21 @@ def test_tree_hash_skips_symlinked_directory():
 
         sibling = td_path / "sibling"
         sibling.mkdir()
-        (sibling / "hidden.txt").write_bytes(b"not-in-tree")
 
         try:
             os.symlink(sibling, root / "symlinked-dir", target_is_directory=True)
         except (OSError, NotImplementedError):
             return  # no symlink privilege
 
-        got = bundle.tree_hash(root)
-        # Should equal hashing a tree with only `plain.txt`.
-        with tempfile.TemporaryDirectory() as td2:
-            plain = Path(td2)
-            (plain / "plain.txt").write_bytes(b"payload")
-            expected = bundle.tree_hash(plain)
-        assert got == expected, (
-            "tree_hash followed a symlinked directory — Rust side does not, "
-            "so cross-language hashes will drift."
-        )
+        raised = False
+        try:
+            bundle.tree_hash(root)
+        except SystemExit:
+            raised = True
+        assert raised, "tree_hash must reject a symlinked directory"
 
 
-def test_tree_hash_skips_symlinked_file():
+def test_tree_hash_rejects_symlinked_file():
     if not hasattr(os, "symlink"):
         return
     with tempfile.TemporaryDirectory() as td:
@@ -239,13 +239,12 @@ def test_tree_hash_skips_symlinked_file():
         except (OSError, NotImplementedError):
             return
 
-        got = bundle.tree_hash(root)
-        # Should equal hashing a tree with only `real.txt`.
-        with tempfile.TemporaryDirectory() as td2:
-            plain = Path(td2)
-            (plain / "real.txt").write_bytes(b"payload")
-            expected = bundle.tree_hash(plain)
-        assert got == expected
+        raised = False
+        try:
+            bundle.tree_hash(root)
+        except SystemExit:
+            raised = True
+        assert raised, "tree_hash must reject a file symlink"
 
 
 # ── Driver ───────────────────────────────────────────────────────────────────
@@ -255,10 +254,10 @@ def main() -> int:
         ("test_tree_hash_vector", test_tree_hash_vector),
         ("test_tree_hash_empty_dir", test_tree_hash_empty_dir),
         ("test_tree_hash_sort_is_bytewise", test_tree_hash_sort_is_bytewise),
-        ("test_tree_hash_skips_symlinked_directory",
-         test_tree_hash_skips_symlinked_directory),
-        ("test_tree_hash_skips_symlinked_file",
-         test_tree_hash_skips_symlinked_file),
+        ("test_tree_hash_rejects_symlinked_directory",
+         test_tree_hash_rejects_symlinked_directory),
+        ("test_tree_hash_rejects_symlinked_file",
+         test_tree_hash_rejects_symlinked_file),
         ("test_sha256_file_matches_hashlib", test_sha256_file_matches_hashlib),
         ("test_stdlib_zip_name_format", test_stdlib_zip_name_format),
         ("test_build_game_bundle_produces_pyc_entries",

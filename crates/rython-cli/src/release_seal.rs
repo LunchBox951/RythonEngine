@@ -358,6 +358,17 @@ fn collect_files(
             path: path.clone(),
             source: e,
         })?;
+        if file_type.is_symlink() {
+            // Reject symlinks explicitly rather than silently skip them.
+            // `bundle.py::assert_no_symlinks` guarantees the *built* tree is
+            // symlink-free, so any symlink observed here at runtime is a
+            // post-install injection: an attacker with write access to the
+            // dist can drop `_evil.so -> /tmp/evil.so` alongside the real
+            // extensions; since tree_hash would previously skip it, the hash
+            // would still match and `import ssl` (or any shadowed module name)
+            // would load the attacker's payload. Erroring closes that gap.
+            return Err(SealError::UnexpectedPath { path });
+        }
         if file_type.is_dir() {
             collect_files(root, &path, out)?;
         } else if file_type.is_file() {
@@ -639,29 +650,78 @@ mod tests {
         assert!(matches!(err, SealError::LibDynloadMismatch { .. }));
     }
 
-    /// Regression guard: the tree-hash walk must not descend into symlinked
-    /// directories. Python's `os.walk(followlinks=False)` matches this; if
-    /// either side starts following, the cross-language test vector fires.
+    /// Runtime symlink-injection defense: an attacker with write access to
+    /// the dist directory drops `evil.so -> /tmp/payload.so` alongside the
+    /// real extensions. The previous behavior (silently skip) left the
+    /// lib-dynload hash matching while CPython's import machinery would still
+    /// load the shadowed module. `collect_files` must now reject any symlink.
     #[test]
     #[cfg(unix)]
-    fn tree_hash_skips_symlinked_directory() {
+    fn tree_hash_rejects_symlinked_directory() {
         use std::os::unix::fs::symlink;
 
         let dir = tmp();
         write(&dir.path().join("file.txt"), b"payload");
-        let sibling = dir.path().parent().unwrap().join("sibling-target");
+        let sibling = dir.path().parent().unwrap().join("sibling-target-dir");
         fs::create_dir_all(&sibling).unwrap();
-        write(&sibling.join("hidden.txt"), b"not-in-tree");
         symlink(&sibling, dir.path().join("symlinked-dir")).unwrap();
 
-        let got = tree_hash(dir.path()).unwrap();
-        // Same as a tree containing only `file.txt`.
-        let expected = {
-            let plain = tempfile::tempdir().unwrap();
-            write(&plain.path().join("file.txt"), b"payload");
-            tree_hash(plain.path()).unwrap()
-        };
-        assert_eq!(got, expected);
+        let err = tree_hash(dir.path()).unwrap_err();
+        assert!(
+            matches!(err, SealError::UnexpectedPath { .. }),
+            "expected UnexpectedPath, got {err:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn tree_hash_rejects_file_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tmp();
+        write(&dir.path().join("real.txt"), b"real-bytes");
+        // `target.txt` lives outside the hashed tree — the concrete
+        // injection vector.
+        let outside = dir.path().parent().unwrap().join("attacker-payload.txt");
+        write(&outside, b"attacker");
+        symlink(&outside, dir.path().join("evil.txt")).unwrap();
+
+        let err = tree_hash(dir.path()).unwrap_err();
+        match err {
+            SealError::UnexpectedPath { path } => {
+                assert_eq!(path, dir.path().join("evil.txt"));
+            }
+            other => panic!("expected UnexpectedPath, got {other:?}"),
+        }
+    }
+
+    /// End-to-end: build a clean fixture, capture its expected hashes, then
+    /// inject a symlink into lib-dynload and confirm `verify_inner` refuses
+    /// to boot. Without the `collect_files` symlink guard this test would
+    /// pass with the old hash (the attack succeeds silently).
+    #[test]
+    #[cfg(unix)]
+    fn verify_inner_rejects_injected_libdynload_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tmp();
+        let (b, s, l, p) = build_fixture(dir.path());
+
+        let dynload = dir
+            .path()
+            .join("python")
+            .join("lib")
+            .join("python3.13")
+            .join("lib-dynload");
+        let payload = dir.path().parent().unwrap().join("evil-payload.so");
+        write(&payload, b"attacker-module");
+        symlink(&payload, dynload.join("_evil.so")).unwrap();
+
+        let err = verify_inner(dir.path(), &b, &s, &l, &p, SONAME, ZIP_NAME, ENTRY).unwrap_err();
+        assert!(
+            matches!(err, SealError::UnexpectedPath { .. }),
+            "expected UnexpectedPath, got {err:?}"
+        );
     }
 
     #[test]

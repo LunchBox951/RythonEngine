@@ -74,24 +74,37 @@ def sha256_file(path: Path) -> str:
 def tree_hash(root: Path) -> str:
     """Canonical tree hash — mirrors release_seal::tree_hash in Rust.
 
-    Symlinks are skipped on both sides (neither descended as directories nor
-    hashed as files). Rust's `entry.file_type()` naturally ignores them; we
-    match that with `os.walk(followlinks=False)` plus an explicit
-    `is_symlink()` check on files. Keeping both sides symlink-agnostic avoids
-    cross-language drift on platforms where `package.py` creates the
-    `python/lib64 -> python/lib` compatibility symlink.
+    Both sides *reject* symlinks with a hard error rather than silently
+    skipping them. Rust's `collect_files` returns `SealError::UnexpectedPath`
+    on any `is_symlink()` entry; this function raises `SystemExit`. The
+    symmetry closes a post-install injection gap: without it, an attacker
+    dropping `evil.so -> /tmp/payload.so` into a hashed tree would leave the
+    hash matching (silent skip) while CPython still loaded the shadowed
+    module. `bundle.py::assert_no_symlinks` guarantees the built tree is
+    already symlink-free, so this raise is a defense-in-depth net.
 
     For every regular file found, sorted by forward-slash relative path
     (bytewise ascending), feed into one outer SHA-256:
         relpath_bytes || 0x00 || sha256(file_bytes)  (raw, not hex)
     """
     files: list[tuple[str, Path]] = []
-    for dirpath, _dirnames, filenames in os.walk(root, followlinks=False):
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         base = Path(dirpath)
+        # Reject symlinked subdirectories (reported by os.walk under
+        # dirnames with followlinks=False, not descended but still listed).
+        for dname in dirnames:
+            if (base / dname).is_symlink():
+                sys.exit(
+                    f"FATAL: symlink in sealed tree at {base / dname} — refusing to hash.\n"
+                    "Rust's collect_files rejects these with UnexpectedPath; matching here."
+                )
         for fname in filenames:
             fpath = base / fname
             if fpath.is_symlink():
-                continue
+                sys.exit(
+                    f"FATAL: symlink in sealed tree at {fpath} — refusing to hash.\n"
+                    "Rust's collect_files rejects these with UnexpectedPath; matching here."
+                )
             rel = fpath.relative_to(root).as_posix()
             files.append((rel, fpath))
     files.sort(key=lambda t: t[0].encode())
