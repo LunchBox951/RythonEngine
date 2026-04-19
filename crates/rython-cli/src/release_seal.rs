@@ -179,22 +179,21 @@ fn verify_inner(
         });
     }
 
-    // 5. Absent-by-design paths: `site-packages` (canonical) and
-    //    `dist-packages` (Debian/Ubuntu convention) alongside `lib-dynload`
-    //    are the directories `site.py` scans for `.pth` files at
-    //    interpreter startup. We never ship either, so their presence at
-    //    runtime indicates post-install tampering aimed at sys.path
-    //    injection — which is how a write-access-to-install-dir attacker
-    //    would pivot to arbitrary code execution after phase 1 blocked the
-    //    bytecode path.
-    if !cfg!(windows) {
-        if let Some(pythonxy_dir) = dynload_dir.parent() {
-            for candidate in ["site-packages", "dist-packages"] {
-                let p = pythonxy_dir.join(candidate);
-                if p.exists() {
-                    return Err(SealError::UnexpectedPath { path: p });
-                }
-            }
+    // 5. Absent-by-design paths — directories `site.py` scans for `.pth`
+    //    files at interpreter startup. We never ship any of them, so
+    //    presence at runtime indicates post-install tampering aimed at
+    //    sys.path injection: the pivot a write-access-to-install-dir
+    //    attacker reaches for after phase 1 blocks the bytecode path.
+    //
+    //    Layout differs by platform:
+    //      POSIX:   `python/lib/pythonX.Y/{site-packages,dist-packages}`
+    //               (canonical + Debian/Ubuntu convention)
+    //      Windows: `python/Lib/site-packages`
+    //               (`site.py`'s Windows branch resolves site-packages
+    //                relative to `sys.prefix/Lib`, not next to DLLs)
+    for p in absent_by_design_paths(proj_dir, &dynload_dir) {
+        if p.exists() {
+            return Err(SealError::UnexpectedPath { path: p });
         }
     }
 
@@ -271,6 +270,33 @@ fn lib_dynload_path(proj_dir: &Path, zip_name: &str) -> PathBuf {
             .join("lib")
             .join(python_xy_from_zip_name(zip_name))
             .join("lib-dynload")
+    }
+}
+
+/// Paths that must not exist in a sealed dist — all are `site.py` scan
+/// targets for `.pth` files, which can inject arbitrary entries into
+/// `sys.path` at interpreter startup. Each platform's layout surfaces a
+/// different canonical set:
+///
+/// POSIX:
+///   `<lib-dynload parent>/site-packages`  (canonical)
+///   `<lib-dynload parent>/dist-packages`  (Debian/Ubuntu)
+///
+/// Windows:
+///   `<proj>/python/Lib/site-packages`     (CPython's `site.getsitepackages`
+///                                          Windows branch — not adjacent to
+///                                          `DLLs/`)
+fn absent_by_design_paths(proj_dir: &Path, dynload_dir: &Path) -> Vec<PathBuf> {
+    if cfg!(windows) {
+        vec![proj_dir.join("python").join("Lib").join("site-packages")]
+    } else {
+        match dynload_dir.parent() {
+            Some(parent) => vec![
+                parent.join("site-packages"),
+                parent.join("dist-packages"),
+            ],
+            None => Vec::new(),
+        }
     }
 }
 
@@ -612,6 +638,33 @@ mod tests {
         match err {
             SealError::UnexpectedPath { path } => assert_eq!(path, dist_pkg),
             other => panic!("expected UnexpectedPath, got {other:?}"),
+        }
+    }
+
+    /// Pure layout test — runs on every platform and documents the expected
+    /// absent-by-design set for each. Cross-compiles reject cfg-gated tests
+    /// are insufficient on their own: Windows CI must exercise the Windows
+    /// branch of `absent_by_design_paths`, and this is the cheapest way to
+    /// do it without spinning up a full fixture.
+    #[test]
+    fn absent_by_design_paths_layout() {
+        let proj = Path::new("/tmp/fake");
+        let dyn_posix = proj
+            .join("python")
+            .join("lib")
+            .join("python3.13")
+            .join("lib-dynload");
+        let dyn_win = proj.join("python").join("DLLs");
+
+        if cfg!(windows) {
+            let got = absent_by_design_paths(proj, &dyn_win);
+            assert_eq!(got.len(), 1);
+            assert!(got[0].ends_with("python/Lib/site-packages"));
+        } else {
+            let got = absent_by_design_paths(proj, &dyn_posix);
+            assert_eq!(got.len(), 2);
+            assert!(got[0].ends_with("python3.13/site-packages"));
+            assert!(got[1].ends_with("python3.13/dist-packages"));
         }
     }
 
