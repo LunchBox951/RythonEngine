@@ -12,27 +12,11 @@ The script expects `cargo build --release` to have already run (make dist handle
 import argparse
 import json
 import os
-import platform
 import shutil
 import subprocess
 import sys
 import sysconfig
-import zipfile
 from pathlib import Path
-
-
-# Stdlib directories excluded from the distribution — IDEs, test suites, and
-# build tools that a shipped game does not need.
-STDLIB_EXCLUDES = frozenset({
-    "test",
-    "tests",
-    "idlelib",
-    "tkinter",
-    "turtledemo",
-    "ensurepip",
-    "__pycache__",
-    "site-packages",
-})
 
 
 def parse_args() -> argparse.Namespace:
@@ -48,6 +32,9 @@ def parse_args() -> argparse.Namespace:
                    help="Path to game directory (e.g. game/)")
     p.add_argument("--out", required=True,
                    help="Output base directory (e.g. dist/linux-x86_64)")
+    p.add_argument("--bundle-dir", required=True,
+                   help="Directory of pre-built bundle artifacts from scripts/bundle.py "
+                        "(contains game.bundle, pythonX.Y.zip, lib-dynload/)")
     return p.parse_args()
 
 
@@ -213,56 +200,67 @@ def _patch_rpath_macos(binary: Path, old_dylib_path: str, soname: str) -> None:
     )
 
 
-# ── Python stdlib copy ─────────────────────────────────────────────────────────
+# ── Prebuilt artifact installation ─────────────────────────────────────────────
 
-def copy_stdlib(dest_python: Path) -> None:
-    """Copy the Python stdlib into dest_python/lib/pythonX.Y/, minus excluded dirs."""
-    stdlib_src = Path(sysconfig.get_paths()["stdlib"])
-    py_ver = sysconfig.get_python_version()  # e.g. "3.14"
-    stdlib_dest = dest_python / "lib" / f"python{py_ver}"
-    stdlib_dest.mkdir(parents=True, exist_ok=True)
+def install_stdlib_zip(bundle_dir: Path, dest_dir: Path, target_platform: str) -> None:
+    """Copy the pre-compiled stdlib zip from bundle_dir into the dist tree.
 
-    copied = 0
-    for item in stdlib_src.iterdir():
-        if item.name in STDLIB_EXCLUDES:
-            continue
-        dest = stdlib_dest / item.name
-        if item.is_dir():
-            shutil.copytree(
-                item, dest,
-                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
-                dirs_exist_ok=True,
-            )
-        else:
-            shutil.copy2(item, dest)
-        copied += 1
-
-    size_mb = sum(f.stat().st_size for f in stdlib_dest.rglob("*") if f.is_file()) // (1024 * 1024)
-    print(f"         stdlib: python{py_ver}/ ({size_mb} MB, {copied} top-level entries)")
-
-
-# ── Game bundle ────────────────────────────────────────────────────────────────
-
-def create_bundle(game_dir: Path, dest_dir: Path) -> Path:
-    """Zip game/**/*.py into dest_dir/game.bundle.
-
-    Paths inside the zip are relative to game_dir's parent so that the module
-    hierarchy (e.g. game.scripts.main) is preserved when the zip is on sys.path
-    via Python's zipimport machinery.
+    CPython's default search adds `<prefix>/lib/pythonXY.zip` and
+    `<prefix>/lib/pythonX.Y/` (POSIX) or `<prefix>/pythonXY.zip` and
+    `<prefix>/DLLs` (Windows). We install the zip under the POSIX path —
+    on Windows the Rust-side path resolution still maps it correctly.
     """
-    bundle_path = dest_dir / "game.bundle"
-    game_parent = game_dir.parent
+    zips = list(bundle_dir.glob("python*.zip"))
+    if not zips:
+        sys.exit(f"ERROR: no pythonXY.zip found in {bundle_dir} — run scripts/bundle.py first")
+    if len(zips) > 1:
+        sys.exit(f"ERROR: multiple pythonXY.zip found in {bundle_dir}: {zips}")
+    src_zip = zips[0]
 
-    with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for py_file in sorted(game_dir.rglob("*.py")):
-            if "__pycache__" in py_file.parts:
-                continue
-            arcname = py_file.relative_to(game_parent)
-            zf.write(py_file, arcname)
+    if target_platform == "windows":
+        dest_zip = dest_dir / src_zip.name
+    else:
+        dest_zip = dest_dir / "python" / "lib" / src_zip.name
+    dest_zip.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src_zip, dest_zip)
+    size_kb = dest_zip.stat().st_size // 1024
+    print(f"         stdlib: {dest_zip.relative_to(dest_dir)} ({size_kb} KB)")
 
-    size_kb = bundle_path.stat().st_size // 1024
+
+def install_lib_dynload(bundle_dir: Path, dest_dir: Path, target_platform: str) -> None:
+    """Copy the extension-module tree built by scripts/bundle.py.
+
+    POSIX layout: dest/python/lib/pythonX.Y/lib-dynload/
+    Windows layout: dest/python/DLLs/
+    """
+    src = bundle_dir / "lib-dynload"
+    if not src.is_dir():
+        sys.exit(f"ERROR: lib-dynload not found in {bundle_dir} — run scripts/bundle.py first")
+
+    if target_platform == "windows":
+        dest = dest_dir / "python" / "DLLs"
+    else:
+        py_ver = sysconfig.get_python_version()
+        dest = dest_dir / "python" / "lib" / f"python{py_ver}" / "lib-dynload"
+
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src, dest)
+    n = sum(1 for _ in dest.rglob("*") if _.is_file())
+    print(f"         lib-dynload: {dest.relative_to(dest_dir)} ({n} files)")
+
+
+def install_game_bundle(bundle_dir: Path, dest_dir: Path) -> Path:
+    """Copy the pre-built game.bundle into the dist tree."""
+    src = bundle_dir / "game.bundle"
+    if not src.exists():
+        sys.exit(f"ERROR: game.bundle not found in {bundle_dir} — run scripts/bundle.py first")
+    dest = dest_dir / "game.bundle"
+    shutil.copy2(src, dest)
+    size_kb = dest.stat().st_size // 1024
     print(f"         bundle: game.bundle ({size_kb} KB)")
-    return bundle_path
+    return dest
 
 
 # ── Assets and project.json ────────────────────────────────────────────────────
@@ -348,13 +346,21 @@ def main() -> None:
     print("  [3/6] Copying runtime and patching RPATH...")
     patch_binary_rpath(dest_binary, libpython_src, soname, dest_dir, args.platform)
 
-    # ── 4. Copy Python stdlib ─────────────────────────────────────────────────
-    print("  [4/6] Copying Python stdlib...")
-    copy_stdlib(dest_dir / "python")
+    bundle_dir = Path(args.bundle_dir).resolve()
+    if not bundle_dir.is_dir():
+        sys.exit(
+            f"ERROR: --bundle-dir not found: {bundle_dir}\n"
+            "Run `scripts/bundle.py` first (Makefile's `dist` target handles this)."
+        )
 
-    # ── 5. Create game.bundle ─────────────────────────────────────────────────
-    print("  [5/6] Creating game.bundle...")
-    create_bundle(game_dir, dest_dir)
+    # ── 4. Install pre-built stdlib zip + lib-dynload ─────────────────────────
+    print("  [4/6] Installing pre-built Python stdlib + extensions...")
+    install_stdlib_zip(bundle_dir, dest_dir, args.platform)
+    install_lib_dynload(bundle_dir, dest_dir, args.platform)
+
+    # ── 5. Install pre-built game.bundle ──────────────────────────────────────
+    print("  [5/6] Installing game.bundle...")
+    install_game_bundle(bundle_dir, dest_dir)
 
     # ── 6. Copy project.json and assets ──────────────────────────────────────
     print("  [6/6] Copying project.json and assets...")
