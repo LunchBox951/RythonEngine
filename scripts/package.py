@@ -144,10 +144,9 @@ def patch_binary_rpath(
     target_platform: str,
 ) -> None:
     """Copy libpython into the dist tree and patch the binary to find it."""
-    dest_python_lib = dest_dir / "python" / "lib"
-    dest_python_lib.mkdir(parents=True, exist_ok=True)
-
     if target_platform == "linux":
+        dest_python_lib = dest_dir / "python" / "lib"
+        dest_python_lib.mkdir(parents=True, exist_ok=True)
         dest_so = dest_python_lib / soname
         # Resolve symlinks to get the real versioned file
         real_src = libpython_src.resolve()
@@ -161,6 +160,8 @@ def patch_binary_rpath(
         _patch_rpath_linux(binary, "$ORIGIN/python/lib")
 
     elif target_platform == "macos":
+        dest_python_lib = dest_dir / "python" / "lib"
+        dest_python_lib.mkdir(parents=True, exist_ok=True)
         dest_dylib = dest_python_lib / soname
         shutil.copy2(libpython_src, dest_dylib)
         _patch_rpath_macos(binary, str(libpython_src), soname)
@@ -215,11 +216,21 @@ def _patch_rpath_macos(binary: Path, old_dylib_path: str, soname: str) -> None:
 
 # ── Python stdlib copy ─────────────────────────────────────────────────────────
 
-def copy_stdlib(dest_python: Path) -> None:
-    """Copy the Python stdlib into dest_python/lib/pythonX.Y/, minus excluded dirs."""
+def copy_stdlib(dest_python: Path, target_platform: str) -> None:
+    """Copy the Python stdlib into the layout the target platform's interpreter expects.
+
+    Windows CPython looks for stdlib at <prefix>/Lib/; Unix builds use
+    <prefix>/lib/pythonX.Y/. The dest layout must match — otherwise the embedded
+    interpreter fails to import `encodings` and aborts during startup.
+    """
     stdlib_src = Path(sysconfig.get_paths()["stdlib"])
-    py_ver = sysconfig.get_python_version()  # e.g. "3.14"
-    stdlib_dest = dest_python / "lib" / f"python{py_ver}"
+    py_ver = sysconfig.get_python_version()  # e.g. "3.12"
+    if target_platform == "windows":
+        stdlib_dest = dest_python / "Lib"
+        label = "Lib/"
+    else:
+        stdlib_dest = dest_python / "lib" / f"python{py_ver}"
+        label = f"python{py_ver}/"
     stdlib_dest.mkdir(parents=True, exist_ok=True)
 
     copied = 0
@@ -238,7 +249,7 @@ def copy_stdlib(dest_python: Path) -> None:
         copied += 1
 
     size_mb = sum(f.stat().st_size for f in stdlib_dest.rglob("*") if f.is_file()) // (1024 * 1024)
-    print(f"         stdlib: python{py_ver}/ ({size_mb} MB, {copied} top-level entries)")
+    print(f"         stdlib: {label} ({size_mb} MB, {copied} top-level entries)")
 
 
 # ── Game bundle ────────────────────────────────────────────────────────────────
@@ -265,16 +276,35 @@ def create_bundle(game_dir: Path, dest_dir: Path) -> Path:
     return bundle_path
 
 
-# ── Assets and project.json ────────────────────────────────────────────────────
+# ── Game data and project.json ────────────────────────────────────────────────
 
-def copy_assets(game_dir: Path, dest_dir: Path) -> None:
-    assets_src = game_dir / "assets"
-    if not assets_src.is_dir():
-        print(f"  WARNING: no assets/ directory found at {assets_src}")
-        return
-    shutil.copytree(assets_src, dest_dir / "assets", dirs_exist_ok=True)
-    n = sum(1 for _ in (dest_dir / "assets").rglob("*") if _.is_file())
-    print(f"         assets: {n} files")
+def copy_game_data(game_dir: Path, dest_dir: Path) -> None:
+    """Mirror non-Python game data to dest_dir/<game-dirname>/.
+
+    Scripts reference resources via paths like "game/assets/music/x.mp3" and
+    "game/ui/main_menu.json", relative to the process cwd. Preserving the
+    top-level game directory under the dist root keeps those paths valid when
+    the game is launched from the dist directory.
+    """
+    data_root = dest_dir / game_dir.name
+    data_root.mkdir(parents=True, exist_ok=True)
+
+    copied = 0
+    for src in game_dir.rglob("*"):
+        if src.is_dir():
+            continue
+        if src.suffix == ".py":
+            continue
+        if "__pycache__" in src.parts:
+            continue
+        rel = src.relative_to(game_dir)
+        dest = data_root / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+        copied += 1
+
+    size_mb = sum(f.stat().st_size for f in data_root.rglob("*") if f.is_file()) // (1024 * 1024)
+    print(f"         game data: {game_dir.name}/ ({size_mb} MB, {copied} files)")
 
 
 def copy_project_json(game_dir: Path, dest_dir: Path) -> dict:
@@ -319,7 +349,7 @@ def main() -> None:
         shutil.rmtree(dest_dir)
     dest_dir.mkdir(parents=True)
 
-    print(f"Packaging  {game_name}  →  {args.platform}-{args.arch}")
+    print(f"Packaging  {game_name}  ->  {args.platform}-{args.arch}")
     print(f"Output:    {dest_dir}")
     print()
 
@@ -350,16 +380,16 @@ def main() -> None:
 
     # ── 4. Copy Python stdlib ─────────────────────────────────────────────────
     print("  [4/6] Copying Python stdlib...")
-    copy_stdlib(dest_dir / "python")
+    copy_stdlib(dest_dir / "python", args.platform)
 
     # ── 5. Create game.bundle ─────────────────────────────────────────────────
     print("  [5/6] Creating game.bundle...")
     create_bundle(game_dir, dest_dir)
 
-    # ── 6. Copy project.json and assets ──────────────────────────────────────
-    print("  [6/6] Copying project.json and assets...")
+    # ── 6. Copy project.json and game data ───────────────────────────────────
+    print("  [6/6] Copying project.json and game data...")
     copy_project_json(game_dir, dest_dir)
-    copy_assets(game_dir, dest_dir)
+    copy_game_data(game_dir, dest_dir)
 
     total_mb = sum(f.stat().st_size for f in dest_dir.rglob("*") if f.is_file()) // (1024 * 1024)
     print()
