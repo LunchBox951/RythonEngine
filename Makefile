@@ -81,12 +81,18 @@ release:
 	cargo build --release
 
 # ── Cross-build toolchain setup ──────────────────────────────────────────────
+#
+# cargo-zigbuild and cargo-xwin are Rust binaries — they must be installed via
+# `cargo install`, not pip (cargo-xwin has no PyPI package). ziglang IS a PyPI
+# package: it ships the `zig` compiler shim that cargo-zigbuild invokes; we
+# keep it in a project-local venv so the host system Python isn't touched.
 
 $(VENV)/bin/pip:
 	python3 -m venv $(VENV)
 
 setup-cross: $(VENV)/bin/pip
-	$(VENV)/bin/pip install --upgrade cargo-zigbuild ziglang cargo-xwin
+	$(VENV)/bin/pip install --upgrade ziglang
+	cargo install --locked cargo-zigbuild cargo-xwin
 	rustup target add \
 	    x86_64-unknown-linux-gnu \
 	    aarch64-unknown-linux-gnu \
@@ -133,8 +139,9 @@ dist: bootstrap
 	$(PACKAGE_CMD)
 endif
 else ifeq ($(PLATFORM),windows)
+# cargo-xwin lives in ~/.cargo/bin (installed by `make setup-cross`), so no
+# venv PATH prepend is needed — only the cross-build env vars matter here.
 dist: bootstrap
-	PATH="$(abspath $(VENV)/bin):$(PATH)" \
 	PYO3_CROSS=1 \
 	PYO3_CROSS_LIB_DIR="$(PYO3_CROSS_LIB_DIR)" \
 	PYO3_CROSS_PYTHON_VERSION="$(PYO3_CROSS_PYTHON_VERSION)" \

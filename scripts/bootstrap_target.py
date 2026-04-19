@@ -31,6 +31,11 @@ from pathlib import Path
 VALID_PLATFORMS = ("linux", "windows", "macos")
 VALID_ARCHES = ("x86_64", "aarch64")
 
+# tarfile.extractall(filter=...) was added in 3.12 and is the only safe
+# extraction path we use. Fail fast with a clear message rather than letting
+# `extract()` raise an opaque TypeError on older hosts.
+MIN_PYTHON = (3, 12)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -57,23 +62,40 @@ def sha256_of(path: Path) -> str:
 
 
 def download(url: str, dest: Path) -> None:
+    """Stream `url` to `dest` atomically.
+
+    Writes to a sibling `<dest>.partial` and renames into place on success, so
+    a Ctrl-C / network interruption never leaves `dest` looking complete-but-
+    corrupt. Any pre-existing partial is removed first.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
+    partial = dest.with_suffix(dest.suffix + ".partial")
+    if partial.exists():
+        partial.unlink()
     print(f"  downloading {url}")
-    with urllib.request.urlopen(url) as resp, open(dest, "wb") as out:
-        total = int(resp.headers.get("Content-Length") or 0)
-        read = 0
-        last_pct = -1
-        while True:
-            chunk = resp.read(1 << 20)
-            if not chunk:
-                break
-            out.write(chunk)
-            read += len(chunk)
-            if total:
-                pct = read * 100 // total
-                if pct != last_pct and pct % 10 == 0:
-                    print(f"    {pct}%  ({read // (1 << 20)}/{total // (1 << 20)} MB)")
-                    last_pct = pct
+    try:
+        with urllib.request.urlopen(url) as resp, open(partial, "wb") as out:
+            total = int(resp.headers.get("Content-Length") or 0)
+            read = 0
+            last_pct = -1
+            while True:
+                chunk = resp.read(1 << 20)
+                if not chunk:
+                    break
+                out.write(chunk)
+                read += len(chunk)
+                if total:
+                    pct = read * 100 // total
+                    if pct != last_pct and pct % 10 == 0:
+                        print(f"    {pct}%  ({read // (1 << 20)}/{total // (1 << 20)} MB)")
+                        last_pct = pct
+        partial.replace(dest)
+    except BaseException:
+        # Includes KeyboardInterrupt — clean up the partial so the next run
+        # does not see a half-written file at `dest`.
+        if partial.exists():
+            partial.unlink()
+        raise
 
 
 def extract(archive: Path, into: Path) -> None:
@@ -102,6 +124,12 @@ def read_marker(target_dir: Path) -> dict | None:
 
 
 def main() -> int:
+    if sys.version_info < MIN_PYTHON:
+        sys.exit(
+            f"ERROR: bootstrap_target.py requires Python >= {MIN_PYTHON[0]}.{MIN_PYTHON[1]} "
+            f"(found {sys.version_info.major}.{sys.version_info.minor}). "
+            "tarfile's `filter='data'` safe-extract argument was added in 3.12."
+        )
     args = parse_args()
     repo_root = Path(__file__).parent.parent.resolve()
     pins_path = Path(args.pins) if args.pins else repo_root / "scripts" / "python_standalone_pins.json"
