@@ -1,138 +1,100 @@
+use crate::binding::InputSource;
 use crate::bitset::{GamepadButtonSet, KeyCodeSet, MouseButtonSet};
-use crate::{AxisBinding, ButtonBinding, InputActionEvent, InputMap, InputSnapshot};
+use crate::context::{ActionEvaluation, InputMappingContext};
+use crate::events::{EventPhase, InputActionEvent};
+use crate::snapshot::InputSnapshot;
+use crate::trigger::TriggerState;
+use crate::value::{ActionValue, ValueKind};
 use rython_core::{EngineError, OwnerId, SchedulerHandle};
 use rython_modules::Module;
-use rython_window::{GamepadAxisType, MouseAxisType, RawInputEvent};
+use rython_window::{GamepadAxisType, RawInputEvent};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-// ─── Free functions (avoid borrow-checker conflicts inside tick) ─────────────
-
-fn eval_axis(
-    binding: &AxisBinding,
-    keys: &KeyCodeSet,
-    mouse_delta: &(f64, f64),
-    gpad_axes: &HashMap<GamepadAxisType, f32>,
-) -> f32 {
-    match binding {
-        AxisBinding::KBAxis { negative, positive } => {
-            let neg = if keys.contains(negative) {
-                -1.0_f32
-            } else {
-                0.0
-            };
-            let pos = if keys.contains(positive) {
-                1.0_f32
-            } else {
-                0.0
-            };
-            (neg + pos).clamp(-1.0, 1.0)
-        }
-        AxisBinding::MouseAxis { axis } => match axis {
-            MouseAxisType::X => mouse_delta.0 as f32,
-            MouseAxisType::Y => mouse_delta.1 as f32,
-        },
-        AxisBinding::GamepadAxis { axis } => gpad_axes.get(axis).copied().unwrap_or(0.0),
-    }
-}
-
-fn is_btn_active(
-    binding: &ButtonBinding,
-    keys: &KeyCodeSet,
-    mouse_buttons: &MouseButtonSet,
-    gpad_buttons: &GamepadButtonSet,
-) -> bool {
-    match binding {
-        ButtonBinding::Keyboard(key) => keys.contains(key),
-        ButtonBinding::Mouse(btn) => mouse_buttons.contains(btn),
-        ButtonBinding::Gamepad(btn) => gpad_buttons.contains(btn),
-    }
-}
-
-const AXIS_DEADZONE: f32 = 0.1;
-
-// ─── PlayerController ────────────────────────────────────────────────────────
-
-/// Module that processes raw input events each frame and produces an InputSnapshot.
-/// This is an exclusive module — only the current owner may read or reconfigure it.
+/// Module that processes raw input events each frame, drives the active
+/// `InputMappingContext` stack, and produces an `InputSnapshot` + a stream
+/// of `InputActionEvent`s.
+///
+/// Exclusive module — only the current owner may read or reconfigure it.
 pub struct PlayerController {
-    maps: HashMap<String, InputMap>,
-    active_map: Option<String>,
+    contexts: Vec<InputMappingContext>,
+    per_action_state: HashMap<(String, String), ActionRuntime>,
     locked: bool,
     owner: OwnerId,
 
-    // Per-frame hardware state (bitsets: Copy instead of HashSet::clone)
     current_keys: KeyCodeSet,
-    previous_keys: KeyCodeSet,
     current_mouse_buttons: MouseButtonSet,
-    previous_mouse_buttons: MouseButtonSet,
-    mouse_delta: (f64, f64),
+    mouse_delta: (f32, f32),
     current_gamepad_buttons: GamepadButtonSet,
-    previous_gamepad_buttons: GamepadButtonSet,
     gamepad_axes: HashMap<GamepadAxisType, f32>,
     gamepad_connected: bool,
     gamepad_name: Option<String>,
 
-    // Output
     snapshot: InputSnapshot,
-    /// Pending input action events; callers may drain this after tick().
     pending_events: Arc<Mutex<Vec<InputActionEvent>>>,
-    /// Tracks the previous quantized axis value per action for change detection.
-    previous_axis_values: HashMap<String, f32>,
+}
+
+#[derive(Debug, Default, Clone)]
+struct ActionRuntime {
+    previous_phase: Option<EventPhase>,
+    elapsed_seconds: f32,
+    previous_actuated: bool,
 }
 
 impl PlayerController {
     pub fn new(owner: OwnerId) -> Self {
         Self {
-            maps: HashMap::new(),
-            active_map: None,
+            contexts: Vec::new(),
+            per_action_state: HashMap::new(),
             locked: false,
             owner,
             current_keys: KeyCodeSet::new(),
-            previous_keys: KeyCodeSet::new(),
             current_mouse_buttons: MouseButtonSet::new(),
-            previous_mouse_buttons: MouseButtonSet::new(),
             mouse_delta: (0.0, 0.0),
             current_gamepad_buttons: GamepadButtonSet::new(),
-            previous_gamepad_buttons: GamepadButtonSet::new(),
             gamepad_axes: HashMap::new(),
             gamepad_connected: false,
             gamepad_name: None,
             snapshot: InputSnapshot::new(),
             pending_events: Arc::new(Mutex::new(Vec::new())),
-            previous_axis_values: HashMap::new(),
         }
     }
 
-    /// Register a map. The first registered map becomes active automatically.
-    pub fn register_map(&mut self, map: InputMap) {
-        let name = map.name().to_owned();
-        if self.active_map.is_none() {
-            self.active_map = Some(name.clone());
-        }
-        self.maps.insert(name, map);
+    /// Push a context onto the stack. Higher-priority contexts evaluate
+    /// first; equal-priority contexts evaluate in push order.
+    pub fn push_context(&mut self, mut context: InputMappingContext) {
+        context.reset_trigger_state();
+        // Drop any lingering per-action runtime for this context id so its
+        // first tick after re-push emits Started correctly.
+        self.per_action_state
+            .retain(|(ctx_id, _), _| ctx_id != context.id());
+        self.contexts.push(context);
+        self.contexts
+            .sort_by(|a, b| b.priority().cmp(&a.priority()));
     }
 
-    pub fn set_active_map(&mut self, name: &str, caller: OwnerId) -> Result<(), EngineError> {
-        if caller != self.owner {
-            return Err(EngineError::Module {
-                module: "PlayerController".into(),
-                message: "caller is not the owner".into(),
-            });
-        }
-        if self.maps.contains_key(name) {
-            self.active_map = Some(name.to_owned());
-            // Clear previous_axis_values so the first tick after a map switch
-            // correctly fires axis-crossing events for any newly-bound action
-            // whose name happens to collide with one in the old map.
-            self.previous_axis_values.clear();
-            Ok(())
-        } else {
-            Err(EngineError::Module {
-                module: "PlayerController".into(),
-                message: format!("map '{}' not found", name),
-            })
-        }
+    /// Remove the context with this id, if present. Returns the removed context.
+    pub fn pop_context(&mut self, id: &str) -> Option<InputMappingContext> {
+        let idx = self.contexts.iter().position(|c| c.id() == id)?;
+        let removed = self.contexts.remove(idx);
+        self.per_action_state
+            .retain(|(ctx_id, _), _| ctx_id != id);
+        Some(removed)
+    }
+
+    pub fn clear_contexts(&mut self) {
+        self.contexts.clear();
+        self.per_action_state.clear();
+    }
+
+    /// Context ids in priority (descending) order.
+    pub fn active_contexts(&self) -> Vec<String> {
+        self.contexts.iter().map(|c| c.id().to_owned()).collect()
+    }
+
+    /// Mutable handle to a live context by id (for rebind workflows).
+    pub fn context_mut(&mut self, id: &str) -> Option<&mut InputMappingContext> {
+        self.contexts.iter_mut().find(|c| c.id() == id)
     }
 
     pub fn lock(&mut self) {
@@ -151,13 +113,10 @@ impl PlayerController {
         self.owner
     }
 
-    /// Transfer ownership. Only the current owner may call this; subsequent
-    /// calls from the old owner will be rejected.
     pub fn set_owner(&mut self, new_owner: OwnerId) {
         self.owner = new_owner;
     }
 
-    /// Returns the current snapshot if the caller is the owner.
     pub fn get_snapshot(&self, caller: OwnerId) -> Result<&InputSnapshot, EngineError> {
         if caller != self.owner {
             return Err(EngineError::Module {
@@ -168,7 +127,6 @@ impl PlayerController {
         Ok(&self.snapshot)
     }
 
-    /// Shared handle to the pending-events queue. Callers may drain or observe it.
     pub fn pending_events(&self) -> Arc<Mutex<Vec<InputActionEvent>>> {
         Arc::clone(&self.pending_events)
     }
@@ -185,40 +143,26 @@ impl PlayerController {
         self.gamepad_name.as_deref()
     }
 
-    /// Process raw input events for one frame and rebuild the snapshot.
-    ///
-    /// Call this once per frame (or directly in tests) before reading the snapshot.
-    pub fn tick(&mut self, events: &[RawInputEvent]) {
-        // ── Step 1: save previous state (bitset Copy, no heap allocation) ───
-        self.previous_keys = self.current_keys;
-        self.previous_mouse_buttons = self.current_mouse_buttons;
-        self.previous_gamepad_buttons = self.current_gamepad_buttons;
+    /// Process raw input events for one frame, advance context state by `dt`
+    /// seconds, rebuild the snapshot, and queue action events.
+    pub fn tick(&mut self, events: &[RawInputEvent], dt: f32) {
         self.mouse_delta = (0.0, 0.0);
 
-        // ── Step 2: apply raw events ──────────────────────────────────────────
         for event in events {
             match event {
-                RawInputEvent::KeyPressed(key) => {
-                    self.current_keys.insert(*key);
-                }
-                RawInputEvent::KeyReleased(key) => {
-                    self.current_keys.remove(*key);
-                }
+                RawInputEvent::KeyPressed(key) => self.current_keys.insert(*key),
+                RawInputEvent::KeyReleased(key) => self.current_keys.remove(*key),
                 RawInputEvent::MouseMoved { dx, dy } => {
-                    self.mouse_delta.0 += dx;
-                    self.mouse_delta.1 += dy;
+                    self.mouse_delta.0 += *dx as f32;
+                    self.mouse_delta.1 += *dy as f32;
                 }
-                RawInputEvent::MouseButtonPressed(btn) => {
-                    self.current_mouse_buttons.insert(*btn);
-                }
-                RawInputEvent::MouseButtonReleased(btn) => {
-                    self.current_mouse_buttons.remove(*btn);
-                }
+                RawInputEvent::MouseButtonPressed(btn) => self.current_mouse_buttons.insert(*btn),
+                RawInputEvent::MouseButtonReleased(btn) => self.current_mouse_buttons.remove(*btn),
                 RawInputEvent::GamepadButtonPressed(btn) => {
-                    self.current_gamepad_buttons.insert(*btn);
+                    self.current_gamepad_buttons.insert(*btn)
                 }
                 RawInputEvent::GamepadButtonReleased(btn) => {
-                    self.current_gamepad_buttons.remove(*btn);
+                    self.current_gamepad_buttons.remove(*btn)
                 }
                 RawInputEvent::GamepadAxisChanged { axis, value } => {
                     self.gamepad_axes.insert(*axis, *value);
@@ -236,117 +180,179 @@ impl PlayerController {
             }
         }
 
-        // ── Step 3: build snapshot ────────────────────────────────────────────
-        // Take local copies of raw state refs so we can borrow maps separately.
-        let cur_keys = &self.current_keys;
-        let prev_keys = &self.previous_keys;
-        let cur_mouse = &self.current_mouse_buttons;
-        let prev_mouse = &self.previous_mouse_buttons;
-        let cur_gpad = &self.current_gamepad_buttons;
-        let prev_gpad = &self.previous_gamepad_buttons;
-        let mouse_delta = &self.mouse_delta;
-        let gpad_axes = &self.gamepad_axes;
-        let locked = self.locked;
-
         let mut new_snapshot = InputSnapshot::new();
         let mut new_events: Vec<InputActionEvent> = Vec::new();
 
-        let map_name = self.active_map.clone();
-        if let Some(ref map_name) = map_name {
-            if let Some(map) = self.maps.get(map_name) {
-                // Collect borrowed &str references — avoids cloning action name Strings.
-                let axis_actions: Vec<&str> = map.all_axis_actions().map(String::as_str).collect();
-                let button_actions: Vec<&str> =
-                    map.all_button_actions().map(String::as_str).collect();
+        if !self.locked {
+            let src = InputSource {
+                keys: &self.current_keys,
+                mouse_buttons: &self.current_mouse_buttons,
+                mouse_delta: self.mouse_delta,
+                gamepad_buttons: &self.current_gamepad_buttons,
+                gamepad_axes: &self.gamepad_axes,
+            };
 
-                if !locked {
-                    for &action in &axis_actions {
-                        let mut value = 0.0_f32;
-                        for binding in map.axis_bindings(action) {
-                            let v = eval_axis(binding, cur_keys, mouse_delta, gpad_axes);
-                            if v.abs() > value.abs() {
-                                value = v;
-                            }
-                        }
-                        new_snapshot.set_axis(action.to_owned(), value);
+            // Actions consumed by higher-priority contexts are masked out for
+            // all lower contexts (shadowing).
+            let mut consumed: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
 
-                        // Emit an axis-change event when the value meaningfully
-                        // crosses the deadzone boundary or changes while active.
-                        let prev = self
-                            .previous_axis_values
-                            .get(action)
-                            .copied()
-                            .unwrap_or(0.0);
-                        let prev_active = prev.abs() > AXIS_DEADZONE;
-                        let curr_active = value.abs() > AXIS_DEADZONE;
-                        let deadzone_crossed = prev_active != curr_active;
-                        let significant_change =
-                            prev_active && curr_active && (value - prev).abs() > AXIS_DEADZONE;
-                        if deadzone_crossed || significant_change {
-                            new_events.push(InputActionEvent {
-                                action: format!("axis:{action}"),
-                                value,
-                            });
-                        }
-                        self.previous_axis_values.insert(action.to_owned(), value);
+            // Borrow splitting: contexts are &mut self.contexts, but we also
+            // need to mutate per_action_state. Iterate by index to keep both.
+            let mut ctx_idx = 0;
+            while ctx_idx < self.contexts.len() {
+                // Shortlived borrow for evaluation.
+                let evaluations = {
+                    let context = &mut self.contexts[ctx_idx];
+                    context.evaluate(&src, dt)
+                };
+
+                let context_id = self.contexts[ctx_idx].id().to_owned();
+
+                for eval in evaluations {
+                    if consumed.contains(&eval.action_id) {
+                        continue;
+                    }
+                    let key = (context_id.clone(), eval.action_id.clone());
+                    let runtime = self
+                        .per_action_state
+                        .entry(key.clone())
+                        .or_default();
+
+                    let phase = derive_phase(runtime, &eval);
+                    if eval.value.is_actuated() {
+                        consumed.insert(eval.action_id.clone());
                     }
 
-                    for &action in &button_actions {
-                        let currently = map
-                            .button_bindings(action)
-                            .iter()
-                            .any(|b| is_btn_active(b, cur_keys, cur_mouse, cur_gpad));
-                        let previously = map
-                            .button_bindings(action)
-                            .iter()
-                            .any(|b| is_btn_active(b, prev_keys, prev_mouse, prev_gpad));
+                    // Derive the previous_actuated flag for the next tick.
+                    runtime.previous_actuated = eval.value.is_actuated()
+                        || matches!(eval.state, TriggerState::Ongoing);
 
-                        let pressed = currently && !previously;
-                        let held = currently;
-                        let released = !currently && previously;
-
-                        new_snapshot.set_button(action.to_owned(), pressed, held, released);
-
-                        if pressed {
-                            new_events.push(InputActionEvent {
-                                action: action.to_owned(),
-                                value: 1.0,
-                            });
-                        } else if released {
-                            new_events.push(InputActionEvent {
-                                action: action.to_owned(),
-                                value: 0.0,
-                            });
+                    // Update elapsed timer based on phase.
+                    match phase {
+                        Some(EventPhase::Started) => runtime.elapsed_seconds = 0.0,
+                        Some(EventPhase::Ongoing) | Some(EventPhase::Triggered) => {
+                            runtime.elapsed_seconds += dt;
                         }
+                        Some(EventPhase::Completed) | Some(EventPhase::Canceled) => {
+                            runtime.elapsed_seconds = 0.0;
+                        }
+                        None => {}
                     }
+
+                    runtime.previous_phase = phase;
+
+                    if let Some(phase) = phase {
+                        new_events.push(InputActionEvent {
+                            action: eval.action_id.clone(),
+                            value: eval.value,
+                            phase,
+                            elapsed_seconds: runtime.elapsed_seconds,
+                        });
+                    }
+
+                    // Publish to snapshot only once per action id (from highest-
+                    // priority winner). Lower contexts are ignored for polling
+                    // once the action is consumed — matching the event shadow.
+                    publish_to_snapshot(&mut new_snapshot, &eval, phase);
                 }
+
+                ctx_idx += 1;
             }
+
+            // Buttons that have no current active context should still be
+            // unregistered in the snapshot (so polling returns defaults).
         }
 
-        // map borrow ends here; safe to mutate self
         self.snapshot = new_snapshot;
-        if !locked {
-            // Recover from mutex poisoning rather than propagating a panic —
-            // poisoning is a one-shot event from an earlier panicking drainer
-            // and the event queue contents are plain data with no invariants.
-            let mut events = match self.pending_events.lock() {
+        if !self.locked {
+            let mut guard = match self.pending_events.lock() {
                 Ok(g) => g,
                 Err(poison) => poison.into_inner(),
             };
-            events.extend(new_events);
+            guard.extend(new_events);
         }
     }
 
-    /// Clear all key/mouse/gamepad button state. Called when the window loses
-    /// focus so that held keys don't stay "pressed" after the user alt-tabs
-    /// away — otherwise the next tick reports them as `held=true` indefinitely
-    /// because the OS never delivered a matching KeyReleased event.
+    /// Clear all held hardware state. Call on window focus loss so stale
+    /// "held" keys don't keep triggering actions after alt-tab.
     pub fn reset_keys(&mut self) {
         self.current_keys = KeyCodeSet::new();
         self.current_mouse_buttons = MouseButtonSet::new();
         self.current_gamepad_buttons = GamepadButtonSet::new();
-        self.previous_axis_values.clear();
+        self.gamepad_axes.clear();
+        for context in &mut self.contexts {
+            context.reset_trigger_state();
+        }
+        self.per_action_state.clear();
     }
+}
+
+/// Derive an `EventPhase` (or `None` for "nothing to emit") from the current
+/// frame's evaluation against the previous frame's runtime state.
+fn derive_phase(runtime: &ActionRuntime, eval: &ActionEvaluation) -> Option<EventPhase> {
+    let was_in_progress = matches!(
+        runtime.previous_phase,
+        Some(EventPhase::Started) | Some(EventPhase::Ongoing) | Some(EventPhase::Triggered)
+    );
+    match eval.state {
+        TriggerState::None => {
+            // Was the action ongoing/triggered last frame? Then it just ended.
+            if was_in_progress {
+                Some(EventPhase::Completed)
+            } else {
+                None
+            }
+        }
+        TriggerState::Canceled => Some(EventPhase::Canceled),
+        TriggerState::Ongoing => {
+            if was_in_progress {
+                Some(EventPhase::Ongoing)
+            } else {
+                Some(EventPhase::Started)
+            }
+        }
+        TriggerState::Triggered => {
+            if was_in_progress {
+                Some(EventPhase::Triggered)
+            } else {
+                // First time actuating without a prior Ongoing phase: emit
+                // Started and Triggered on the same frame. Callers see one
+                // event here (Triggered) because we can only return a single
+                // phase; Started is implicit.
+                Some(EventPhase::Started)
+            }
+        }
+    }
+}
+
+fn publish_to_snapshot(
+    snap: &mut InputSnapshot,
+    eval: &ActionEvaluation,
+    phase: Option<EventPhase>,
+) {
+    let id = eval.action_id.clone();
+    match eval.value {
+        ActionValue::Axis1D(v) => {
+            snap.set_axis(id.clone(), v);
+        }
+        ActionValue::Axis2D(v) => {
+            snap.set_axis2(id.clone(), v);
+        }
+        ActionValue::Axis3D(v) => {
+            snap.set_axis3(id.clone(), v);
+        }
+        ActionValue::Button(_) => {}
+    }
+
+    if matches!(eval.kind, ValueKind::Button) {
+        let pressed = matches!(phase, Some(EventPhase::Started));
+        let held = eval.value.is_actuated()
+            || matches!(phase, Some(EventPhase::Ongoing) | Some(EventPhase::Triggered));
+        let released = matches!(phase, Some(EventPhase::Completed) | Some(EventPhase::Canceled));
+        snap.set_button(id.clone(), pressed, held, released);
+    }
+    snap.set_value(id, eval.value);
 }
 
 impl Module for PlayerController {
@@ -359,7 +365,6 @@ impl Module for PlayerController {
     }
 
     fn on_load(&mut self, _scheduler: &dyn SchedulerHandle) -> Result<(), EngineError> {
-        // The engine entrypoint is responsible for calling tick() each frame.
         Ok(())
     }
 

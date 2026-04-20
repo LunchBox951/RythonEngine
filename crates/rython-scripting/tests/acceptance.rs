@@ -1306,81 +1306,73 @@ rython.scene.emit('test_event_30')   # should NOT fire (one-shot)
     });
 }
 
-// ─── T-SCRIPT-31: PlayerController emits axis-change events over deadzone ─────
+// ─── T-SCRIPT-31: PlayerController emits phased action events ────────────────
 
 #[test]
 fn t_script_31_axis_change_events() {
-    use rython_input::{AxisBinding, InputMap, PlayerController};
+    use rython_input::{
+        ActionValue, EventPhase, HardwareKey, InputAction, InputBinding, InputMappingContext,
+        PlayerController, ValueKind,
+    };
     use rython_window::{KeyCode, RawInputEvent};
 
     let _lock = test_lock();
 
     let mut pc = PlayerController::new(0);
-    let mut map = InputMap::new("test31");
-    map.bind_axis(
+    let mut ctx = InputMappingContext::new("test31", 0);
+    ctx.add_action(InputAction::new("horizontal", ValueKind::Axis1D));
+    ctx.add_binding(
         "horizontal",
-        AxisBinding::KBAxis {
-            negative: KeyCode::D,
-            positive: KeyCode::A,
-        },
+        InputBinding::new(HardwareKey::Composite2D {
+            up: KeyCode::W,
+            down: KeyCode::S,
+            left: KeyCode::D, // swapped: A is positive, D is negative
+            right: KeyCode::A,
+        }),
     );
-    pc.register_map(map);
+    pc.push_context(ctx);
 
-    // Tick with no input — prime previous state, clear events
-    pc.tick(&[]);
+    pc.tick(&[], 0.016);
     pc.pending_events().lock().unwrap().clear();
 
-    // Press A → axis 0.0 → 1.0, crosses deadzone → axis event expected
-    pc.tick(&[RawInputEvent::KeyPressed(KeyCode::A)]);
+    // Press A → axis goes from 0.0 → 1.0 → Started event.
+    pc.tick(&[RawInputEvent::KeyPressed(KeyCode::A)], 0.016);
     {
         let evs = pc.pending_events();
         let guard = evs.lock().unwrap();
-        let axis_evs: Vec<_> = guard
-            .iter()
-            .filter(|e| e.action.starts_with("axis:"))
-            .collect();
+        let horiz: Vec<_> = guard.iter().filter(|e| e.action == "horizontal").collect();
         assert!(
-            !axis_evs.is_empty(),
-            "axis change event expected when key pressed above deadzone"
+            !horiz.is_empty(),
+            "Started event expected when key pressed above threshold"
         );
-        let ev = axis_evs[0];
-        assert_eq!(ev.action, "axis:horizontal");
-        assert!((ev.value - 1.0).abs() < 1e-5, "axis value should be 1.0");
+        assert_eq!(horiz[0].phase, EventPhase::Started);
+        if let ActionValue::Axis1D(v) = horiz[0].value {
+            assert!((v - 1.0).abs() < 1e-5, "axis value should be 1.0");
+        } else {
+            panic!("expected Axis1D value");
+        }
     }
     pc.pending_events().lock().unwrap().clear();
 
-    // No new events (A still held, value unchanged)
-    pc.tick(&[]);
+    // Held → Triggered.
+    pc.tick(&[], 0.016);
     {
         let evs = pc.pending_events();
         let guard = evs.lock().unwrap();
-        let axis_evs: Vec<_> = guard
-            .iter()
-            .filter(|e| e.action.starts_with("axis:"))
-            .collect();
-        assert!(axis_evs.is_empty(), "no axis event when value unchanged");
+        let horiz: Vec<_> = guard.iter().filter(|e| e.action == "horizontal").collect();
+        assert_eq!(horiz.len(), 1);
+        assert_eq!(horiz[0].phase, EventPhase::Triggered);
     }
     pc.pending_events().lock().unwrap().clear();
 
-    // Release A → axis 1.0 → 0.0, crosses back below deadzone → axis event expected
-    pc.tick(&[RawInputEvent::KeyReleased(KeyCode::A)]);
+    // Release A → Completed.
+    pc.tick(&[RawInputEvent::KeyReleased(KeyCode::A)], 0.016);
     {
         let evs = pc.pending_events();
         let guard = evs.lock().unwrap();
-        let axis_evs: Vec<_> = guard
-            .iter()
-            .filter(|e| e.action.starts_with("axis:"))
-            .collect();
-        assert!(
-            !axis_evs.is_empty(),
-            "axis change event expected when key released"
-        );
-        let ev = axis_evs[0];
-        assert_eq!(ev.action, "axis:horizontal");
-        assert!(
-            ev.value.abs() < 1e-5,
-            "axis value should be 0.0 after release"
-        );
+        let horiz: Vec<_> = guard.iter().filter(|e| e.action == "horizontal").collect();
+        assert!(!horiz.is_empty());
+        assert_eq!(horiz[0].phase, EventPhase::Completed);
     }
 }
 

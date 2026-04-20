@@ -16,7 +16,7 @@ use rython_audio::AudioManager;
 use rython_core::{EngineConfig, ProjectConfig, WindowConfig};
 use rython_ecs::{LightSystem, RenderSystem, Scene, TransformSystem};
 use rython_engine::{Engine, EngineBuilder};
-use rython_input::{AxisBinding, ButtonBinding, InputActionEvent, InputMap, PlayerController};
+use rython_input::{ActionValue, InputActionEvent, PlayerController};
 use rython_physics::PhysicsModule;
 use rython_renderer::{Camera, RendererConfig, RendererState};
 use rython_resources::ResourceManager;
@@ -29,6 +29,23 @@ use rython_scripting::{
 };
 use rython_ui::{Theme, UIManager};
 use rython_window::{KeyCode, MouseButton, RawInputEvent, WindowModule};
+
+/// Fixed `dt` used by the headless main loop, which has no real frame timer.
+const HEADLESS_DT_SECS: f32 = 0.016;
+
+fn input_event_payload(ev: &InputActionEvent) -> serde_json::Value {
+    let value = match ev.value {
+        ActionValue::Button(b) => serde_json::json!(b),
+        ActionValue::Axis1D(x) => serde_json::json!(x),
+        ActionValue::Axis2D([x, y]) => serde_json::json!([x, y]),
+        ActionValue::Axis3D([x, y, z]) => serde_json::json!([x, y, z]),
+    };
+    serde_json::json!({
+        "value": value,
+        "phase": ev.phase.as_str(),
+        "elapsed_seconds": ev.elapsed_seconds,
+    })
+}
 
 // ── CLI args ──────────────────────────────────────────────────────────────────
 
@@ -203,40 +220,11 @@ fn build_engine(
         .ensure_initialized()
         .expect("failed to init audio");
 
-    // PlayerController — managed directly in the main loop; register default input map
-    let mut pc = PlayerController::new(0);
-    let mut default_map = InputMap::new("default");
-    default_map.bind_axis(
-        "move_x",
-        AxisBinding::KBAxis {
-            negative: KeyCode::D,
-            positive: KeyCode::A,
-        },
-    );
-    default_map.bind_axis(
-        "move_x",
-        AxisBinding::KBAxis {
-            negative: KeyCode::Right,
-            positive: KeyCode::Left,
-        },
-    );
-    default_map.bind_axis(
-        "move_z",
-        AxisBinding::KBAxis {
-            negative: KeyCode::S,
-            positive: KeyCode::W,
-        },
-    );
-    default_map.bind_axis(
-        "move_z",
-        AxisBinding::KBAxis {
-            negative: KeyCode::Down,
-            positive: KeyCode::Up,
-        },
-    );
-    default_map.bind_button("jump", ButtonBinding::Keyboard(KeyCode::Space));
-    default_map.bind_button("pause", ButtonBinding::Keyboard(KeyCode::Escape));
-    pc.register_map(default_map);
+    // PlayerController starts empty; game scripts push their own InputMapping
+    // contexts via `rython.input.push_map(...)`. See rython/input/default.py
+    // for a drop-in replacement of the old hardcoded move_x/move_z/jump/pause
+    // map.
+    let pc = PlayerController::new(0);
     let player_controller = Arc::new(std::sync::Mutex::new(pc));
 
     let engine = EngineBuilder::new()
@@ -289,7 +277,7 @@ fn run_headless(engine_config: EngineConfig, scripting_config: ScriptingConfig) 
                 Ok(g) => g,
                 Err(p) => p.into_inner(),
             };
-            pc.tick(&[]);
+            pc.tick(&[], HEADLESS_DT_SECS);
             let snapshot = match pc.get_snapshot(0) {
                 Ok(s) => s.clone(),
                 Err(_) => {
@@ -310,8 +298,8 @@ fn run_headless(engine_config: EngineConfig, scripting_config: ScriptingConfig) 
             set_active_input(snapshot);
             for ev in input_events {
                 scene.emit(
-                    &format!("input:{}", ev.action),
-                    serde_json::json!({ "value": ev.value }),
+                    &format!("input:{}:{}", ev.action, ev.phase.as_str()),
+                    input_event_payload(&ev),
                 );
             }
         }
@@ -341,6 +329,7 @@ struct App {
     renderer: Option<RendererState>,
     surface_config: Option<wgpu::SurfaceConfiguration>,
     start_time: Instant,
+    last_tick: Option<Instant>,
     // Input wiring
     player_controller: Arc<std::sync::Mutex<PlayerController>>,
     raw_events: Vec<RawInputEvent>,
@@ -373,6 +362,7 @@ impl App {
             renderer: None,
             surface_config: None,
             start_time: Instant::now(),
+            last_tick: None,
             player_controller,
             raw_events: Vec::new(),
             cursor_pos: (0.0, 0.0),
@@ -431,7 +421,12 @@ impl App {
                 Ok(g) => g,
                 Err(p) => p.into_inner(),
             };
-            pc.tick(&self.raw_events);
+            let dt = {
+                let now = Instant::now();
+                let prev = self.last_tick.replace(now).unwrap_or(now);
+                (now - prev).as_secs_f32().min(0.25)
+            };
+            pc.tick(&self.raw_events, dt);
             let snapshot = match pc.get_snapshot(0) {
                 Ok(s) => Some(s.clone()),
                 Err(_) => None,
@@ -450,8 +445,8 @@ impl App {
             }
             for ev in input_events {
                 self.scene.emit(
-                    &format!("input:{}", ev.action),
-                    serde_json::json!({ "value": ev.value }),
+                    &format!("input:{}:{}", ev.action, ev.phase.as_str()),
+                    input_event_payload(&ev),
                 );
             }
         }
