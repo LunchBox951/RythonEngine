@@ -391,7 +391,11 @@ impl EditorApp {
         renderer.upload_mesh("cube", bytemuck::cast_slice(&cube.vertices), &cube.indices);
         // Upload built-in sphere mesh so scene entities with mesh_id "sphere" render correctly
         let sphere = rython_resources::generate_uv_sphere();
-        renderer.upload_mesh("sphere", bytemuck::cast_slice(&sphere.vertices), &sphere.indices);
+        renderer.upload_mesh(
+            "sphere",
+            bytemuck::cast_slice(&sphere.vertices),
+            &sphere.indices,
+        );
 
         let preferences = Preferences::load();
         let recent_projects = load_recent_projects();

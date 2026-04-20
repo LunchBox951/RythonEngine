@@ -100,8 +100,8 @@ pub struct PendingMeshRegistration {
 static PENDING_MESH_REGISTRATIONS: OnceLock<Arc<Mutex<Vec<PendingMeshRegistration>>>> =
     OnceLock::new();
 
-pub(crate) fn pending_mesh_registrations_store(
-) -> &'static Arc<Mutex<Vec<PendingMeshRegistration>>> {
+pub(crate) fn pending_mesh_registrations_store() -> &'static Arc<Mutex<Vec<PendingMeshRegistration>>>
+{
     PENDING_MESH_REGISTRATIONS.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
 }
 

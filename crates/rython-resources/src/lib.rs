@@ -168,17 +168,13 @@ pub fn generate_uv_sphere_with(stacks: u32, slices: u32) -> MeshData {
     use std::f32::consts::PI;
 
     let stacks = if stacks < 2 {
-        log::warn!(
-            "generate_uv_sphere_with: stacks={stacks} is below minimum (2); clamping to 2"
-        );
+        log::warn!("generate_uv_sphere_with: stacks={stacks} is below minimum (2); clamping to 2");
         2u32
     } else {
         stacks
     };
     let slices = if slices < 3 {
-        log::warn!(
-            "generate_uv_sphere_with: slices={slices} is below minimum (3); clamping to 3"
-        );
+        log::warn!("generate_uv_sphere_with: slices={slices} is below minimum (3); clamping to 3");
         3u32
     } else {
         slices
@@ -2160,14 +2156,20 @@ mod tests {
                 break;
             }
         }
-        assert!(checked > 0, "no non-degenerate sphere triangles found to check winding");
+        assert!(
+            checked > 0,
+            "no non-degenerate sphere triangles found to check winding"
+        );
     }
 
     #[test]
     fn test_generate_uv_sphere_degenerate_params_do_not_panic() {
         // stacks=0, slices=0 — both below minimum, should clamp and succeed
         let mesh0 = generate_uv_sphere_with(0, 0);
-        assert!(!mesh0.vertices.is_empty(), "degenerate(0,0) must produce vertices");
+        assert!(
+            !mesh0.vertices.is_empty(),
+            "degenerate(0,0) must produce vertices"
+        );
         let n0 = mesh0.vertices.len() as u32;
         for &idx in &mesh0.indices {
             assert!(idx < n0, "degenerate(0,0) index {idx} out of range");
@@ -2175,7 +2177,10 @@ mod tests {
 
         // stacks=1, slices=2 — both below minimum by one
         let mesh1 = generate_uv_sphere_with(1, 2);
-        assert!(!mesh1.vertices.is_empty(), "degenerate(1,2) must produce vertices");
+        assert!(
+            !mesh1.vertices.is_empty(),
+            "degenerate(1,2) must produce vertices"
+        );
         let n1 = mesh1.vertices.len() as u32;
         for &idx in &mesh1.indices {
             assert!(idx < n1, "degenerate(1,2) index {idx} out of range");

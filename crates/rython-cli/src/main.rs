@@ -270,7 +270,14 @@ fn build_engine(
         .build()
         .expect("failed to build engine");
 
-    (engine, scene, physics_world, ui_manager, player_controller, resource_manager)
+    (
+        engine,
+        scene,
+        physics_world,
+        ui_manager,
+        player_controller,
+        resource_manager,
+    )
 }
 
 // ── Headless mode ─────────────────────────────────────────────────────────────
@@ -889,7 +896,11 @@ impl ApplicationHandler for App {
         renderer.upload_mesh("cube", bytemuck::cast_slice(&cube.vertices), &cube.indices);
         // Upload built-in sphere mesh
         let sphere = rython_resources::generate_uv_sphere();
-        renderer.upload_mesh("sphere", bytemuck::cast_slice(&sphere.vertices), &sphere.indices);
+        renderer.upload_mesh(
+            "sphere",
+            bytemuck::cast_slice(&sphere.vertices),
+            &sphere.indices,
+        );
 
         self.surface = Some(surface);
         self.surface_config = Some(surface_cfg);

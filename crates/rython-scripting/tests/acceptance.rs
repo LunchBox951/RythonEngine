@@ -2397,7 +2397,11 @@ rython.renderer.register_mesh('my_id', handle)
 
         // Drain and verify an entry was queued with the correct id.
         let entries = drain_pending_mesh_registrations();
-        assert_eq!(entries.len(), 1, "expected exactly one pending registration");
+        assert_eq!(
+            entries.len(),
+            1,
+            "expected exactly one pending registration"
+        );
         assert_eq!(entries[0].id, "my_id");
         // Drain to leave queue empty for subsequent tests.
         let _ = drain_pending_mesh_registrations();
@@ -2430,7 +2434,10 @@ assert raised, 'expected ValueError for empty mesh_id'
 
         // Queue must still be empty: the rejection must not push anything.
         let entries = drain_pending_mesh_registrations();
-        assert!(entries.is_empty(), "rejected call must not enqueue anything");
+        assert!(
+            entries.is_empty(),
+            "rejected call must not enqueue anything"
+        );
     });
 }
 
@@ -2459,7 +2466,10 @@ assert raised, 'expected ValueError for reserved id cube'
         .expect("reserved-id cube rejection test must not crash the interpreter");
 
         let entries = drain_pending_mesh_registrations();
-        assert!(entries.is_empty(), "rejected call must not enqueue anything");
+        assert!(
+            entries.is_empty(),
+            "rejected call must not enqueue anything"
+        );
     });
 }
 
@@ -2488,7 +2498,10 @@ assert raised, 'expected ValueError for reserved id sphere'
         .expect("reserved-id sphere rejection test must not crash the interpreter");
 
         let entries = drain_pending_mesh_registrations();
-        assert!(entries.is_empty(), "rejected call must not enqueue anything");
+        assert!(
+            entries.is_empty(),
+            "rejected call must not enqueue anything"
+        );
     });
 }
 
