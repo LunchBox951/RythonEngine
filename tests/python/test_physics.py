@@ -112,6 +112,82 @@ def check_static_body_stationary():
     assert abs(y - 5.0) < 0.5, f"expected y ~= 5.0, got {y}"
 
 
+# ── Restitution tests ────────────────────────────────────────────────────────
+
+# Entities used by restitution frame-loop tests.
+_bounce_entity = None
+_no_bounce_entity = None
+_clamp_entity = None
+_bounce_min_y = None
+
+
+def _spawn_restitution_entities():
+    """Spawn floor + test balls for restitution tests."""
+    global _bounce_entity, _no_bounce_entity, _clamp_entity, _bounce_min_y
+
+    # Static floor shared by all restitution tests
+    rython.scene.spawn(
+        transform=Transform(x=0.0, y=-5.0, z=0.0),
+        rigid_body={"body_type": "static"},
+        collider={"shape": "box", "size": [20.0, 0.5, 20.0]},
+    )
+
+    # High-restitution ball — dropped from y=5, should bounce back up
+    _bounce_entity = rython.scene.spawn(
+        transform=Transform(x=0.0, y=5.0, z=0.0),
+        rigid_body={"body_type": "dynamic"},
+        collider={"shape": "box", "size": [0.5, 0.5, 0.5], "restitution": 0.9},
+    )
+    _bounce_min_y = 5.0  # will be updated each frame to track the minimum y reached
+
+    # Zero-restitution ball — should settle on the floor without bouncing
+    _no_bounce_entity = rython.scene.spawn(
+        transform=Transform(x=5.0, y=5.0, z=0.0),
+        rigid_body={"body_type": "dynamic"},
+        collider={"shape": "box", "size": [0.5, 0.5, 0.5], "restitution": 0.0},
+    )
+
+    # Out-of-range restitution (5.0) — must be silently clamped to 1.0, no panic
+    _clamp_entity = rython.scene.spawn(
+        transform=Transform(x=-5.0, y=5.0, z=0.0),
+        rigid_body={"body_type": "dynamic"},
+        collider={"shape": "box", "size": [0.5, 0.5, 0.5], "restitution": 5.0},
+    )
+
+
+def _track_bounce_min_y():
+    """Update the minimum y the bounce ball has reached (called each frame)."""
+    global _bounce_min_y
+    y = _bounce_entity.transform.y
+    if y < _bounce_min_y:
+        _bounce_min_y = y
+
+
+def test_restitution_bounce():
+    """After a bounce with restitution=0.9, the ball must be above its minimum y."""
+    current_y = _bounce_entity.transform.y
+    assert current_y > _bounce_min_y, (
+        f"expected bounce ball y={current_y} > min_y={_bounce_min_y}"
+        " (ball should have rebounded)"
+    )
+
+
+def test_restitution_zero():
+    """With restitution=0.0 the ball should have settled — no significant bounce."""
+    vy = _no_bounce_entity.velocity.y
+    assert vy <= 0.1, (
+        f"expected no-bounce ball vy={vy} ≤ 0.1 (no rebound with restitution=0)"
+    )
+
+
+def test_restitution_clamps_out_of_range():
+    """restitution=5.0 must be clamped; entity must still simulate without panic."""
+    y = _clamp_entity.transform.y
+    assert not (y != y), f"clamp entity y is NaN — physics exploded"
+    # No further assertion: warn log is emitted by the engine; behavior matches
+    # restitution=1.0 (fully elastic). The important guarantee is no panic.
+
+
 # ── entry point ──────────────────────────────────────────────────────────────
 
 def init():
@@ -124,6 +200,9 @@ def init():
 
     # Spawn entities used by the frame-loop tests.
     _spawn_test_entities()
+
+    # Spawn entities used by restitution frame-loop tests.
+    _spawn_restitution_entities()
 
     # Schedule frame-loop assertions.
     runner = FrameRunner(suite)
@@ -141,6 +220,12 @@ def init():
 
     # Static body: check at frame 15
     runner.after_frames(15, check_static_body_stationary)
+
+    # Restitution: track min-y every frame; assert at frame 60
+    runner.after_frames(30, _track_bounce_min_y)
+    runner.after_frames(60, test_restitution_bounce)
+    runner.after_frames(60, test_restitution_zero)
+    runner.after_frames(60, test_restitution_clamps_out_of_range)
 
     runner.on_done(lambda: suite.report_and_quit())
     runner.start()

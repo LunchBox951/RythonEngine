@@ -215,12 +215,27 @@ impl SceneBridge {
                                 .get("is_trigger")
                                 .and_then(|v| v.extract::<bool>().ok())
                                 .unwrap_or(false);
+                            if map
+                                .get("restitution")
+                                .and_then(|v| v.extract::<f32>().ok())
+                                .is_some_and(|v| !(0.0..=1.0).contains(&v))
+                            {
+                                log::warn!(
+                                    "spawn collider: restitution out of range — clamped to [0, 1]"
+                                );
+                            }
+                            let restitution = map
+                                .get("restitution")
+                                .and_then(|v| v.extract::<f32>().ok())
+                                .unwrap_or(0.0)
+                                .clamp(0.0, 1.0);
                             components.push((
                                 TypeId::of::<ColliderComponent>(),
                                 Box::new(ColliderComponent {
                                     shape,
                                     size,
                                     is_trigger,
+                                    restitution,
                                 }),
                             ));
                         }

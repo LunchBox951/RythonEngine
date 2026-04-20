@@ -230,6 +230,8 @@ pub struct ColliderComponent {
     pub shape: String,
     pub size: [f32; 3],
     pub is_trigger: bool,
+    #[serde(default)]
+    pub restitution: f32,
 }
 
 impl Default for ColliderComponent {
@@ -238,6 +240,7 @@ impl Default for ColliderComponent {
             shape: "box".to_string(),
             size: [1.0, 1.0, 1.0],
             is_trigger: false,
+            restitution: 0.0,
         }
     }
 }

@@ -218,6 +218,7 @@ impl PhysicsWorld {
         builder
             .collision_groups(groups)
             .sensor(col_comp.is_trigger)
+            .restitution(col_comp.restitution)
             .active_events(ActiveEvents::COLLISION_EVENTS)
             .build()
     }
@@ -625,6 +626,7 @@ mod tests {
             shape: "box".to_string(),
             size,
             is_trigger: false,
+            ..Default::default()
         }
     }
 
@@ -633,6 +635,7 @@ mod tests {
             shape: "box".to_string(),
             size,
             is_trigger: true,
+            ..Default::default()
         }
     }
 
@@ -2091,5 +2094,95 @@ mod tests {
         // Must not panic even with invalid mass values.
         w.sync_step(&scene);
         w.sync_step(&scene);
+    }
+
+    // ── T-PHYS-RESTITUTION-1: High restitution — ball bounces back up ─────────
+    //
+    // A static floor at y=0 and a dynamic ball with restitution=0.9 dropped from
+    // above. After enough steps for the first contact and rebound, the ball's
+    // vertical velocity must be upward (positive), confirming energy was returned.
+
+    #[test]
+    fn t_phys_restitution_bounce() {
+        let scene = Scene::new();
+        // Static floor
+        spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("static", 0.0, 1, 1),
+            box_col([10.0, 0.5, 10.0]),
+        );
+        // Dynamic ball with high restitution, dropped from y=5
+        let ball = spawn(
+            &scene,
+            transform(0.0, 5.0, 0.0),
+            dyn_rb(),
+            ColliderComponent {
+                shape: "box".to_string(),
+                size: [0.5, 0.5, 0.5],
+                is_trigger: false,
+                restitution: 0.9,
+            },
+        );
+
+        let mut w = world();
+        // Run enough steps for the ball to fall, contact the floor, and bounce.
+        // At 60 FPS with gravity -9.81, fall from y=5 takes ~1s (60 steps).
+        // We step 120 frames to guarantee at least one bounce.
+        for _ in 0..120 {
+            w.sync_step(&scene);
+        }
+
+        // After a bounce with restitution=0.9, the ball should be moving upward.
+        let vy = w.get_linear_velocity(ball).unwrap()[1];
+        assert!(
+            vy > 0.0,
+            "ball vy={} should be > 0 (bouncing upward) with restitution=0.9",
+            vy
+        );
+    }
+
+    // ── T-PHYS-RESTITUTION-2: Zero restitution — ball does not bounce ─────────
+    //
+    // Same setup but restitution=0.0. After first contact, the ball settles;
+    // vertical velocity is ≤ 0 (within tolerance) — no energy returned.
+
+    #[test]
+    fn t_phys_restitution_zero_no_bounce() {
+        let scene = Scene::new();
+        // Static floor
+        spawn(
+            &scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("static", 0.0, 1, 1),
+            box_col([10.0, 0.5, 10.0]),
+        );
+        // Dynamic ball with zero restitution, dropped from y=5
+        let ball = spawn(
+            &scene,
+            transform(0.0, 5.0, 0.0),
+            dyn_rb(),
+            ColliderComponent {
+                shape: "box".to_string(),
+                size: [0.5, 0.5, 0.5],
+                is_trigger: false,
+                restitution: 0.0,
+            },
+        );
+
+        let mut w = world();
+        // Same step count as the bounce test; enough for the ball to reach the floor.
+        for _ in 0..120 {
+            w.sync_step(&scene);
+        }
+
+        // With zero restitution the ball should have settled on the floor.
+        // Allow a small positive tolerance for numerical jitter during settling.
+        let vy = w.get_linear_velocity(ball).unwrap()[1];
+        assert!(
+            vy <= 0.05,
+            "ball vy={} should be ≤ 0 (no bounce) with restitution=0.0",
+            vy
+        );
     }
 }

@@ -65,6 +65,7 @@ fn collider_json(shape: &str, size: [f32; 3], is_trigger: bool) -> serde_json::V
         shape: shape.to_string(),
         size,
         is_trigger,
+        ..Default::default()
     })
     .unwrap()
 }

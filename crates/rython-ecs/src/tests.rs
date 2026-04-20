@@ -1342,6 +1342,7 @@ fn t_ecs_57_scene_roundtrip_all_component_types() {
             shape: "capsule".into(),
             size: [1.0, 2.0, 1.0],
             is_trigger: false,
+            ..Default::default()
         }),
         comp(BillboardComponent {
             asset_id: "b.png".into(),
