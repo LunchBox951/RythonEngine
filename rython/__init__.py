@@ -42,7 +42,20 @@ from rython._scheduler import SchedulerBridge as _SchedulerBridge
 from rython._renderer import RendererBridge as _RendererBridge
 from rython._time import TimeBridge as _TimeBridge
 from rython._engine import EngineBridge as _EngineBridge
-from rython._input import InputBridge as _InputBridge
+from rython._input import (
+    ActionValue,
+    GamepadAxis,
+    GamepadButton,
+    GamepadStick,
+    InputAction,
+    InputBridge as _InputBridge,
+    InputMap,
+    KeyCode,
+    Modifiers,
+    MouseAxis,
+    MouseButton,
+    Triggers,
+)
 from rython._audio import AudioBridge as _AudioBridge
 from rython._physics import PhysicsBridge as _PhysicsBridge
 from rython._ui import UIBridge as _UIBridge
@@ -84,4 +97,16 @@ __all__ = [
     "ui",
     "resources",
     "modules",
+    # Input-map authoring surface
+    "InputMap",
+    "InputAction",
+    "ActionValue",
+    "KeyCode",
+    "MouseButton",
+    "MouseAxis",
+    "GamepadButton",
+    "GamepadAxis",
+    "GamepadStick",
+    "Modifiers",
+    "Triggers",
 ]

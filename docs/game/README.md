@@ -415,30 +415,175 @@ Event payloads support `None`, `bool`, `int`, `float`, and `str` values.
 
 ## Input
 
-`rython.input` provides per-frame input state for bound actions.
+`rython.input` has two layers:
+
+  * **Polling** — per-frame action state that game logic reads inside `tick()`.
+  * **Customizable maps** — designer-authored `InputMap` subclasses that declare
+    actions, bind them to hardware, and register callbacks.
+
+### Polling
 
 ```python
-# Axis value — returns a float from -1.0 to 1.0 (0.0 if unbound)
+# Scalar axis (or magnitude for 2D/3D)
 move_x = rython.input.axis("move_x")
 move_z = rython.input.axis("move_z")
 
+# Full 2D / 3D value
+x, y       = rython.input.axis2("move")
+x, y, z    = rython.input.axis3("fly")
+
+# Typed ActionValue; returns None if unbound
+v = rython.input.value("move")
+if v is not None and v.kind == "axis2d":
+    x, y = v.as_vec2()
+
 # Button state queries
-if rython.input.pressed("jump"):     # True on the first frame the action is pressed
+if rython.input.pressed("jump"):     # first frame pressed
     player.apply_impulse(0.0, 10.0, 0.0)
 
-if rython.input.held("sprint"):      # True every frame the action is held
+if rython.input.held("sprint"):      # every frame held
     speed *= 2.0
 
-if rython.input.released("fire"):    # True on the first frame the action is released
+if rython.input.released("fire"):    # first frame released
     stop_charging()
 ```
 
 | Method | Returns | Description |
 |---|---|---|
-| `axis(action)` | `float` | Axis value (-1.0 to 1.0), 0.0 if unbound |
+| `axis(action)` | `float` | 1D value (or magnitude for 2D/3D); 0.0 if unbound |
+| `axis2(action)` | `(float, float)` | 2D axis value; (0, 0) if unbound |
+| `axis3(action)` | `(float, float, float)` | 3D axis value; (0, 0, 0) if unbound |
+| `value(action)` | `ActionValue \| None` | Typed value carrying the action's kind |
 | `pressed(action)` | `bool` | True on the first frame the action is pressed |
-| `held(action)` | `bool` | True every frame the action is held down |
+| `held(action)` | `bool` | True every frame the action is held |
 | `released(action)` | `bool` | True on the first frame the action is released |
+
+### Custom InputMaps
+
+Designers create their own input layout by subclassing `rython.InputMap`, and
+push an instance onto a priority-ordered context stack at runtime. Higher-
+priority maps evaluate first; an action actuated by a higher-priority map
+**consumes** it for lower maps (so a pause-menu map cleanly shadows gameplay
+input).
+
+```python
+import rython
+from rython import (
+    InputMap, KeyCode, GamepadButton, GamepadStick, Modifiers, Triggers,
+)
+
+class MovementMap(InputMap):
+    def __init__(self, *args, **kwargs):
+        # Construction args (name/priority) were consumed by __new__.
+        # Declare actions and bindings here.
+
+        # Button with a rising-edge trigger
+        self.jump = self.action("jump", kind="button")
+        self.jump.bind(KeyCode.Space, triggers=[Triggers.Pressed()])
+        self.jump.bind(GamepadButton.South, triggers=[Triggers.Pressed()])
+        self.jump.on_started(self.handle_jump)
+
+        # 2D composite move + gamepad stick
+        self.move = self.action("move", kind="axis2d")
+        self.move.bind_composite_2d(
+            up=KeyCode.W, down=KeyCode.S, left=KeyCode.A, right=KeyCode.D,
+        )
+        self.move.bind(GamepadStick.LeftStick, modifiers=[
+            Modifiers.DeadZone(0.15, radial=True),
+        ])
+        self.move.on_triggered(self.handle_move)
+
+        # Hold trigger with Ongoing + Triggered progress reporting
+        self.charge = self.action("charge", kind="button")
+        self.charge.bind(KeyCode.F, triggers=[Triggers.Hold(0.5)])
+        self.charge.on_ongoing(lambda v: print("charging…"))
+        self.charge.on_triggered(lambda v: print("charged!"))
+
+    def handle_jump(self, value):
+        ...
+
+    def handle_move(self, value):
+        x, y = value.as_vec2()
+        ...
+
+def init():
+    rython.input.push_map(MovementMap(name="gameplay", priority=10))
+```
+
+The `rython/input/default.py` module reinstates the old hardcoded bindings
+(`move_x / move_z / jump / pause`) on this API — call
+`rython.input.push_map(build_default_map())` to keep the old names working.
+
+#### Modifiers
+
+Stateless per-binding transforms applied in declaration order to the raw
+hardware sample.
+
+| Factory | Purpose |
+|---|---|
+| `Modifiers.Negate(x=False, y=False, z=False)` | Flip the sign of selected axes |
+| `Modifiers.Scale(x=1.0, y=1.0, z=1.0)` | Component-wise multiply |
+| `Modifiers.DeadZone(lower, upper=1.0, radial=False)` | Axial or radial deadzone; below `lower` → 0, between `lower` and `upper` → linear rescale to `[0, 1]` |
+| `Modifiers.Swizzle(order)` | Axis reorder; `order` is `"XYZ"` / `"YXZ"` / `"ZXY"` / `"YZX"` |
+
+#### Triggers
+
+Stateful per-binding state machines reporting one of `None`, `Ongoing`,
+`Triggered`, or `Canceled` per frame. A binding with no explicit trigger
+behaves like `Triggers.Down()`.
+
+| Factory | Semantics |
+|---|---|
+| `Triggers.Down()` | Fires every frame the input is actuated |
+| `Triggers.Pressed()` | Fires on the rising edge (frame of actuation) |
+| `Triggers.Released()` | Fires on the falling edge (frame of release) |
+| `Triggers.Hold(seconds)` | `Ongoing` while charging; `Triggered` after `seconds` of continuous hold; `Canceled` if released early |
+| `Triggers.Tap(max_seconds=0.25)` | Fires once on release if total hold stayed under `max_seconds`; `Canceled` if held longer |
+| `Triggers.Pulse(interval_seconds)` | Fires on initial press and every `interval_seconds` while held |
+| `Triggers.Chorded(partner)` | Fires only when actuated AND `partner` action is actuated this frame (partner must be declared earlier in the same map) |
+
+#### Callback phases
+
+Attach handlers per phase. Each is called with an `ActionValue`.
+
+| Phase | Handler | Meaning |
+|---|---|---|
+| `Started` | `on_started(cb)` | First frame the action becomes active |
+| `Ongoing` | `on_ongoing(cb)` | In-progress (e.g. Hold still charging) |
+| `Triggered` | `on_triggered(cb)` | Action is actuating this frame |
+| `Completed` | `on_completed(cb)` | Clean falling edge after `Triggered` |
+| `Canceled` | `on_canceled(cb)` | Aborted (e.g. Tap held past `max_seconds`) |
+
+#### Context stack
+
+| Call | Effect |
+|---|---|
+| `rython.input.push_map(m)` | Push *m* onto the stack; higher priority wins on conflicts |
+| `rython.input.pop_map(id)` | Remove the pushed map with `name == id` |
+| `rython.input.clear_maps()` | Remove every pushed map |
+| `rython.input.active_maps()` | List of active map ids, priority-descending |
+
+When a higher-priority map actuates an action, that action id is **consumed**
+for the frame — lower-priority maps skip their binding for it. Pop the menu
+context to restore gameplay input.
+
+#### Rebinding
+
+```python
+rython.input.rebind("gameplay", "jump", 0, KeyCode.Enter)
+```
+
+Replaces the hardware key at `(map_id, action_id, binding_index)`. Useful for
+in-game settings UIs. Combine with a "press any key" UI that polls
+`rython.scene.subscribe("input:…:started", …)` to build a rebind capture.
+
+#### Scene-bus events
+
+Every phase change is also emitted on the scene bus under
+`input:{action}:{phase}` (e.g. `input:jump:started`), with payload
+`{"value": <...>, "phase": "...", "elapsed_seconds": <float>}`. Subscribing
+to this pattern works for ad-hoc event wiring without a full InputMap
+subclass.
 
 ---
 
