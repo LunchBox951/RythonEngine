@@ -44,7 +44,7 @@ from rython._time import TimeBridge as _TimeBridge
 from rython._engine import EngineBridge as _EngineBridge
 from rython._input import InputBridge as _InputBridge
 from rython._audio import AudioBridge as _AudioBridge
-from rython._physics import PhysicsBridge as _PhysicsBridge
+from rython._physics import PhysicsBridge as _PhysicsBridge, RayHit
 from rython._ui import UIBridge as _UIBridge
 from rython._resources import ResourcesBridge as _ResourcesBridge
 from rython._stubs import SubModule as _SubModule
@@ -72,6 +72,7 @@ __all__ = [
     "Vec3",
     "Transform",
     "Entity",
+    "RayHit",
     "scene",
     "camera",
     "scheduler",

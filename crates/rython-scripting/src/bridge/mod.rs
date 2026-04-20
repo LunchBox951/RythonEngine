@@ -414,6 +414,7 @@ pub fn ensure_rython_module(py: Python<'_>, scene: Arc<Scene>) -> PyResult<()> {
     rython.add_class::<entity::EntityPy>()?;
     rython.add_class::<resources::AssetHandlePy>()?;
     rython.add_class::<job_handle::JobHandlePy>()?;
+    rython.add_class::<physics::RayHitPy>()?;
 
     let scene_bridge = Py::new(py, scene::SceneBridge {})?;
     rython.add("scene", scene_bridge)?;

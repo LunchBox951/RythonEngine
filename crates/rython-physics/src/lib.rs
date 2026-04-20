@@ -66,12 +66,27 @@ pub struct PhysicsWorld {
     impulse_joint_set: ImpulseJointSet,
     multibody_joint_set: MultibodyJointSet,
     ccd_solver: CCDSolver,
+    query_pipeline: QueryPipeline,
     entity_to_body: HashMap<EntityId, BodyEntry>,
     collider_to_entity: HashMap<ColliderHandle, EntityId>,
     // Reused channel pairs — avoids re-creating them every physics step.
     collision_send: Sender<CollisionEvent>,
     collision_recv: Receiver<CollisionEvent>,
     contact_force_send: Sender<ContactForceEvent>,
+}
+
+// ── Scene-query result ────────────────────────────────────────────────────────
+
+/// Result of a successful scene query (raycast or sphere-cast).
+pub struct RayHit {
+    /// The entity whose collider was hit.
+    pub entity: EntityId,
+    /// World-space point of first contact.
+    pub point: [f32; 3],
+    /// World-space outward surface normal at the hit point.
+    pub normal: [f32; 3],
+    /// Time-of-impact: distance along the (unit) ray direction to the hit.
+    pub toi: f32,
 }
 
 impl PhysicsWorld {
@@ -96,6 +111,7 @@ impl PhysicsWorld {
             impulse_joint_set: ImpulseJointSet::new(),
             multibody_joint_set: MultibodyJointSet::new(),
             ccd_solver: CCDSolver::new(),
+            query_pipeline: QueryPipeline::new(),
             entity_to_body: HashMap::new(),
             collider_to_entity: HashMap::new(),
             collision_send,
@@ -319,6 +335,7 @@ impl PhysicsWorld {
             impulse_joint_set,
             multibody_joint_set,
             ccd_solver,
+            query_pipeline,
             collider_to_entity,
             collision_recv,
             entity_to_body: _,
@@ -342,6 +359,11 @@ impl PhysicsWorld {
             &(),
             &event_handler,
         );
+
+        // Rebuild the query acceleration structure with post-step collider AABBs.
+        // This must run after physics_pipeline.step so that scene queries within
+        // the same frame see the updated body positions (frame step-5 ordering).
+        query_pipeline.update(collider_set);
 
         // Process collision events.
         while let Ok(event) = collision_recv.try_recv() {
@@ -527,6 +549,135 @@ impl PhysicsWorld {
 
     pub fn body_count(&self) -> usize {
         self.entity_to_body.len()
+    }
+
+    // ── Scene queries ─────────────────────────────────────────────────────────
+
+    /// Cast a ray from `origin` in `direction` up to `max_dist` world units.
+    ///
+    /// `direction` is normalised internally; returns `None` if the direction
+    /// vector is near-zero or if no collider is hit.
+    pub fn raycast(
+        &self,
+        origin: [f32; 3],
+        direction: [f32; 3],
+        max_dist: f32,
+    ) -> Option<RayHit> {
+        let dir_vec = vector![direction[0], direction[1], direction[2]];
+        let len = dir_vec.norm();
+        if len < f32::EPSILON {
+            return None;
+        }
+        let dir_unit = dir_vec / len;
+        let ray = Ray::new(
+            point![origin[0], origin[1], origin[2]],
+            dir_unit,
+        );
+
+        let (col_handle, intersection) = self.query_pipeline.cast_ray_and_get_normal(
+            &self.rigid_body_set,
+            &self.collider_set,
+            &ray,
+            max_dist,
+            true,
+            QueryFilter::default(),
+        )?;
+
+        let entity = *self.collider_to_entity.get(&col_handle)?;
+        let hit_point = ray.point_at(intersection.time_of_impact);
+        let n = intersection.normal;
+
+        Some(RayHit {
+            entity,
+            point: [hit_point.x, hit_point.y, hit_point.z],
+            normal: [n.x, n.y, n.z],
+            toi: intersection.time_of_impact,
+        })
+    }
+
+    /// Cast a sphere of `radius` from `origin` in `direction` up to `max_dist` world units.
+    ///
+    /// `direction` is normalised internally; returns `None` if the direction
+    /// vector is near-zero or if no collider is hit. `normal` in the result is
+    /// the world-space surface normal of the *hit* collider (normal2 in
+    /// rapier's convention).
+    pub fn sphere_cast(
+        &self,
+        origin: [f32; 3],
+        direction: [f32; 3],
+        radius: f32,
+        max_dist: f32,
+    ) -> Option<RayHit> {
+        use rapier3d::parry::query::details::ShapeCastOptions;
+        use rapier3d::parry::shape::Ball;
+
+        let dir_vec = vector![direction[0], direction[1], direction[2]];
+        let len = dir_vec.norm();
+        if len < f32::EPSILON {
+            return None;
+        }
+        let dir_unit = dir_vec / len;
+
+        let shape_pos = Isometry::translation(origin[0], origin[1], origin[2]);
+        let ball = Ball::new(radius.max(f32::EPSILON));
+        let options = ShapeCastOptions {
+            max_time_of_impact: max_dist,
+            stop_at_penetration: true,
+            ..Default::default()
+        };
+
+        let (col_handle, hit) = self.query_pipeline.cast_shape(
+            &self.rigid_body_set,
+            &self.collider_set,
+            &shape_pos,
+            &dir_unit,
+            &ball,
+            options,
+            QueryFilter::default(),
+        )?;
+
+        let entity = *self.collider_to_entity.get(&col_handle)?;
+        // In QueryPipeline::cast_shape the world collider is shape1 and the
+        // cast ball is shape2.  normal1 is the outward surface normal of the
+        // world collider (the surface we hit); witness1 is the contact point
+        // on that surface.  Use these to return a consistent "surface normal".
+        let w = hit.witness1;
+        let n = hit.normal1;
+
+        Some(RayHit {
+            entity,
+            point: [w.x, w.y, w.z],
+            normal: [n.x, n.y, n.z],
+            toi: hit.time_of_impact,
+        })
+    }
+
+    /// Return the ground surface normal directly below `entity`, looking up to
+    /// `max_dist` world units downward.
+    ///
+    /// Uses the entity's current rigid-body translation as the ray origin and
+    /// excludes the entity's own collider from the query.  Returns `None` if
+    /// the entity is not registered or nothing is hit within `max_dist`.
+    pub fn ground_normal(&self, entity: EntityId, max_dist: f32) -> Option<[f32; 3]> {
+        let entry = self.entity_to_body.get(&entity)?;
+        let rb = self.rigid_body_set.get(entry.rigid_body_handle)?;
+        let t = rb.translation();
+
+        let origin = point![t.x, t.y, t.z];
+        let ray = Ray::new(origin, vector![0.0, -1.0, 0.0]);
+        let filter = QueryFilter::default().exclude_collider(entry.collider_handle);
+
+        let (_col_handle, intersection) = self.query_pipeline.cast_ray_and_get_normal(
+            &self.rigid_body_set,
+            &self.collider_set,
+            &ray,
+            max_dist,
+            true,
+            filter,
+        )?;
+
+        let n = intersection.normal;
+        Some([n.x, n.y, n.z])
     }
 
     /// Test helper: directly set rapier body translation (bypasses ECS).
@@ -2183,6 +2334,204 @@ mod tests {
             vy <= 0.05,
             "ball vy={} should be ≤ 0 (no bounce) with restitution=0.0",
             vy
+        );
+    }
+
+    // ── Scene-query helpers ───────────────────────────────────────────────────
+
+    /// Spawn a static flat floor at y=0 with a very large footprint.
+    fn floor_at_zero(scene: &Scene) -> EntityId {
+        spawn(
+            scene,
+            transform(0.0, 0.0, 0.0),
+            rb_with("static", 1.0, 1, 1),
+            // 200×0.1×200 cuboid centred at y=0 → top face at y=0.05
+            ColliderComponent {
+                shape: "box".to_string(),
+                size: [200.0, 0.1, 200.0],
+                is_trigger: false,
+                restitution: 0.0,
+            },
+        )
+    }
+
+    // ── T-PHYS-QUERY-01: Raycast Hit ─────────────────────────────────────────
+
+    #[test]
+    fn t_phys_query_raycast_hit() {
+        let scene = Scene::new();
+        floor_at_zero(&scene);
+
+        let mut w = world_zero_gravity();
+        w.sync_step(&scene); // register bodies & update query pipeline
+
+        // Ray from (0, 5, 0) pointing straight down, max 10 units.
+        let hit = w
+            .raycast([0.0, 5.0, 0.0], [0.0, -1.0, 0.0], 10.0)
+            .expect("ray should hit the floor");
+
+        // toi should be ~5 (distance from ray origin y=5 to floor top ~y=0.05)
+        assert!(
+            (hit.toi - 4.95).abs() < 0.2,
+            "toi={} expected ~4.95",
+            hit.toi
+        );
+        // Normal should point roughly upward (+Y).
+        assert!(
+            hit.normal[1] > 0.9,
+            "normal.y={} expected ~1.0",
+            hit.normal[1]
+        );
+    }
+
+    // ── T-PHYS-QUERY-02: Raycast Miss ────────────────────────────────────────
+
+    #[test]
+    fn t_phys_query_raycast_miss() {
+        let scene = Scene::new();
+        floor_at_zero(&scene);
+
+        let mut w = world_zero_gravity();
+        w.sync_step(&scene);
+
+        // Ray pointing upward — away from the floor.
+        let hit = w.raycast([0.0, 5.0, 0.0], [0.0, 1.0, 0.0], 10.0);
+        assert!(hit.is_none(), "upward ray should miss");
+    }
+
+    // ── T-PHYS-QUERY-03: Sphere Cast Hit ─────────────────────────────────────
+
+    #[test]
+    fn t_phys_query_sphere_cast_hit() {
+        let scene = Scene::new();
+        floor_at_zero(&scene);
+
+        let mut w = world_zero_gravity();
+        w.sync_step(&scene);
+
+        // Sphere r=0.5 from y=5, cast downward.
+        let hit = w
+            .sphere_cast([0.0, 5.0, 0.0], [0.0, -1.0, 0.0], 0.5, 10.0)
+            .expect("sphere cast should hit the floor");
+
+        // The sphere surface touches the floor top before the centre reaches it.
+        // normal2 should point upward.
+        assert!(
+            hit.normal[1] > 0.5,
+            "normal.y={} expected upward",
+            hit.normal[1]
+        );
+    }
+
+    // ── T-PHYS-QUERY-04: Ground Normal ───────────────────────────────────────
+
+    #[test]
+    fn t_phys_query_ground_normal() {
+        let scene = Scene::new();
+        floor_at_zero(&scene);
+
+        // Dynamic entity 1.0 above the floor.
+        let e = spawn(
+            &scene,
+            transform(0.0, 1.0, 0.0),
+            dyn_rb(),
+            box_col([0.5, 0.5, 0.5]),
+        );
+
+        let mut w = world_zero_gravity(); // no gravity so it stays at y=1
+        w.sync_step(&scene); // registers bodies + updates query pipeline
+
+        let normal = w
+            .ground_normal(e, 2.0)
+            .expect("should detect floor below");
+        assert!(
+            normal[1] > 0.9,
+            "normal.y={} expected ~1.0 (upward)",
+            normal[1]
+        );
+    }
+
+    // ── T-PHYS-QUERY-05: Ground Normal — No Ground ───────────────────────────
+
+    #[test]
+    fn t_phys_query_ground_normal_no_ground() {
+        let scene = Scene::new();
+        // No floor — entity alone in empty space.
+        let e = spawn(
+            &scene,
+            transform(0.0, 100.0, 0.0),
+            dyn_rb(),
+            box_col([0.5, 0.5, 0.5]),
+        );
+
+        let mut w = world_zero_gravity();
+        w.sync_step(&scene);
+
+        // max_dist=2.0 — nothing within 2 units below.
+        let normal = w.ground_normal(e, 2.0);
+        assert!(normal.is_none(), "expected None — no ground within range");
+    }
+
+    // ── T-PHYS-QUERY-06: Query Pipeline Post-Step Coherence ──────────────────
+
+    #[test]
+    fn t_phys_query_pipeline_post_step_coherent() {
+        let scene = Scene::new();
+
+        // Large static wall at x=50 (faces the -X direction).
+        spawn(
+            &scene,
+            transform(50.0, 0.0, 0.0),
+            rb_with("static", 1.0, 1, 1),
+            ColliderComponent {
+                shape: "box".to_string(),
+                size: [1.0, 200.0, 200.0],
+                is_trigger: false,
+                restitution: 0.0,
+            },
+        );
+
+        // Kinematic body starting at x=40 (close to the wall, away from ray).
+        let mover = spawn(
+            &scene,
+            transform(40.0, 0.0, 0.0),
+            rb_with("kinematic", 1.0, 1, 1),
+            box_col([1.0, 1.0, 1.0]),
+        );
+
+        let mut w = world_zero_gravity();
+        w.sync_step(&scene); // step 1 — both registered, query pipeline updated
+
+        // Ray from x=-5 (clearly outside everything) in +X direction.
+        // First hit should be the mover at x=40 (toi ~= 45 from x=-5).
+        let hit1 = w
+            .raycast([-5.0, 0.0, 0.0], [1.0, 0.0, 0.0], 200.0)
+            .expect("should hit mover or wall");
+        let first_toi = hit1.toi;
+        assert!(
+            first_toi > 30.0,
+            "first hit toi={} expected >30 (mover at x=40, origin at x=-5)",
+            first_toi
+        );
+
+        // Teleport the kinematic body to x=20 (much closer to the ray origin)
+        // by updating the ECS TransformComponent so that push_transforms picks
+        // it up in the next sync_step, then query_pipeline.update bakes the
+        // new collider AABB.  This proves step ordering is correct.
+        scene.components.get_mut::<TransformComponent, _>(mover, |t| {
+            t.x = 20.0;
+        });
+        w.sync_step(&scene); // step 2 — push_transforms, physics step, query pipeline update
+
+        // Now the mover is at x=20; the ray should hit it at toi ~25 (closer).
+        let hit2 = w
+            .raycast([-5.0, 0.0, 0.0], [1.0, 0.0, 0.0], 200.0)
+            .expect("should still hit something");
+        assert!(
+            hit2.toi < first_toi,
+            "second hit toi={} should be closer than first={} (mover moved closer)",
+            hit2.toi,
+            first_toi
         );
     }
 }

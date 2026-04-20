@@ -188,6 +188,72 @@ def test_restitution_clamps_out_of_range():
     # restitution=1.0 (fully elastic). The important guarantee is no panic.
 
 
+# ── Scene-query entities ─────────────────────────────────────────────────────
+
+# Shared query test state.
+_query_floor = None
+_query_body = None
+
+
+def _spawn_query_entities():
+    """Spawn a floor and an airborne entity for scene-query tests."""
+    global _query_floor, _query_body
+
+    # Static floor at y=0, large footprint.
+    _query_floor = rython.scene.spawn(
+        transform=Transform(x=0.0, y=0.0, z=0.0),
+        rigid_body={"body_type": "static"},
+        collider={"shape": "box", "size": [200.0, 0.1, 200.0]},
+    )
+
+    # Dynamic entity hovering at y=5 with no gravity (we use gravity_factor=0).
+    _query_body = rython.scene.spawn(
+        transform=Transform(x=0.0, y=5.0, z=0.0),
+        rigid_body={"body_type": "dynamic", "gravity_factor": 0.0},
+        collider={"shape": "box", "size": [1.0, 1.0, 1.0]},
+    )
+
+
+# ── Scene-query frame callbacks ───────────────────────────────────────────────
+
+def test_raycast_hits_floor():
+    """Ray from (0,10,0) pointing -Y with max_dist=20 should hit the floor."""
+    hit = rython.physics.raycast((0.0, 10.0, 0.0), (0.0, -1.0, 0.0), 20.0)
+    assert hit is not None, "raycast should hit the floor"
+    assert hit.normal.y > 0.5, f"normal.y={hit.normal.y} expected upward"
+    assert hit.toi > 0.0, f"toi={hit.toi} must be positive"
+    assert hit.distance == hit.toi, "distance must alias toi"
+
+
+def test_raycast_misses():
+    """Ray pointing upward (+Y) should return None."""
+    hit = rython.physics.raycast((0.0, 10.0, 0.0), (0.0, 1.0, 0.0), 20.0)
+    assert hit is None, f"upward ray should return None, got {hit}"
+
+
+def test_sphere_cast_hits():
+    """Sphere (r=0.5) cast from (0,10,0) downward should hit the floor."""
+    hit = rython.physics.sphere_cast(
+        (0.0, 10.0, 0.0), (0.0, -1.0, 0.0), 0.5, 20.0
+    )
+    assert hit is not None, "sphere_cast should hit the floor"
+    assert hit.normal.y > 0.5, f"normal.y={hit.normal.y} expected upward"
+
+
+def test_ground_normal_for_entity():
+    """ground_normal should return upward normal for entity above the floor."""
+    normal = rython.physics.ground_normal(_query_body, 10.0)
+    assert normal is not None, "ground_normal should find the floor"
+    assert normal.y > 0.5, f"normal.y={normal.y} expected upward"
+
+
+def test_ground_normal_none_when_airborne():
+    """ground_normal with tiny max_dist should return None (floor is far below)."""
+    # Entity is at y=5; floor top is at ~y=0.05.  max_dist=0.1 misses the floor.
+    normal = rython.physics.ground_normal(_query_body, 0.1)
+    assert normal is None, f"expected None with tiny max_dist, got {normal}"
+
+
 # ── entry point ──────────────────────────────────────────────────────────────
 
 def init():
@@ -203,6 +269,9 @@ def init():
 
     # Spawn entities used by restitution frame-loop tests.
     _spawn_restitution_entities()
+
+    # Spawn entities used by scene-query tests.
+    _spawn_query_entities()
 
     # Schedule frame-loop assertions.
     runner = FrameRunner(suite)
@@ -226,6 +295,14 @@ def init():
     runner.after_frames(60, test_restitution_bounce)
     runner.after_frames(60, test_restitution_zero)
     runner.after_frames(60, test_restitution_clamps_out_of_range)
+
+    # Scene-query tests: run at frame 3 so bodies are registered and
+    # the query pipeline has been updated at least once.
+    runner.after_frames(3, test_raycast_hits_floor)
+    runner.after_frames(3, test_raycast_misses)
+    runner.after_frames(3, test_sphere_cast_hits)
+    runner.after_frames(3, test_ground_normal_for_entity)
+    runner.after_frames(3, test_ground_normal_none_when_airborne)
 
     runner.on_done(lambda: suite.report_and_quit())
     runner.start()
