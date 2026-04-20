@@ -570,7 +570,7 @@ impl App {
                             }
                         } else {
                             // The handle transitioned between `state() == Ready`
-                            // and `get_data()` returning `Some` — most likely a
+                            // and `get_data()` returning `None` — most likely a
                             // race with eviction or hot-reload.  The state is
                             // unknowable at this point, so we drop the entry
                             // rather than requeue (requeuing could livelock).
