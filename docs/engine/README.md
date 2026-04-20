@@ -584,20 +584,38 @@ make dist-linux ARCH=aarch64
 make dist-macos ARCH=aarch64
 ```
 
-Under the hood: Linux targets run `cargo zigbuild --release --target
-<triple>`, Windows targets run `cargo xwin build --release --target <triple>`
-(MSVC), and macOS targets run plain `cargo build --release --target <triple>`.
-PyO3 picks up the vendored libpython via `PYO3_CROSS_LIB_DIR` (for cross) or
-`PYO3_PYTHON` (when host triple == target triple). Output lands at
-`dist/<platform>-<arch>/<GameName>/`, self-contained with:
+Under the hood, `make dist` chains four steps:
 
-- `<GameName>[.exe]` — the engine binary, RPATH-patched (Linux) or
+1. `make bootstrap` — ensure the vendored target Python is present.
+2. `make seal-bundle` — `scripts/bundle.py` pre-compiles the game and the
+   target's stdlib into `.pyc`, copies `lib-dynload` out, and writes
+   `target/bundles/<platform>-<arch>/hashes.env` with SHA-256 digests of
+   every sealed artifact.
+3. `cargo build` / `cargo zigbuild` / `cargo xwin build` with the
+   hashes.env loaded into the environment — `crates/rython-cli/build.rs`
+   forwards each `RYTHON_*_HASH` variable to rustc as a compile-time
+   constant, baking the expected digests into the release binary.
+4. `scripts/package.py` — install the sealed artifacts from step 2
+   alongside the libpython runtime from the vendored tree, at the exact
+   paths `release_seal.rs` will scan on launch.
+
+At runtime, `release_seal::verify` re-hashes every sealed file before the
+Python interpreter is ever started and refuses to boot on any mismatch.
+Cross-platform builds are sealed: the hashes cover the target's bytes, not
+the build host's, so a Linux → Windows dist verifies identically on a
+Windows machine.
+
+Output lands at `dist/<platform>-<arch>/<GameName>/`, self-contained with:
+
+- `<GameName>[.exe]` — the sealed engine binary, RPATH-patched (Linux) or
   install-name-patched (macOS) to find the bundled runtime
 - Bundled libpython (`libpython3.12.so.1.0` / `libpython3.12.dylib` /
   `python312.dll`) plus VC++ runtime DLLs on Windows
-- `python/Lib/` or `python/lib/python3.12/` — the target-platform stdlib
-- `python/DLLs/` — extension modules (Windows only)
-- `game.bundle` — zipimport archive of all `game/**/*.py`
+- `python/lib/python3.12.zip` (POSIX) or `python/lib/python312.zip`
+  (Windows) — sealed, pre-compiled stdlib
+- `python/lib/python3.12/lib-dynload/` (POSIX) or `python/DLLs/` (Windows)
+  — sealed extension modules
+- `game.bundle` — sealed zipimport archive of all `game/**/*.py`
 - `project.json` + `game/` — non-Python assets (music, textures, UI JSON, …)
 
 ### Updating the pinned Python

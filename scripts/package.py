@@ -6,6 +6,7 @@ Usage:
         --platform windows --arch x86_64 \\
         --rust-triple x86_64-pc-windows-msvc \\
         --target-python vendor/python/windows-x86_64/python \\
+        --bundle-dir  target/bundles/windows-x86_64 \\
         --game game --out dist/windows-x86_64
 
 The script expects:
@@ -13,14 +14,25 @@ The script expects:
     `cargo zigbuild --release --target <rust-triple>` (see the Makefile).
   * A vendored python-build-standalone tree at --target-python — populated by
     `scripts/bootstrap_target.py <platform> <arch>`.
+  * A pre-built, pre-hashed bundle tree at --bundle-dir — populated by
+    `scripts/bundle.py --target-python <same-tree>`. The sealed binary has
+    hashes for these artifacts baked in at compile time; this script
+    installs them at the exact paths `release_seal::verify` checks:
 
-No host tools are consulted (no ldd / otool / dumpbin, no host sysconfig).
-Everything about the bundled Python runtime is read from --target-python,
-which makes the output deterministic regardless of the developer's host.
+        POSIX:   python/lib/<pythonXY.zip>, python/lib/<libpython soname>,
+                 python/lib/pythonX.Y/lib-dynload/
+        Windows: python/lib/<pythonXY.zip>, <libpython soname> at dist root,
+                 python/DLLs/
 
-macOS is host-only: targeting macOS from a non-macOS host exits with an error
-because `install_name_tool` is needed and cannot be faked cross-platform.
+Zero host tools are consulted. Everything about the bundled Python runtime
+is read from the vendored target tree, so output is deterministic regardless
+of the developer's host.
+
+macOS is host-only: targeting macOS from a non-macOS host exits with an
+error because `install_name_tool` is needed and cannot be faked cross-host.
 """
+
+from __future__ import annotations
 
 import argparse
 import json
@@ -29,22 +41,7 @@ import re
 import shutil
 import subprocess
 import sys
-import zipfile
 from pathlib import Path
-
-
-# Stdlib directories excluded from the distribution — IDEs, test suites, and
-# build tools that a shipped game does not need.
-STDLIB_EXCLUDES = frozenset({
-    "test",
-    "tests",
-    "idlelib",
-    "tkinter",
-    "turtledemo",
-    "ensurepip",
-    "__pycache__",
-    "site-packages",
-})
 
 
 def parse_args() -> argparse.Namespace:
@@ -63,16 +60,26 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--target-python", required=True,
                    help="Path to vendored python install tree "
                         "(e.g. vendor/python/windows-x86_64/python)")
+    p.add_argument("--bundle-dir", required=True,
+                   help="Path to sealed bundle artifacts "
+                        "(e.g. target/bundles/windows-x86_64) — produced by "
+                        "scripts/bundle.py against the same --target-python tree. "
+                        "Must agree with the hashes baked into the binary.")
     p.add_argument("--rust-triple", required=True,
                    help="Rust target triple used for cargo (e.g. x86_64-pc-windows-msvc). "
                         "Determines target/<triple>/release/ binary location.")
     return p.parse_args()
 
 
-# ── Target Python discovery ────────────────────────────────────────────────────
+# ── Target Python discovery ──────────────────────────────────────────────────
 
 class TargetPython:
-    """Describes the vendored python-build-standalone tree for one target."""
+    """Describes the vendored python-build-standalone tree for one target.
+
+    Intentionally mirrors `scripts/bundle.py::TargetPython` — both scripts
+    must agree on what the stdlib/lib-dynload/libpython look like, or the
+    sealed hashes would not match what lands in the dist.
+    """
 
     def __init__(self, root: Path, target_platform: str):
         self.root = root                                  # .../vendor/python/<key>/python
@@ -81,27 +88,20 @@ class TargetPython:
 
     def _detect_version(self) -> str:
         if self.target_platform == "windows":
-            # python-build-standalone ships python3XX.dll at the install root.
-            matches = sorted(self.root.glob("python3*.dll"))
-            for m in matches:
+            for m in sorted(self.root.glob("python3*.dll")):
                 # Skip the "abi3 shim" python3.dll which has no minor version.
                 mo = re.fullmatch(r"python3(\d+)\.dll", m.name)
                 if mo:
                     return f"3.{mo.group(1)}"
             raise RuntimeError(f"Could not detect Python version in {self.root} (no python3XX.dll)")
-        # unix
-        matches = sorted(self.root.glob("lib/python3.*"))
-        for m in matches:
+        for m in sorted(self.root.glob("lib/python3.*")):
             mo = re.fullmatch(r"python(3\.\d+)", m.name)
             if mo:
                 return mo.group(1)
         raise RuntimeError(f"Could not detect Python version in {self.root} (no lib/python3.X/)")
 
-    @property
-    def stdlib_dir(self) -> Path:
-        if self.target_platform == "windows":
-            return self.root / "Lib"
-        return self.root / "lib" / f"python{self.version_short}"
+    def zip_name(self) -> str:
+        return f"python{self.version_short.replace('.', '')}.zip"
 
     @property
     def libpython_files(self) -> list[Path]:
@@ -117,7 +117,6 @@ class TargetPython:
             optional = ["python3.dll", "vcruntime140.dll", "vcruntime140_1.dll"]
             return [versioned] + [self.root / n for n in optional if (self.root / n).is_file()]
         if self.target_platform == "macos":
-            # libpython is at lib/libpython3.X.dylib
             candidates = list((self.root / "lib").glob("libpython*.dylib"))
             if not candidates:
                 raise RuntimeError(f"No libpython*.dylib in {self.root / 'lib'}")
@@ -128,19 +127,39 @@ class TargetPython:
             raise RuntimeError(f"No libpython*.so* in {self.root / 'lib'}")
         return candidates
 
-    @property
-    def windows_dlls_dir(self) -> Path:
-        return self.root / "DLLs"
+    def versioned_libpython(self) -> Path:
+        """The single real (non-symlink) libpython file that `bundle.py::hash_libpython`
+        hashed. Must end up at `python/lib/<this filename>` (POSIX) or at the
+        dist root with this filename (Windows) so `release_seal::libpython_path`
+        resolves it."""
+        if self.target_platform == "windows":
+            return self.root / f"python{self.version_short.replace('.', '')}.dll"
+        subdir = self.root / "lib"
+        if self.target_platform == "macos":
+            matches = sorted(p for p in subdir.glob("libpython*.dylib")
+                             if p.is_file() and not p.is_symlink())
+        else:
+            matches = sorted(p for p in subdir.glob("libpython*.so*")
+                             if p.is_file() and not p.is_symlink())
+        if not matches:
+            raise RuntimeError(f"No non-symlink libpython in {subdir}")
+        return matches[0]
 
 
-# ── Runtime layout: copy libpython + stdlib + extension modules ───────────────
+# ── Runtime layout: copy libpython + patch binary ────────────────────────────
 
 def install_runtime(
     tp: TargetPython,
     dest_binary: Path,
     dest_dir: Path,
 ) -> None:
-    """Copy the target Python runtime into dest_dir and patch the binary if needed."""
+    """Copy the target Python runtime into dest_dir and patch the binary.
+
+    This does NOT copy the stdlib or lib-dynload — those come from the sealed
+    bundle via `install_sealed_artifacts`. The seal covers everything CPython
+    loads at the Python level; this function handles the dynamic-linker layer
+    (libpython, RPATH, @executable_path references, Windows vcruntime).
+    """
     if tp.target_platform == "linux":
         _install_runtime_linux(tp, dest_binary, dest_dir)
     elif tp.target_platform == "macos":
@@ -155,51 +174,49 @@ def _install_runtime_linux(tp: TargetPython, dest_binary: Path, dest_dir: Path) 
     dest_python_lib = dest_dir / "python" / "lib"
     dest_python_lib.mkdir(parents=True, exist_ok=True)
 
-    # Copy libpython — preserve symlinks so versioned + unversioned names both resolve.
-    copied_names: list[str] = []
-    for src in tp.libpython_files:
-        dst = dest_python_lib / src.name
-        if src.is_symlink():
-            target = src.readlink()
-            if dst.exists() or dst.is_symlink():
-                dst.unlink()
-            dst.symlink_to(target)
-        else:
-            shutil.copy2(src, dst)
-        copied_names.append(src.name)
-    print(f"         libpython: {', '.join(copied_names)}")
+    # We install ONLY the single versioned libpython that the seal hashes —
+    # no unversioned symlinks. The binary's DT_NEEDED points at the versioned
+    # soname (set by PyO3 / python-build-standalone at link time), so an
+    # unversioned `libpython3.so` sitting alongside would be unused at
+    # load time but *would* be an extra file in the dist that release_seal.rs
+    # does not know about. Keeping the dist minimal keeps the seal tight.
+    src = tp.versioned_libpython()
+    dst = dest_python_lib / src.name
+    shutil.copy2(src, dst)
+    # Strip to match the hash in hashes.env (bundle.py hashed post-strip bytes).
+    _strip_libpython(dst)
+    print(f"         libpython: {src.name} (stripped)")
 
     # lib64 -> lib symlink for multiarch Python dlopen compatibility.
     lib64 = dest_dir / "python" / "lib64"
     if not lib64.exists():
         lib64.symlink_to("lib")
 
-    # python-build-standalone ships unstripped libpython (~220 MB). Strip it
-    # to shrink the distribution by ~200 MB with no runtime impact.
-    _strip_libpython(dest_python_lib)
-
     _patch_rpath_linux(dest_binary, "$ORIGIN/python/lib")
 
 
-def _strip_libpython(lib_dir: Path) -> None:
-    # Strip the real (non-symlink) libpython binary. python-build-standalone's
-    # Linux install_only tarballs include debug info which bloats the dist by
-    # ~200 MB with no runtime benefit.
-    target = next(
-        (p for p in lib_dir.glob("libpython*.so*")
-         if p.is_file() and not p.is_symlink()),
-        None,
-    )
-    if target is None:
-        return
+def _strip_libpython(libpython: Path) -> None:
+    """Strip the real (non-symlink) libpython. python-build-standalone's
+    Linux install_only tarballs include debug info which bloats the dist by
+    ~200 MB with no runtime benefit. `bundle.py::hash_libpython` pre-hashed
+    the post-strip bytes, so this strip is not just a size optimisation —
+    it is load-bearing for seal verification.
+    """
     try:
-        subprocess.run(["strip", "--strip-unneeded", str(target)], check=True)
-        size_mb = target.stat().st_size // (1024 * 1024)
-        print(f"         stripped {target.name} -> {size_mb} MB")
+        subprocess.run(
+            ["strip", "--strip-unneeded", str(libpython)],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
     except FileNotFoundError:
-        print("  WARNING: `strip` not found; libpython kept unstripped.", file=sys.stderr)
+        sys.exit(
+            "ERROR: `strip` not found on PATH but required to install a sealed "
+            "Linux libpython (the sealed hash is against the stripped bytes). "
+            "Install binutils: `apt install binutils` / `pacman -S binutils`."
+        )
     except subprocess.CalledProcessError as e:
-        print(f"  WARNING: strip failed: {e}", file=sys.stderr)
+        sys.exit(f"ERROR: strip failed on {libpython}: {e}")
 
 
 def _install_runtime_macos(tp: TargetPython, dest_binary: Path, dest_dir: Path) -> None:
@@ -211,7 +228,7 @@ def _install_runtime_macos(tp: TargetPython, dest_binary: Path, dest_dir: Path) 
     dest_python_lib = dest_dir / "python" / "lib"
     dest_python_lib.mkdir(parents=True, exist_ok=True)
 
-    dylib_src = tp.libpython_files[0]
+    dylib_src = tp.versioned_libpython()
     soname = dylib_src.name
     dest_dylib = dest_python_lib / soname
     shutil.copy2(dylib_src, dest_dylib)
@@ -224,9 +241,7 @@ def _install_runtime_macos(tp: TargetPython, dest_binary: Path, dest_dir: Path) 
     )
     # Rewrite the binary's reference. python-build-standalone builds use
     # @executable_path/../lib/<soname> as the install name on the binary's side,
-    # but we don't have a built binary here until cargo-built it against the
-    # same vendored dylib. Best-effort: discover the actual reference via
-    # otool and rewrite it.
+    # but the actual reference depends on how cargo linked — discover via otool.
     try:
         out = subprocess.check_output(["otool", "-L", str(dest_binary)], text=True)
     except (FileNotFoundError, subprocess.CalledProcessError) as e:
@@ -251,20 +266,13 @@ def _install_runtime_macos(tp: TargetPython, dest_binary: Path, dest_dir: Path) 
 
 def _install_runtime_windows(tp: TargetPython, dest_binary: Path, dest_dir: Path) -> None:
     # Windows resolves DLLs from the exe's directory — drop them in beside it.
+    # Versioned libpython (`python313.dll`) lands at the dist root where
+    # `release_seal::libpython_path` expects it. Optional DLLs (python3 shim,
+    # vcruntime) are sibling runtime deps — not sealed, but required for
+    # startup on hosts without a VC++ redistributable.
     for src in tp.libpython_files:
         shutil.copy2(src, dest_dir / src.name)
     print(f"         libpython: {', '.join(f.name for f in tp.libpython_files)}")
-
-    # Extension modules (_ssl.pyd, _ctypes.pyd, …) live under DLLs/.
-    dlls_src = tp.windows_dlls_dir
-    if dlls_src.is_dir():
-        shutil.copytree(
-            dlls_src,
-            dest_dir / "python" / "DLLs",
-            dirs_exist_ok=True,
-        )
-        n = sum(1 for _ in dlls_src.iterdir())
-        print(f"         DLLs/    : {n} extension modules")
 
 
 def _patch_rpath_linux(binary: Path, rpath: str) -> None:
@@ -275,76 +283,65 @@ def _patch_rpath_linux(binary: Path, rpath: str) -> None:
         )
         print(f"         RPATH set to: {rpath}")
     except FileNotFoundError:
-        print(
-            "  WARNING: patchelf not found — RPATH not patched.\n"
-            "  The binary will only run if LD_LIBRARY_PATH includes python/lib/.\n"
-            "  Install patchelf:  pacman -S patchelf  or  apt install patchelf",
-            file=sys.stderr,
+        sys.exit(
+            "ERROR: patchelf not found but required for Linux dist.\n"
+            "Install patchelf:  pacman -S patchelf  /  apt install patchelf"
         )
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"patchelf failed: {e}") from e
 
 
-# ── Python stdlib copy ─────────────────────────────────────────────────────────
+# ── Sealed artifact installation ─────────────────────────────────────────────
 
-def copy_stdlib(tp: TargetPython, dest_python: Path) -> None:
-    """Copy the target Python stdlib into the layout the target interpreter expects."""
-    stdlib_src = tp.stdlib_dir
-    if not stdlib_src.is_dir():
-        raise RuntimeError(f"stdlib not found at {stdlib_src}")
-
-    if tp.target_platform == "windows":
-        stdlib_dest = dest_python / "Lib"
-        label = "Lib/"
-    else:
-        stdlib_dest = dest_python / "lib" / f"python{tp.version_short}"
-        label = f"python{tp.version_short}/"
-    stdlib_dest.mkdir(parents=True, exist_ok=True)
-
-    copied = 0
-    for item in stdlib_src.iterdir():
-        if item.name in STDLIB_EXCLUDES:
-            continue
-        dest = stdlib_dest / item.name
-        if item.is_dir():
-            shutil.copytree(
-                item, dest,
-                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
-                dirs_exist_ok=True,
-            )
-        else:
-            shutil.copy2(item, dest)
-        copied += 1
-
-    size_mb = sum(f.stat().st_size for f in stdlib_dest.rglob("*") if f.is_file()) // (1024 * 1024)
-    print(f"         stdlib: {label} ({size_mb} MB, {copied} top-level entries)")
-
-
-# ── Game bundle ────────────────────────────────────────────────────────────────
-
-def create_bundle(game_dir: Path, dest_dir: Path) -> Path:
-    """Zip game/**/*.py into dest_dir/game.bundle.
-
-    Paths inside the zip are relative to game_dir's parent so that the module
-    hierarchy (e.g. game.scripts.main) is preserved when the zip is on sys.path
-    via Python's zipimport machinery.
+def install_sealed_artifacts(
+    bundle_dir: Path,
+    dest_dir: Path,
+    tp: TargetPython,
+) -> None:
+    """Install the pre-built sealed artifacts at the exact paths
+    `release_seal::verify` checks. Any layout drift here would cause a
+    post-install `SealError::Io`/`*Mismatch` that looks like tampering.
     """
-    bundle_path = dest_dir / "game.bundle"
-    game_parent = game_dir.parent
-
-    with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for py_file in sorted(game_dir.rglob("*.py")):
-            if "__pycache__" in py_file.parts:
-                continue
-            arcname = py_file.relative_to(game_parent)
-            zf.write(py_file, arcname)
-
-    size_kb = bundle_path.stat().st_size // 1024
+    # 1. game.bundle -> <dest>/game.bundle
+    game_bundle_src = bundle_dir / "game.bundle"
+    if not game_bundle_src.is_file():
+        sys.exit(f"ERROR: game.bundle not found in {bundle_dir} — run scripts/bundle.py first")
+    shutil.copy2(game_bundle_src, dest_dir / "game.bundle")
+    size_kb = game_bundle_src.stat().st_size // 1024
     print(f"         bundle: game.bundle ({size_kb} KB)")
-    return bundle_path
+
+    # 2. pythonXY.zip -> <dest>/python/lib/<name>
+    #    Same path on POSIX and Windows — release_seal::stdlib_zip_path does
+    #    not branch on cfg!(windows).
+    zip_name = tp.zip_name()
+    zip_src = bundle_dir / zip_name
+    if not zip_src.is_file():
+        sys.exit(f"ERROR: stdlib zip not found at {zip_src} — run scripts/bundle.py first")
+    zip_dest = dest_dir / "python" / "lib" / zip_name
+    zip_dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(zip_src, zip_dest)
+    size_kb = zip_src.stat().st_size // 1024
+    print(f"         stdlib: {zip_dest.relative_to(dest_dir)} ({size_kb} KB)")
+
+    # 3. lib-dynload/ -> platform-specific path release_seal.rs scans.
+    dyn_src = bundle_dir / "lib-dynload"
+    if not dyn_src.is_dir():
+        sys.exit(f"ERROR: lib-dynload not found at {dyn_src} — run scripts/bundle.py first")
+    if tp.target_platform == "windows":
+        dyn_dest = dest_dir / "python" / "DLLs"
+    else:
+        dyn_dest = dest_dir / "python" / "lib" / f"python{tp.version_short}" / "lib-dynload"
+    if dyn_dest.exists():
+        shutil.rmtree(dyn_dest)
+    dyn_dest.parent.mkdir(parents=True, exist_ok=True)
+    # symlinks=False dereferences (mirrors bundle.py; sealed tree is already
+    # symlink-free by construction, but staying defensive on the install side).
+    shutil.copytree(dyn_src, dyn_dest, symlinks=False)
+    n = sum(1 for p in dyn_dest.rglob("*") if p.is_file())
+    print(f"         lib-dynload: {dyn_dest.relative_to(dest_dir)} ({n} files)")
 
 
-# ── Game data and project.json ────────────────────────────────────────────────
+# ── Game data and project.json ───────────────────────────────────────────────
 
 def copy_game_data(game_dir: Path, dest_dir: Path) -> None:
     """Mirror non-Python game data to dest_dir/<game-dirname>/.
@@ -385,14 +382,14 @@ def copy_project_json(game_dir: Path, dest_dir: Path) -> dict:
     return config
 
 
-# ── Slugify helper ─────────────────────────────────────────────────────────────
+# ── Slugify helper ───────────────────────────────────────────────────────────
 
 def slugify(name: str) -> str:
     """Turn a game name into a filesystem-safe binary name (strip spaces)."""
     return "".join(c for c in name if c.isalnum() or c in "-_")
 
 
-# ── Main ───────────────────────────────────────────────────────────────────────
+# ── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     args = parse_args()
@@ -409,6 +406,14 @@ def main() -> None:
             f"       Run: python3 scripts/bootstrap_target.py {args.platform} {args.arch}"
         )
     tp = TargetPython(target_python_root, args.platform)
+
+    bundle_dir = Path(args.bundle_dir).resolve()
+    if not bundle_dir.is_dir():
+        sys.exit(
+            f"ERROR: --bundle-dir not found: {bundle_dir}\n"
+            "       Run `scripts/bundle.py` first "
+            "(Makefile's `dist` target handles this)."
+        )
 
     project_json_path = game_dir / "project.json"
     if not project_json_path.exists():
@@ -430,7 +435,7 @@ def main() -> None:
     print()
 
     # ── 1. Locate the release binary ──────────────────────────────────────────
-    print("  [1/6] Locating release binary...")
+    print("  [1/5] Locating release binary...")
     src_binary_name = "rython.exe" if args.platform == "windows" else "rython"
     binary_src = repo_root / "target" / args.rust_triple / "release" / src_binary_name
     if not binary_src.exists():
@@ -446,24 +451,21 @@ def main() -> None:
     if args.platform != "windows":
         dest_binary.chmod(dest_binary.stat().st_mode | 0o111)
 
-    # ── 2. Install target Python runtime ─────────────────────────────────────
-    print("  [2/6] Installing Python runtime...")
+    # ── 2. Install target Python runtime (libpython, vcruntime, RPATH) ───────
+    print("  [2/5] Installing Python runtime...")
     install_runtime(tp, dest_binary, dest_dir)
 
-    # ── 3. Copy Python stdlib ─────────────────────────────────────────────────
-    print("  [3/6] Copying Python stdlib...")
-    copy_stdlib(tp, dest_dir / "python")
+    # ── 3. Install sealed bundle artifacts at release_seal.rs paths ──────────
+    print("  [3/5] Installing sealed bundle artifacts...")
+    install_sealed_artifacts(bundle_dir, dest_dir, tp)
 
-    # ── 4. Create game.bundle ─────────────────────────────────────────────────
-    print("  [4/6] Creating game.bundle...")
-    create_bundle(game_dir, dest_dir)
-
-    # ── 5. Copy project.json and game data ───────────────────────────────────
-    print("  [5/6] Copying project.json and game data...")
+    # ── 4. Copy project.json and game data ───────────────────────────────────
+    print("  [4/5] Copying project.json and game data...")
     copy_project_json(game_dir, dest_dir)
     copy_game_data(game_dir, dest_dir)
 
-    # ── 6. Summary ────────────────────────────────────────────────────────────
+    # ── 5. Summary ───────────────────────────────────────────────────────────
+    print("  [5/5] Summarising...")
     total_mb = sum(f.stat().st_size for f in dest_dir.rglob("*") if f.is_file()) // (1024 * 1024)
     print()
     print(f"Done. Distribution size: {total_mb} MB")

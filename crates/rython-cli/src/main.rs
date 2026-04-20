@@ -1,5 +1,7 @@
 #![deny(warnings)]
 
+mod release_seal;
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -347,6 +349,10 @@ struct App {
     physics_world: Arc<parking_lot::Mutex<rython_physics::PhysicsWorld>>,
     // UI wiring
     ui_manager: Arc<parking_lot::Mutex<UIManager>>,
+    // Startup error captured from `resumed()` — surfaced by `run_windowed`
+    // after the event loop exits, since `ApplicationHandler` methods
+    // return `()` and cannot propagate `Result` directly.
+    init_error: Option<String>,
 }
 
 impl App {
@@ -372,7 +378,17 @@ impl App {
             cursor_pos: (0.0, 0.0),
             physics_world,
             ui_manager,
+            init_error: None,
         }
+    }
+
+    /// Record a fatal init error and ask the event loop to exit.
+    /// The error is retrieved by `run_windowed` after the loop returns.
+    fn fail_init(&mut self, event_loop: &ActiveEventLoop, msg: String) {
+        log::error!("{msg}");
+        eprintln!("error: {msg}");
+        self.init_error = Some(msg);
+        event_loop.exit();
     }
 
     fn tick_and_render(&mut self, event_loop: &ActiveEventLoop) {
@@ -407,15 +423,31 @@ impl App {
         // Physics step
         self.physics_world.lock().sync_step(&self.scene);
 
-        // Input: tick player controller, publish snapshot, and emit input events
+        // Input: tick player controller, publish snapshot, and emit input events.
+        // Mirrors the headless loop's poison recovery so a panicking drainer on
+        // another thread doesn't crash the game on the next frame.
         {
-            let mut pc = self.player_controller.lock().unwrap();
+            let mut pc = match self.player_controller.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
             pc.tick(&self.raw_events);
-            let snapshot = pc.get_snapshot(0).unwrap().clone();
-            let input_events: Vec<InputActionEvent> =
-                std::mem::take(&mut pc.pending_events().lock().unwrap());
+            let snapshot = match pc.get_snapshot(0) {
+                Ok(s) => Some(s.clone()),
+                Err(_) => None,
+            };
+            let events_arc = pc.pending_events();
+            let input_events: Vec<InputActionEvent> = {
+                let mut guard = match events_arc.lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
+                std::mem::take(&mut *guard)
+            };
             drop(pc);
-            set_active_input(snapshot);
+            if let Some(snapshot) = snapshot {
+                set_active_input(snapshot);
+            }
             for ev in input_events {
                 self.scene.emit(
                     &format!("input:{}", ev.action),
@@ -697,23 +729,34 @@ impl ApplicationHandler for App {
                 self.window_config.height,
             ));
 
-        let window = Arc::new(
-            event_loop
-                .create_window(attrs)
-                .expect("failed to create window"),
-        );
+        let window = match event_loop.create_window(attrs) {
+            Ok(w) => Arc::new(w),
+            Err(e) => {
+                self.fail_init(event_loop, format!("failed to create window: {e}"));
+                return;
+            }
+        };
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
 
         // SAFETY: the window Arc keeps the window alive as long as the surface.
-        let surface = instance
-            .create_surface(Arc::clone(&window))
-            .expect("failed to create wgpu surface");
+        let surface = match instance.create_surface(Arc::clone(&window)) {
+            Ok(s) => s,
+            Err(e) => {
+                self.fail_init(event_loop, format!("failed to create wgpu surface: {e}"));
+                return;
+            }
+        };
 
-        let gpu = pollster::block_on(rython_renderer::GpuContext::new_for_surface(
+        let gpu = match pollster::block_on(rython_renderer::GpuContext::new_for_surface(
             instance, &surface, 4,
-        ))
-        .expect("failed to create GPU context");
+        )) {
+            Ok(g) => g,
+            Err(e) => {
+                self.fail_init(event_loop, format!("failed to create GPU context: {e}"));
+                return;
+            }
+        };
 
         let size = window.inner_size();
         let surface_cfg = wgpu::SurfaceConfiguration {
@@ -741,7 +784,9 @@ impl ApplicationHandler for App {
 
         // Boot engine
         if let Some(engine) = self.engine.as_mut() {
-            engine.boot().expect("engine boot failed");
+            if let Err(e) = engine.boot() {
+                self.fail_init(event_loop, format!("engine boot failed: {e}"));
+            }
         }
     }
 
@@ -830,10 +875,13 @@ impl ApplicationHandler for App {
     }
 }
 
-fn run_windowed(engine_config: EngineConfig, scripting_config: ScriptingConfig) {
+fn run_windowed(
+    engine_config: EngineConfig,
+    scripting_config: ScriptingConfig,
+) -> Result<(), String> {
     let (engine, scene, physics_world, ui_manager, player_controller) =
         build_engine(&engine_config, scripting_config);
-    let event_loop = EventLoop::new().expect("failed to create event loop");
+    let event_loop = EventLoop::new().map_err(|e| format!("failed to create event loop: {e}"))?;
     let mut app = App::new(
         engine,
         scene,
@@ -842,7 +890,13 @@ fn run_windowed(engine_config: EngineConfig, scripting_config: ScriptingConfig) 
         ui_manager,
         player_controller,
     );
-    event_loop.run_app(&mut app).expect("event loop error");
+    event_loop
+        .run_app(&mut app)
+        .map_err(|e| format!("event loop error: {e}"))?;
+    if let Some(msg) = app.init_error.take() {
+        return Err(msg);
+    }
+    Ok(())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1080,6 +1134,35 @@ mod tests {
 
 // ── Mode resolution ───────────────────────────────────────────────────────────
 
+/// Error returned by `resolve_mode`. Wraps `SealError` separately so `main`
+/// can map a seal failure to exit code 78 (EX_CONFIG) while other failures
+/// exit with 1.
+enum ResolveError {
+    Seal(release_seal::SealError),
+    Other(String),
+}
+
+impl std::fmt::Display for ResolveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Seal(e) => write!(f, "release-seal verification failed: {e}"),
+            Self::Other(s) => f.write_str(s),
+        }
+    }
+}
+
+impl From<String> for ResolveError {
+    fn from(s: String) -> Self {
+        Self::Other(s)
+    }
+}
+
+impl From<release_seal::SealError> for ResolveError {
+    fn from(e: release_seal::SealError) -> Self {
+        Self::Seal(e)
+    }
+}
+
 /// Resolves whether to run in Dev or Release mode, and sets PYTHONHOME if
 /// a bundled Python runtime is found adjacent to the binary.
 ///
@@ -1088,18 +1171,18 @@ mod tests {
 /// before that point to take effect.
 ///
 /// Priority:
-///   1. `--project <dir>` was given explicitly
-///   2. `project.json` + `python/` exist adjacent to the binary (release dist)
-///   3. Fall back to Dev mode using `--script-dir` / `--entry-point`
-fn resolve_mode(args: &CliArgs) -> Result<(ScriptingConfig, EngineConfig), String> {
+/// 1. `--project <dir>` was given explicitly
+/// 2. `project.json` + `python/` exist adjacent to the binary (release dist)
+/// 3. Fall back to Dev mode using `--script-dir` / `--entry-point`
+fn resolve_mode(args: &CliArgs) -> Result<(ScriptingConfig, EngineConfig), ResolveError> {
     let project_dir: Option<std::path::PathBuf> = if let Some(ref p) = args.project_path {
         Some(std::path::PathBuf::from(p))
     } else {
-        let exe =
-            std::env::current_exe().map_err(|e| format!("could not determine exe path: {e}"))?;
+        let exe = std::env::current_exe()
+            .map_err(|e| ResolveError::Other(format!("could not determine exe path: {e}")))?;
         let exe_dir = exe
             .parent()
-            .ok_or_else(|| "exe has no parent directory".to_string())?;
+            .ok_or_else(|| ResolveError::Other("exe has no parent directory".to_string()))?;
         if exe_dir.join("project.json").exists() && exe_dir.join("python").is_dir() {
             Some(exe_dir.to_path_buf())
         } else {
@@ -1108,25 +1191,118 @@ fn resolve_mode(args: &CliArgs) -> Result<(ScriptingConfig, EngineConfig), Strin
     };
 
     if let Some(proj_dir) = project_dir {
-        let proj_json = std::fs::read_to_string(proj_dir.join("project.json"))
-            .map_err(|e| format!("failed to read project.json: {e}"))?;
-        let project: ProjectConfig = serde_json::from_str(&proj_json)
-            .map_err(|e| format!("failed to parse project.json: {e}"))?;
+        // Verify the on-disk distribution against hashes baked into this
+        // binary at compile time. Runs BEFORE anything touches Python so a
+        // tampered stdlib / bundle / extension tree cannot execute code.
+        let seal = release_seal::verify(&proj_dir)?;
+        log::info!(
+            "release seal verified (libpython {}, bundle {}, stdlib {}, lib-dynload {})",
+            release_seal::short_hex(release_seal::LIBPYTHON_HASH.unwrap_or("")),
+            release_seal::short_hex(release_seal::BUNDLE_HASH.unwrap_or("")),
+            release_seal::short_hex(release_seal::STDLIB_HASH.unwrap_or("")),
+            release_seal::short_hex(release_seal::LIBDYNLOAD_HASH.unwrap_or("")),
+        );
 
-        // Set PYTHONHOME before the GIL is ever acquired. At this point the
-        // process is single-threaded, so set_var is safe.
+        let proj_json = std::fs::read_to_string(proj_dir.join("project.json"))
+            .map_err(|e| ResolveError::Other(format!("failed to read project.json: {e}")))?;
+        let project: ProjectConfig = serde_json::from_str(&proj_json)
+            .map_err(|e| ResolveError::Other(format!("failed to parse project.json: {e}")))?;
+
+        // Set Python environment before the GIL is ever acquired. At this
+        // point the process is single-threaded, so set_var is safe.
+        //
+        // * `PYTHONHOME` pins the interpreter to the sealed distribution tree.
+        // * `PYTHONNOUSERSITE=1` disables `~/.local/lib/pythonX.Y/site-packages`.
+        // * `PYTHONPATH` is *removed*, not set to empty — setting it empty
+        //   inserts CWD into `sys.path` on some platforms.
+        // * `PYTHONDONTWRITEBYTECODE=1` prevents runtime-written `.pyc` files
+        //   from sitting alongside the sealed stdlib zip where they would
+        //   escape all hash coverage.
+        // * `PYTHONSAFEPATH=1` (Python 3.11+) suppresses the implicit prepend
+        //   of CWD / script-dir onto `sys.path`.
+        // * `PYTHONBREAKPOINT=0` disables `breakpoint()` dispatch — otherwise
+        //   a game script calling `breakpoint()` with an attacker-controlled
+        //   environment executes whatever callable the env var names.
+        // * All other PYTHON* startup-shaping vars are cleared so a
+        //   user-controlled environment cannot redirect the interpreter into
+        //   an unexpected startup path.
         let python_home = proj_dir.join("python");
         unsafe {
             std::env::set_var("PYTHONHOME", &python_home);
             std::env::set_var("PYTHONNOUSERSITE", "1");
-            std::env::set_var("PYTHONPATH", "");
+            std::env::set_var("PYTHONDONTWRITEBYTECODE", "1");
+            std::env::set_var("PYTHONSAFEPATH", "1");
+            std::env::set_var("PYTHONBREAKPOINT", "0");
+            std::env::remove_var("PYTHONPATH");
+            std::env::remove_var("PYTHONSTARTUP");
+            std::env::remove_var("PYTHONEXECUTABLE");
+            std::env::remove_var("PYTHONINSPECT");
+            std::env::remove_var("PYTHONDEBUG");
+            std::env::remove_var("PYTHONVERBOSE");
+            std::env::remove_var("PYTHONWARNINGS");
+            std::env::remove_var("PYTHONOPTIMIZE");
+            std::env::remove_var("PYTHONUSERBASE");
+            std::env::remove_var("PYTHONDEVMODE");
+            // Codec / locale / startup-mode levers — any of these can alter
+            // how CPython initializes before user code runs, so an attacker
+            // with pre-launch env control must not be able to set them.
+            std::env::remove_var("PYTHONIOENCODING");
+            std::env::remove_var("PYTHONUTF8");
+            std::env::remove_var("PYTHONCOERCECLOCALE");
+            std::env::remove_var("PYTHONLEGACYWINDOWSFSENCODING");
+            std::env::remove_var("PYTHONLEGACYWINDOWSSTDIO");
+            // Diagnostic / allocator hooks — enable tracers and alternate
+            // allocators that can perturb deterministic startup.
+            std::env::remove_var("PYTHONASYNCIODEBUG");
+            std::env::remove_var("PYTHONTRACEMALLOC");
+            std::env::remove_var("PYTHONMALLOC");
+            std::env::remove_var("PYTHONMALLOCSTATS");
+            std::env::remove_var("PYTHONFAULTHANDLER");
+            std::env::remove_var("PYTHONPROFILEIMPORTTIME");
+            std::env::remove_var("PYTHONHASHSEED");
+            std::env::remove_var("PYTHONPYCACHEPREFIX");
+            std::env::remove_var("PYTHONPLATLIBDIR");
+
+            // Dynamic-linker preload / search-path levers. These affect the
+            // OS loader, not CPython — they were consumed before `main()`
+            // ran, so anything the current process already loaded via
+            // `LD_PRELOAD` or `DYLD_INSERT_LIBRARIES` cannot be undone here.
+            // Clearing them is about forward safety:
+            //   1. Any subprocess the game spawns (file dialogs, loggers,
+            //      `subprocess.run`, etc.) inherits our environment; we
+            //      don't want to propagate attacker-controlled preload.
+            //   2. If we ever re-exec ourselves, the fresh process should
+            //      come up with a clean search path.
+            // The libpython integrity hash (verified before this block) is
+            // what actually gates in-process tampering.
+            #[cfg(unix)]
+            {
+                std::env::remove_var("LD_PRELOAD");
+                std::env::remove_var("LD_AUDIT");
+                std::env::remove_var("LD_LIBRARY_PATH");
+                std::env::remove_var("LD_BIND_NOW");
+                std::env::remove_var("LD_DEBUG");
+                std::env::remove_var("LD_PROFILE");
+                std::env::remove_var("LD_USE_LOAD_BIAS");
+            }
+            #[cfg(target_os = "macos")]
+            {
+                std::env::remove_var("DYLD_INSERT_LIBRARIES");
+                std::env::remove_var("DYLD_LIBRARY_PATH");
+                std::env::remove_var("DYLD_FALLBACK_LIBRARY_PATH");
+                std::env::remove_var("DYLD_FRAMEWORK_PATH");
+                std::env::remove_var("DYLD_FALLBACK_FRAMEWORK_PATH");
+                std::env::remove_var("DYLD_IMAGE_SUFFIX");
+                std::env::remove_var("DYLD_PRINT_LIBRARIES");
+            }
         }
 
-        let bundle_path = proj_dir.join("game.bundle").to_string_lossy().into_owned();
+        // Entry point comes from the compile-time constant (via the seal) —
+        // project.json's `entry_point` is editor-only metadata in release mode.
         Ok((
             ScriptingConfig::Release {
-                bundle_path,
-                entry_point: project.entry_point,
+                bundle_path: seal.bundle_path.to_string_lossy().into_owned(),
+                entry_point: Some(seal.entry_point),
             },
             project.engine_config,
         ))
@@ -1142,7 +1318,8 @@ fn resolve_mode(args: &CliArgs) -> Result<(ScriptingConfig, EngineConfig), Strin
                             .map_err(|e| format!("invalid engine config {p}: {e}"))
                     })
             })
-            .transpose()?
+            .transpose()
+            .map_err(ResolveError::Other)?
             .unwrap_or_default();
         Ok((
             ScriptingConfig::Dev {
@@ -1165,13 +1342,23 @@ fn main() {
         Ok(pair) => pair,
         Err(e) => {
             eprintln!("error: {e}");
-            std::process::exit(1);
+            log::error!("{e}");
+            // EX_CONFIG (78) for seal mismatches — aids monitoring tooling
+            // in distinguishing tampering from run-of-the-mill config errors.
+            let code = if matches!(e, ResolveError::Seal(_)) {
+                78
+            } else {
+                1
+            };
+            std::process::exit(code);
         }
     };
 
     if cli.headless {
         run_headless(engine_config, scripting_config);
-    } else {
-        run_windowed(engine_config, scripting_config);
+    } else if let Err(e) = run_windowed(engine_config, scripting_config) {
+        eprintln!("error: {e}");
+        log::error!("{e}");
+        std::process::exit(1);
     }
 }
