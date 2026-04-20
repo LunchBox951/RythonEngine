@@ -85,16 +85,24 @@ impl PhysicsBridge {
         match hit {
             None => Ok(None),
             Some(h) => {
-                let entity = Py::new(py, EntityPy { id: h.entity.0, scene: None })?;
-                let point = Py::new(
+                let entity = Py::new(
                     py,
-                    Vec3Py::new(h.point[0], h.point[1], h.point[2]),
+                    EntityPy {
+                        id: h.entity.0,
+                        scene: None,
+                    },
                 )?;
-                let normal = Py::new(
+                let point = Py::new(py, Vec3Py::new(h.point[0], h.point[1], h.point[2]))?;
+                let normal = Py::new(py, Vec3Py::new(h.normal[0], h.normal[1], h.normal[2]))?;
+                Ok(Some(Py::new(
                     py,
-                    Vec3Py::new(h.normal[0], h.normal[1], h.normal[2]),
-                )?;
-                Ok(Some(Py::new(py, RayHitPy { entity, point, normal, toi: h.toi })?))
+                    RayHitPy {
+                        entity,
+                        point,
+                        normal,
+                        toi: h.toi,
+                    },
+                )?))
             }
         }
     }
@@ -121,16 +129,24 @@ impl PhysicsBridge {
         match hit {
             None => Ok(None),
             Some(h) => {
-                let entity = Py::new(py, EntityPy { id: h.entity.0, scene: None })?;
-                let point = Py::new(
+                let entity = Py::new(
                     py,
-                    Vec3Py::new(h.point[0], h.point[1], h.point[2]),
+                    EntityPy {
+                        id: h.entity.0,
+                        scene: None,
+                    },
                 )?;
-                let normal = Py::new(
+                let point = Py::new(py, Vec3Py::new(h.point[0], h.point[1], h.point[2]))?;
+                let normal = Py::new(py, Vec3Py::new(h.normal[0], h.normal[1], h.normal[2]))?;
+                Ok(Some(Py::new(
                     py,
-                    Vec3Py::new(h.normal[0], h.normal[1], h.normal[2]),
-                )?;
-                Ok(Some(Py::new(py, RayHitPy { entity, point, normal, toi: h.toi })?))
+                    RayHitPy {
+                        entity,
+                        point,
+                        normal,
+                        toi: h.toi,
+                    },
+                )?))
             }
         }
     }
@@ -146,9 +162,7 @@ impl PhysicsBridge {
     ) -> PyResult<Option<Py<Vec3Py>>> {
         let world = physics_store()
             .ok_or_else(|| PyErr::new::<PyRuntimeError, _>("PhysicsWorld not initialized"))?;
-        let normal = world
-            .lock()
-            .ground_normal(EntityId(entity.id), max_dist);
+        let normal = world.lock().ground_normal(EntityId(entity.id), max_dist);
         match normal {
             None => Ok(None),
             Some(n) => Ok(Some(Py::new(py, Vec3Py::new(n[0], n[1], n[2]))?)),

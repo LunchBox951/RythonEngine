@@ -557,22 +557,14 @@ impl PhysicsWorld {
     ///
     /// `direction` is normalised internally; returns `None` if the direction
     /// vector is near-zero or if no collider is hit.
-    pub fn raycast(
-        &self,
-        origin: [f32; 3],
-        direction: [f32; 3],
-        max_dist: f32,
-    ) -> Option<RayHit> {
+    pub fn raycast(&self, origin: [f32; 3], direction: [f32; 3], max_dist: f32) -> Option<RayHit> {
         let dir_vec = vector![direction[0], direction[1], direction[2]];
         let len = dir_vec.norm();
         if len < f32::EPSILON {
             return None;
         }
         let dir_unit = dir_vec / len;
-        let ray = Ray::new(
-            point![origin[0], origin[1], origin[2]],
-            dir_unit,
-        );
+        let ray = Ray::new(point![origin[0], origin[1], origin[2]], dir_unit);
 
         let (col_handle, intersection) = self.query_pipeline.cast_ray_and_get_normal(
             &self.rigid_body_set,
@@ -2441,9 +2433,7 @@ mod tests {
         let mut w = world_zero_gravity(); // no gravity so it stays at y=1
         w.sync_step(&scene); // registers bodies + updates query pipeline
 
-        let normal = w
-            .ground_normal(e, 2.0)
-            .expect("should detect floor below");
+        let normal = w.ground_normal(e, 2.0).expect("should detect floor below");
         assert!(
             normal[1] > 0.9,
             "normal.y={} expected ~1.0 (upward)",
@@ -2518,9 +2508,11 @@ mod tests {
         // by updating the ECS TransformComponent so that push_transforms picks
         // it up in the next sync_step, then query_pipeline.update bakes the
         // new collider AABB.  This proves step ordering is correct.
-        scene.components.get_mut::<TransformComponent, _>(mover, |t| {
-            t.x = 20.0;
-        });
+        scene
+            .components
+            .get_mut::<TransformComponent, _>(mover, |t| {
+                t.x = 20.0;
+            });
         w.sync_step(&scene); // step 2 — push_transforms, physics step, query pipeline update
 
         // Now the mover is at x=20; the ray should hit it at toi ~25 (closer).
