@@ -45,6 +45,7 @@ use pyo3::types::{PyDict, PyModule, PyString};
 use rython_ecs::Scene;
 use rython_renderer::command::DrawCommand;
 use rython_renderer::SceneSettings;
+use rython_resources::AssetHandle;
 
 // ─── Active scene ─────────────────────────────────────────────────────────────
 
@@ -83,6 +84,40 @@ pub fn get_script_class(name: &str) -> Option<Py<PyAny>> {
 /// redundant `Python::attach` call.
 pub(crate) fn get_script_class_with_gil(py: Python<'_>, name: &str) -> Option<Py<PyAny>> {
     class_registry().lock().get(name).map(|p| p.clone_ref(py))
+}
+
+// ─── Pending mesh registration queue ─────────────────────────────────────────
+
+/// A deferred request to register a user-loaded mesh into the renderer cache.
+///
+/// Pushed by `rython.renderer.register_mesh(id, handle)` and drained by the
+/// CLI render loop each frame.
+pub struct PendingMeshRegistration {
+    pub id: String,
+    pub handle: AssetHandle,
+}
+
+static PENDING_MESH_REGISTRATIONS: OnceLock<Arc<Mutex<Vec<PendingMeshRegistration>>>> =
+    OnceLock::new();
+
+pub(crate) fn pending_mesh_registrations_store(
+) -> &'static Arc<Mutex<Vec<PendingMeshRegistration>>> {
+    PENDING_MESH_REGISTRATIONS.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+}
+
+/// Drain all pending mesh registrations for processing by the CLI loop.
+///
+/// Entries with Ready handles should be uploaded; Pending entries should be
+/// requeued via [`requeue_pending_mesh_registrations`]; Failed entries should
+/// be logged and dropped.
+pub fn drain_pending_mesh_registrations() -> Vec<PendingMeshRegistration> {
+    std::mem::take(&mut pending_mesh_registrations_store().lock())
+}
+
+/// Push registrations that are still Pending back into the queue so they will
+/// be retried on subsequent frames.
+pub fn requeue_pending_mesh_registrations(entries: Vec<PendingMeshRegistration>) {
+    pending_mesh_registrations_store().lock().extend(entries);
 }
 
 // ─── Draw command buffer ──────────────────────────────────────────────────────

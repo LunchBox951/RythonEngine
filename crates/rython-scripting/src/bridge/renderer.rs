@@ -1,7 +1,12 @@
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use rython_renderer::command::{Color, DrawCommand, DrawText};
 
-use super::{draw_commands_store, scene_settings_store};
+use super::{
+    draw_commands_store, pending_mesh_registrations_store, scene_settings_store,
+    PendingMeshRegistration,
+};
+use crate::bridge::resources::AssetHandlePy;
 
 // ─── Renderer bridge ──────────────────────────────────────────────────────────
 
@@ -132,6 +137,42 @@ impl RendererBridge {
     /// Set the PCF sample count: 1 = no filtering, ≥4 = 3×3 kernel. Default: 4.
     fn set_shadow_pcf(&self, samples: u32) {
         scene_settings_store().lock().shadow.pcf_samples = samples;
+    }
+
+    /// Register a loaded mesh handle into the renderer's mesh cache.
+    ///
+    /// `mesh_id` must be non-empty and must not be one of the built-in ids
+    /// `"cube"` or `"sphere"` — those are pre-uploaded by the engine and
+    /// cannot be overwritten.
+    ///
+    /// The registration is **lazy**: the handle is pushed into a pending queue
+    /// and the upload happens in the CLI render loop once the handle transitions
+    /// to `Ready`.  If the handle is still `Pending` at drain time it is
+    /// requeued for the next frame.  If it is `Failed` it is dropped with a
+    /// warning.
+    ///
+    /// # Errors
+    /// Raises `ValueError` if `mesh_id` is empty or is a reserved built-in id.
+    fn register_mesh(&self, mesh_id: &str, handle: &AssetHandlePy) -> PyResult<()> {
+        if mesh_id.is_empty() {
+            return Err(PyErr::new::<PyValueError, _>(
+                "register_mesh: mesh_id must not be empty",
+            ));
+        }
+        const RESERVED: &[&str] = &["cube", "sphere"];
+        if RESERVED.contains(&mesh_id) {
+            return Err(PyErr::new::<PyValueError, _>(format!(
+                "register_mesh: '{}' is a reserved built-in mesh id and cannot be overwritten",
+                mesh_id
+            )));
+        }
+        pending_mesh_registrations_store()
+            .lock()
+            .push(PendingMeshRegistration {
+                id: mesh_id.to_string(),
+                handle: handle.clone_inner(),
+            });
+        Ok(())
     }
 
     fn __repr__(&self) -> String {

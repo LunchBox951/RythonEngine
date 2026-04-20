@@ -19,13 +19,14 @@ use rython_engine::{Engine, EngineBuilder};
 use rython_input::{AxisBinding, ButtonBinding, InputActionEvent, InputMap, PlayerController};
 use rython_physics::PhysicsModule;
 use rython_renderer::{Camera, RendererConfig, RendererState};
-use rython_resources::ResourceManager;
+use rython_resources::{AssetData, HandleState, ResourceManager};
 use rython_scripting::{
-    drain_draw_commands, drain_ui_draw_commands, flush_python_bg_completions,
-    flush_python_bg_tasks, flush_python_par_tasks, flush_python_seq_tasks,
-    flush_recurring_callbacks, flush_timers, get_scene_settings, reset_quit_requested,
-    set_active_audio, set_active_input, set_active_physics, set_active_ui, set_elapsed_secs,
-    was_quit_requested, ScriptingConfig, ScriptingModule,
+    drain_draw_commands, drain_pending_mesh_registrations, drain_ui_draw_commands,
+    flush_python_bg_completions, flush_python_bg_tasks, flush_python_par_tasks,
+    flush_python_seq_tasks, flush_recurring_callbacks, flush_timers, get_scene_settings,
+    requeue_pending_mesh_registrations, reset_quit_requested, set_active_audio, set_active_input,
+    set_active_physics, set_active_resources, set_active_ui, set_elapsed_secs, was_quit_requested,
+    PendingMeshRegistration, ScriptingConfig, ScriptingModule,
 };
 use rython_ui::{Theme, UIManager};
 use rython_window::{KeyCode, MouseButton, RawInputEvent, WindowModule};
@@ -177,6 +178,7 @@ type EngineWithShared = (
     Arc<parking_lot::Mutex<rython_physics::PhysicsWorld>>,
     Arc<parking_lot::Mutex<UIManager>>,
     Arc<std::sync::Mutex<PlayerController>>,
+    Arc<ResourceManager>,
 );
 
 fn build_engine(
@@ -239,6 +241,12 @@ fn build_engine(
     pc.register_map(default_map);
     let player_controller = Arc::new(std::sync::Mutex::new(pc));
 
+    // Construct a single Arc<ResourceManager> shared between:
+    //   - the scripting bridge (so Python handles resolve against the same cache)
+    //   - the engine module list (for Module lifecycle registration)
+    let resource_manager = Arc::new(ResourceManager::new(Default::default()));
+    set_active_resources(Arc::clone(&resource_manager));
+
     let engine = EngineBuilder::new()
         .with_config(engine_config.clone())
         .with_scene(Arc::clone(&scene))
@@ -252,13 +260,13 @@ fn build_engine(
         .build()
         .expect("failed to build engine");
 
-    (engine, scene, physics_world, ui_manager, player_controller)
+    (engine, scene, physics_world, ui_manager, player_controller, resource_manager)
 }
 
 // ── Headless mode ─────────────────────────────────────────────────────────────
 
 fn run_headless(engine_config: EngineConfig, scripting_config: ScriptingConfig) {
-    let (mut engine, scene, physics_world, _ui_manager, player_controller) =
+    let (mut engine, scene, physics_world, _ui_manager, player_controller, resource_manager) =
         build_engine(&engine_config, scripting_config);
     if let Err(e) = engine.boot() {
         eprintln!("engine boot failed: {e}");
@@ -315,6 +323,21 @@ fn run_headless(engine_config: EngineConfig, scripting_config: ScriptingConfig) 
                 );
             }
         }
+        // Poll asset completions so handles transition Pending → Ready / Failed.
+        resource_manager.poll_completions();
+
+        // Drain pending mesh registration queue. In headless mode there is no
+        // GPU renderer, so we drain and discard all entries (Ready, Pending, and
+        // Failed alike) to keep the queue from growing unboundedly.  Pending
+        // entries would otherwise accumulate every frame with no path to upload.
+        let pending = drain_pending_mesh_registrations();
+        for entry in pending {
+            log::debug!(
+                "headless: skipping mesh upload for '{}' (no renderer)",
+                entry.id
+            );
+        }
+
         // Drain any draw commands emitted by Python scripts / UI code so the
         // static command queues don't grow unboundedly in headless mode.
         // Results are dropped — headless has no renderer to consume them.
@@ -349,6 +372,8 @@ struct App {
     physics_world: Arc<parking_lot::Mutex<rython_physics::PhysicsWorld>>,
     // UI wiring
     ui_manager: Arc<parking_lot::Mutex<UIManager>>,
+    // Resource manager — shared with the scripting bridge; poll each frame
+    resource_manager: Arc<ResourceManager>,
     // Startup error captured from `resumed()` — surfaced by `run_windowed`
     // after the event loop exits, since `ApplicationHandler` methods
     // return `()` and cannot propagate `Result` directly.
@@ -363,6 +388,7 @@ impl App {
         physics_world: Arc<parking_lot::Mutex<rython_physics::PhysicsWorld>>,
         ui_manager: Arc<parking_lot::Mutex<UIManager>>,
         player_controller: Arc<std::sync::Mutex<PlayerController>>,
+        resource_manager: Arc<ResourceManager>,
     ) -> Self {
         Self {
             engine: Some(engine),
@@ -378,6 +404,7 @@ impl App {
             cursor_pos: (0.0, 0.0),
             physics_world,
             ui_manager,
+            resource_manager,
             init_error: None,
         }
     }
@@ -484,6 +511,47 @@ impl App {
 
         // Compute UI layout so abs positions are current before drawing
         self.ui_manager.lock().compute_layout();
+
+        // Poll asset completions so handles transition Pending → Ready / Failed.
+        self.resource_manager.poll_completions();
+
+        // Drain pending mesh registration queue and upload Ready entries.
+        {
+            let pending = drain_pending_mesh_registrations();
+            let mut still_pending: Vec<PendingMeshRegistration> = Vec::new();
+            for entry in pending {
+                match entry.handle.state() {
+                    HandleState::Ready => {
+                        if let Some(data) = entry.handle.get_data() {
+                            if let AssetData::Mesh(mesh) = data.as_ref() {
+                                renderer.upload_mesh(
+                                    &entry.id,
+                                    bytemuck::cast_slice(&mesh.vertices),
+                                    &mesh.indices,
+                                );
+                            } else {
+                                log::warn!(
+                                    "register_mesh: handle for '{}' is Ready but not a mesh — dropped",
+                                    entry.id
+                                );
+                            }
+                        }
+                    }
+                    HandleState::Pending => {
+                        still_pending.push(entry);
+                    }
+                    HandleState::Failed => {
+                        log::warn!(
+                            "register_mesh: handle for '{}' failed to load — dropped",
+                            entry.id
+                        );
+                    }
+                }
+            }
+            if !still_pending.is_empty() {
+                requeue_pending_mesh_registrations(still_pending);
+            }
+        }
 
         // Drain script draw commands (from renderer bridge) and UI draw commands
         let script_cmds = drain_draw_commands();
@@ -882,7 +950,7 @@ fn run_windowed(
     engine_config: EngineConfig,
     scripting_config: ScriptingConfig,
 ) -> Result<(), String> {
-    let (engine, scene, physics_world, ui_manager, player_controller) =
+    let (engine, scene, physics_world, ui_manager, player_controller, resource_manager) =
         build_engine(&engine_config, scripting_config);
     let event_loop = EventLoop::new().map_err(|e| format!("failed to create event loop: {e}"))?;
     let mut app = App::new(
@@ -892,6 +960,7 @@ fn run_windowed(
         physics_world,
         ui_manager,
         player_controller,
+        resource_manager,
     );
     event_loop
         .run_app(&mut app)

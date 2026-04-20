@@ -4,6 +4,8 @@ Pure-Python type stub for the rython RendererBridge.
 
 from __future__ import annotations
 
+from rython._resources import AssetHandle
+
 
 class RendererBridge:
     """
@@ -77,6 +79,30 @@ class RendererBridge:
 
     def set_shadow_pcf(self, samples: int) -> None:
         """Set PCF sample count: 1 = no filtering, >= 4 = 3x3 kernel. Default: 4."""
+        raise NotImplementedError
+
+    def register_mesh(self, mesh_id: str, handle: AssetHandle) -> None:
+        """Register a loaded mesh handle into the renderer's mesh cache.
+
+        The upload is **lazy**: the handle is pushed into a pending queue and the
+        actual GPU upload happens once the handle transitions to ``Ready``.  If
+        the handle is still ``Pending`` at drain time it is automatically requeued
+        for the next frame.  If it has ``Failed`` it is dropped with a warning.
+
+        After a successful upload the mesh can be referenced by ``mesh_id`` in
+        draw calls and spawned entities.
+
+        Built-in ids ``"cube"`` and ``"sphere"`` are reserved and cannot be
+        overwritten — passing either raises ``ValueError``.
+
+        Args:
+            mesh_id: Unique identifier string for the mesh.  Must be non-empty
+                and must not be ``"cube"`` or ``"sphere"``.
+            handle: An ``AssetHandle`` returned by ``rython.resources.load_mesh()``.
+
+        Raises:
+            ValueError: If ``mesh_id`` is empty or is a reserved built-in id.
+        """
         raise NotImplementedError
 
     def __repr__(self) -> str:

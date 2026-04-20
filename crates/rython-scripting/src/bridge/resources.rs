@@ -20,7 +20,14 @@ pub fn set_active_resources(manager: Arc<ResourceManager>) {
 
 #[pyclass(name = "AssetHandle")]
 pub struct AssetHandlePy {
-    inner: AssetHandle,
+    pub(crate) inner: AssetHandle,
+}
+
+impl AssetHandlePy {
+    /// Clone the underlying `AssetHandle` for use in the pending-registration queue.
+    pub fn clone_inner(&self) -> AssetHandle {
+        self.inner.clone()
+    }
 }
 
 #[pymethods]

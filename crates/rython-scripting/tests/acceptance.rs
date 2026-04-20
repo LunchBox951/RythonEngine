@@ -2370,3 +2370,190 @@ hid_56 = rython.scene.subscribe('self_remove_56', self_removing_handler_56)
         );
     });
 }
+
+// ─── ENG-MESH-CACHE-REG: register_mesh tests ─────────────────────────────────
+
+use rython_scripting::{drain_pending_mesh_registrations, requeue_pending_mesh_registrations};
+
+/// ENG-MESH-CACHE-REG-01: register_mesh queues a (id, handle) entry.
+#[test]
+fn test_register_mesh_queues_request() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        // Obtain an AssetHandlePy from the Python side (will be Pending — that's fine).
+        py.run(
+            c"
+import rython
+handle = rython.resources.load_mesh('/nonexistent/mesh.glb')
+rython.renderer.register_mesh('my_id', handle)
+",
+            None,
+            None,
+        )
+        .expect("register_mesh call must not raise");
+
+        // Drain and verify an entry was queued with the correct id.
+        let entries = drain_pending_mesh_registrations();
+        assert_eq!(entries.len(), 1, "expected exactly one pending registration");
+        assert_eq!(entries[0].id, "my_id");
+        // Drain to leave queue empty for subsequent tests.
+        let _ = drain_pending_mesh_registrations();
+    });
+}
+
+/// ENG-MESH-CACHE-REG-02: register_mesh raises ValueError for an empty id.
+#[test]
+fn test_register_mesh_rejects_empty_id() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+handle = rython.resources.load_mesh('/nonexistent/mesh.glb')
+raised = False
+try:
+    rython.renderer.register_mesh('', handle)
+except ValueError:
+    raised = True
+assert raised, 'expected ValueError for empty mesh_id'
+",
+            None,
+            None,
+        )
+        .expect("empty-id rejection test must not crash the interpreter");
+
+        // Queue must still be empty: the rejection must not push anything.
+        let entries = drain_pending_mesh_registrations();
+        assert!(entries.is_empty(), "rejected call must not enqueue anything");
+    });
+}
+
+/// ENG-MESH-CACHE-REG-03: register_mesh raises ValueError for the reserved id "cube".
+#[test]
+fn test_register_mesh_rejects_reserved_cube() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+handle = rython.resources.load_mesh('/nonexistent/mesh.glb')
+raised = False
+try:
+    rython.renderer.register_mesh('cube', handle)
+except ValueError:
+    raised = True
+assert raised, 'expected ValueError for reserved id cube'
+",
+            None,
+            None,
+        )
+        .expect("reserved-id cube rejection test must not crash the interpreter");
+
+        let entries = drain_pending_mesh_registrations();
+        assert!(entries.is_empty(), "rejected call must not enqueue anything");
+    });
+}
+
+/// ENG-MESH-CACHE-REG-04: register_mesh raises ValueError for the reserved id "sphere".
+#[test]
+fn test_register_mesh_rejects_reserved_sphere() {
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+handle = rython.resources.load_mesh('/nonexistent/mesh.glb')
+raised = False
+try:
+    rython.renderer.register_mesh('sphere', handle)
+except ValueError:
+    raised = True
+assert raised, 'expected ValueError for reserved id sphere'
+",
+            None,
+            None,
+        )
+        .expect("reserved-id sphere rejection test must not crash the interpreter");
+
+        let entries = drain_pending_mesh_registrations();
+        assert!(entries.is_empty(), "rejected call must not enqueue anything");
+    });
+}
+
+/// ENG-MESH-CACHE-REG-05: end-to-end Ready-handle drain returns the correct entry.
+///
+/// This test verifies the drain path for a Ready handle.  It does NOT perform a
+/// real GPU upload because constructing a `RendererState` requires a wgpu GPU
+/// context that is unavailable in CI.  Instead it asserts that
+/// `drain_pending_mesh_registrations` returns the entry with `HandleState::Ready`
+/// after the resource manager has polled the completion, which is the key
+/// pre-condition for the upload path in `tick_and_render`.
+///
+/// Marked `#[ignore]` because it requires a real mesh file on disk and a full
+/// resource-manager poll cycle that is not available in the unit-test environment.
+#[test]
+#[ignore = "requires a real mesh file on disk and resource manager poll cycle"]
+fn test_register_mesh_ready_handle_uploads_end_to_end() {
+    use rython_resources::{HandleState, ResourceManager, ResourceManagerConfig};
+
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    let rm = Arc::new(ResourceManager::new(ResourceManagerConfig {
+        streaming_budget_mb: 64.0,
+    }));
+    rython_scripting::set_active_resources(Arc::clone(&rm));
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+handle = rython.resources.load_mesh('tests/fixtures/cube.glb')
+rython.renderer.register_mesh('test_id', handle)
+",
+            None,
+            None,
+        )
+        .expect("register_mesh");
+    });
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2000);
+    loop {
+        rm.poll_completions();
+        let entries = drain_pending_mesh_registrations();
+        let mut still_pending = Vec::new();
+        let mut found_ready = false;
+        for entry in entries {
+            match entry.handle.state() {
+                HandleState::Ready => {
+                    assert_eq!(entry.id, "test_id");
+                    found_ready = true;
+                }
+                HandleState::Pending => still_pending.push(entry),
+                HandleState::Failed => panic!("handle for test_id failed to load"),
+            }
+        }
+        requeue_pending_mesh_registrations(still_pending);
+        if found_ready {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "handle did not become Ready within 2 s"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
