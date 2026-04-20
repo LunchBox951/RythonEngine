@@ -6,6 +6,7 @@ pub mod camera;
 pub mod engine;
 pub mod entity;
 pub mod input;
+pub mod input_map;
 pub mod job_handle;
 pub mod physics;
 pub mod renderer;
@@ -22,6 +23,7 @@ pub use audio::set_active_audio;
 pub use camera::CameraPy;
 pub use entity::EntityPy;
 pub use input::set_active_input;
+pub use input_map::{dispatch_input_events, set_active_player_controller};
 pub use job_handle::JobHandlePy;
 pub use physics::set_active_physics;
 pub use resources::set_active_resources;
@@ -435,6 +437,7 @@ pub fn ensure_rython_module(py: Python<'_>, scene: Arc<Scene>) -> PyResult<()> {
 
     let inp = Py::new(py, input::InputBridge {})?;
     rython.add("input", inp)?;
+    input_map::register(py, &rython)?;
 
     let aud = Py::new(py, audio::AudioBridge {})?;
     rython.add("audio", aud)?;

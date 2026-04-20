@@ -6,11 +6,12 @@ pub mod config;
 pub mod system;
 
 pub use bridge::{
-    call_entry_point, clear_recurring_callbacks, drain_draw_commands, drain_ui_draw_commands,
-    ensure_rython_module, flush_python_bg_completions, flush_python_bg_tasks,
-    flush_python_par_tasks, flush_python_seq_tasks, flush_recurring_callbacks, flush_timers,
-    get_scene_settings, get_script_class, load_bundle, register_script_class, reset_quit_requested,
-    set_active_audio, set_active_input, set_active_physics, set_active_resources, set_active_scene,
+    call_entry_point, clear_recurring_callbacks, dispatch_input_events, drain_draw_commands,
+    drain_ui_draw_commands, ensure_rython_module, flush_python_bg_completions,
+    flush_python_bg_tasks, flush_python_par_tasks, flush_python_seq_tasks,
+    flush_recurring_callbacks, flush_timers, get_scene_settings, get_script_class, load_bundle,
+    register_script_class, reset_quit_requested, set_active_audio, set_active_input,
+    set_active_physics, set_active_player_controller, set_active_resources, set_active_scene,
     set_active_ui, set_elapsed_secs, was_quit_requested, CameraPy, EntityPy, JobHandlePy,
     TransformPy, Vec3Py,
 };

@@ -2,7 +2,9 @@ use std::sync::{Arc, OnceLock};
 
 use parking_lot::Mutex;
 use pyo3::prelude::*;
-use rython_input::InputSnapshot;
+use rython_input::{ActionValue, InputSnapshot};
+
+use crate::bridge::input_map::ActionValuePy;
 
 static INPUT_SNAPSHOT: OnceLock<Arc<Mutex<InputSnapshot>>> = OnceLock::new();
 
@@ -24,6 +26,25 @@ pub struct InputBridge {}
 impl InputBridge {
     fn axis(&self, action: &str) -> f64 {
         input_store().lock().axis(action) as f64
+    }
+
+    fn axis2(&self, action: &str) -> (f32, f32) {
+        let [x, y] = input_store().lock().axis2(action);
+        (x, y)
+    }
+
+    fn axis3(&self, action: &str) -> (f32, f32, f32) {
+        let [x, y, z] = input_store().lock().axis3(action);
+        (x, y, z)
+    }
+
+    /// Returns the typed `ActionValue` for the action, or `None` if unbound.
+    fn value(&self, py: Python<'_>, action: &str) -> PyResult<Option<Py<ActionValuePy>>> {
+        let v: Option<ActionValue> = input_store().lock().value(action);
+        match v {
+            Some(val) => Ok(Some(Py::new(py, ActionValuePy::new(val))?)),
+            None => Ok(None),
+        }
     }
 
     fn pressed(&self, action: &str) -> bool {
