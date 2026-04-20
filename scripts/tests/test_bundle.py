@@ -75,13 +75,60 @@ def test_sha256_file_matches_hashlib():
 
 
 def test_stdlib_zip_name_format():
-    name = bundle.stdlib_zip_name()
-    # e.g. "python313.zip"
-    assert name.startswith("python"), name
-    assert name.endswith(".zip"), name
+    name = bundle.stdlib_zip_name("3.13")
+    assert name == "python313.zip", name
     # No dot between version digits
     stem = name[len("python"):-len(".zip")]
     assert stem.isdigit(), f"expected digits only between 'python' and '.zip', got {stem!r}"
+
+
+# ── TargetPython (vendored tree discovery) ───────────────────────────────────
+
+def _make_fake_linux_vendor(root: Path, version_short: str) -> None:
+    """Build a minimal vendored python-build-standalone layout for linux."""
+    (root / "lib" / f"python{version_short}").mkdir(parents=True)
+    (root / "lib" / f"python{version_short}" / "lib-dynload").mkdir()
+    # Real (non-symlink) libpython file — what `libpython_path` should resolve.
+    (root / "lib" / f"libpython{version_short}.so.1.0").write_bytes(b"\x7fELF_fake")
+
+
+def test_target_python_linux_discovery():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "python"
+        _make_fake_linux_vendor(root, "3.13")
+        tp = bundle.TargetPython(root, "linux")
+        assert tp.version_short == "3.13"
+        assert tp.zip_name() == "python313.zip"
+        assert tp.libpython_soname() == "libpython3.13.so.1.0"
+        assert tp.lib_dynload_dir == root / "lib" / "python3.13" / "lib-dynload"
+        assert tp.stdlib_dir == root / "lib" / "python3.13"
+
+
+def test_target_python_windows_discovery():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "python"
+        (root / "Lib").mkdir(parents=True)
+        (root / "DLLs").mkdir()
+        (root / "python313.dll").write_bytes(b"MZ_fake")
+        tp = bundle.TargetPython(root, "windows")
+        assert tp.version_short == "3.13"
+        assert tp.zip_name() == "python313.zip"
+        assert tp.libpython_soname() == "python313.dll"
+        assert tp.lib_dynload_dir == root / "DLLs"
+        assert tp.stdlib_dir == root / "Lib"
+
+
+def test_target_python_missing_version_errors():
+    """Missing the marker file should abort, not silently pick a bogus version."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "python"
+        root.mkdir()
+        raised = False
+        try:
+            bundle.TargetPython(root, "linux")
+        except SystemExit:
+            raised = True
+        assert raised, "TargetPython must abort when the vendored tree is malformed"
 
 
 def test_build_game_bundle_produces_pyc_entries():
@@ -303,6 +350,12 @@ def main() -> int:
          test_assert_no_symlinks_rejects_file_symlink),
         ("test_assert_no_symlinks_rejects_directory_symlink",
          test_assert_no_symlinks_rejects_directory_symlink),
+        ("test_target_python_linux_discovery",
+         test_target_python_linux_discovery),
+        ("test_target_python_windows_discovery",
+         test_target_python_windows_discovery),
+        ("test_target_python_missing_version_errors",
+         test_target_python_missing_version_errors),
     ]
     failed = 0
     for name, fn in tests:

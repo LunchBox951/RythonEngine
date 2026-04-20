@@ -45,18 +45,36 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     needs: fmt
+    # macOS is intentionally excluded: timing-sensitive scheduler tests
+    # (t_sched_05, t_sched_06) flake on shared GitHub macOS runners. Local
+    # macOS builds are still supported via `make dist PLATFORM=macos` on a
+    # macOS host (use at your own risk — no CI coverage).
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install system dependencies
+      # Pin the same Python version on every runner so PyO3's auto-discovery
+      # ($PYO3_PYTHON below) lands on a known interpreter rather than whatever
+      # the runner image happens to ship.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Export PYO3_PYTHON
+        shell: bash
+        run: echo "PYO3_PYTHON=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
+      - name: Install system dependencies (Ubuntu)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update -q
           sudo apt-get install -y libasound2-dev libwayland-dev libxkbcommon-dev libudev-dev python3-dev xvfb
       - name: Run Rust tests
+        if: runner.os == 'Linux'
         # xvfb-run provides a virtual framebuffer so tests that touch winit/wgpu
         # window creation don't panic on a headless runner.
         #
@@ -64,3 +82,6 @@ jobs:
         # binary with audio and video hardware unavailable on GitHub-hosted runners.
         # Run `make test-python` locally for full Python test coverage.
         run: xvfb-run --auto-servernum cargo test --workspace
+      - name: Run Rust tests
+        if: runner.os != 'Linux'
+        run: cargo test --workspace

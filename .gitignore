@@ -32,7 +32,12 @@ saves/
 Thumbs.db
 
 # Claude worktrees
+.claude/skills/*
+.claude/commands/*
 .claude/worktrees/*
 
 # Git worktrees
 .worktrees/
+
+# Vendored target Python (python-build-standalone)
+vendor/

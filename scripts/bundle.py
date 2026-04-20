@@ -15,10 +15,17 @@ against the deployed distribution and refuses to boot on any mismatch.
 
 The tree-hash algorithm is byte-identical to
 `crates/rython-cli/src/release_seal.rs::tree_hash`. A shared test vector
-(`tests/python/test_bundle.py::test_tree_hash_vector`) pins this contract.
+(`scripts/tests/test_bundle.py::test_tree_hash_vector`) pins this contract.
+
+All inputs (stdlib, lib-dynload, libpython) are sourced from a vendored
+python-build-standalone tree passed via `--target-python`. No host-side
+`sysconfig` is consulted — sealing a cross-compiled distribution from one
+host requires reading the target's bytes, not the host's.
 
 Usage:
-    python3 scripts/bundle.py --game game --out-dir target/bundles
+    python3 scripts/bundle.py \\
+        --platform linux --target-python vendor/python/linux-x86_64/python \\
+        --game game --out-dir target/bundles/linux-x86_64
 
 Implementation notes
 --------------------
@@ -27,8 +34,9 @@ Implementation notes
   files whose validity is keyed off the source content hash, not mtime.
   Without this, extraction timestamp drift would invalidate every
   bytecode file on the shipped machine.
-* Stdlib .pyc files live in a top-level `pythonX.Y/` subdir inside the
-  stdlib zip, matching CPython's `zipimport` convention.
+* Stdlib .pyc files live at the zip root (e.g. `encodings/__init__.pyc`),
+  matching CPython's zipimport convention. Nesting under a version subdir
+  causes "No module named 'encodings'" at startup.
 * Binary extensions (`.so`, `.pyd`) cannot live inside a zip — CPython's
   dynamic loader needs them on-disk, so they ship under `lib-dynload/`
   and are hashed as a directory tree.
@@ -41,9 +49,10 @@ import hashlib
 import json
 import os
 import py_compile
+import re
 import shutil
+import subprocess
 import sys
-import sysconfig
 import tempfile
 import zipfile
 from pathlib import Path
@@ -58,7 +67,105 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--game", required=True, help="Path to game directory (e.g. game/)")
     p.add_argument("--out-dir", default="target/bundles",
                    help="Where to write bundle artifacts + hashes.env")
+    p.add_argument("--platform", required=True, choices=["linux", "windows", "macos"],
+                   help="Target platform — determines stdlib/lib-dynload/libpython layout")
+    p.add_argument("--target-python", required=True,
+                   help="Path to vendored python-build-standalone install tree "
+                        "(e.g. vendor/python/linux-x86_64/python). "
+                        "Sealed hashes must reflect what the target binary will see, "
+                        "not the host Python — hence this is required rather than "
+                        "falling back to host sysconfig.")
     return p.parse_args()
+
+
+# ── Target Python discovery ──────────────────────────────────────────────────
+
+class TargetPython:
+    """Describes the vendored python-build-standalone tree for one target.
+
+    Mirrors `scripts/package.py::TargetPython` — the two scripts must agree
+    byte-for-byte on what the stdlib/lib-dynload/libpython look like, or the
+    sealed hashes would not match what package.py ultimately installs.
+    """
+
+    def __init__(self, root: Path, target_platform: str):
+        self.root = root                                  # .../vendor/python/<key>/python
+        self.target_platform = target_platform            # linux|windows|macos
+        self.version_short = self._detect_version()       # e.g. "3.12"
+
+    def _detect_version(self) -> str:
+        if self.target_platform == "windows":
+            # python-build-standalone ships python3XX.dll at the install root.
+            for m in sorted(self.root.glob("python3*.dll")):
+                # Skip the "abi3 shim" python3.dll which has no minor version.
+                mo = re.fullmatch(r"python3(\d+)\.dll", m.name)
+                if mo:
+                    return f"3.{mo.group(1)}"
+            sys.exit(f"ERROR: could not detect Python version in {self.root} "
+                     f"(no python3XX.dll)")
+        # unix
+        for m in sorted(self.root.glob("lib/python3.*")):
+            mo = re.fullmatch(r"python(3\.\d+)", m.name)
+            if mo:
+                return mo.group(1)
+        sys.exit(f"ERROR: could not detect Python version in {self.root} "
+                 f"(no lib/python3.X/)")
+
+    @property
+    def stdlib_dir(self) -> Path:
+        if self.target_platform == "windows":
+            return self.root / "Lib"
+        return self.root / "lib" / f"python{self.version_short}"
+
+    @property
+    def lib_dynload_dir(self) -> Path:
+        if self.target_platform == "windows":
+            return self.root / "DLLs"
+        return self.stdlib_dir / "lib-dynload"
+
+    def zip_name(self) -> str:
+        """`python313.zip` for Python 3.13, etc. — CPython's zipimport name."""
+        return f"python{self.version_short.replace('.', '')}.zip"
+
+    def libpython_path(self) -> Path:
+        """The single libpython file the dynamic linker will resolve.
+
+        Linux: `lib/libpython<X.Y>.so.1.0` (real file, not the unversioned
+        symlink — we hash the real bytes).
+        macOS: `lib/libpython<X.Y>.dylib`.
+        Windows: `python<XY>.dll` at the install root.
+        """
+        if self.target_platform == "windows":
+            p = self.root / f"python{self.version_short.replace('.', '')}.dll"
+            if not p.is_file():
+                sys.exit(f"ERROR: versioned libpython not found at {p}")
+            return p
+        if self.target_platform == "macos":
+            matches = sorted(
+                p for p in (self.root / "lib").glob("libpython*.dylib")
+                if p.is_file() and not p.is_symlink()
+            )
+            if not matches:
+                sys.exit(f"ERROR: no libpython*.dylib in {self.root / 'lib'}")
+            return matches[0]
+        # linux
+        matches = sorted(
+            p for p in (self.root / "lib").glob("libpython*.so*")
+            if p.is_file() and not p.is_symlink()
+        )
+        if not matches:
+            sys.exit(f"ERROR: no libpython*.so* in {self.root / 'lib'}")
+        return matches[0]
+
+    def libpython_soname(self) -> str:
+        """The filename package.py will install the libpython at.
+
+        Must agree with `release_seal.rs::libpython_path` (POSIX:
+        `python/lib/<soname>`, Windows: `<soname>` at dist root). Matching
+        package.py's target filename — not the source filename — because the
+        Rust seal verifies against the deployed name.
+        """
+        return self.libpython_path().name
 
 
 # ── Hashing ──────────────────────────────────────────────────────────────────
@@ -135,18 +242,16 @@ def tree_hash(root: Path) -> str:
     return outer.hexdigest()
 
 
-# ── Python version helpers ───────────────────────────────────────────────────
+# ── Test-vector back-compat helper ───────────────────────────────────────────
 
-def stdlib_zip_name() -> str:
-    """CPython convention: `python313.zip` for Python 3.13, etc."""
-    ver = sysconfig.get_config_var("VERSION") or sysconfig.get_python_version()
-    # VERSION is "3.13"; strip the dot to match CPython's zip archive naming.
-    return f"python{ver.replace('.', '')}.zip"
+def stdlib_zip_name(version_short: str = "3.0") -> str:
+    """`python313.zip` for Python 3.13, etc. Legacy helper kept for tests.
 
-
-def python_xy() -> str:
-    """e.g. '3.13' — matches the top-level directory inside the stdlib zip."""
-    return sysconfig.get_python_version()
+    Production callers go through `TargetPython.zip_name`; this free function
+    is only here so `scripts/tests/test_bundle.py::test_stdlib_zip_name_format`
+    can check the naming convention without constructing a TargetPython.
+    """
+    return f"python{version_short.replace('.', '')}.zip"
 
 
 # ── Game bundle ──────────────────────────────────────────────────────────────
@@ -187,8 +292,8 @@ def build_game_bundle(game_dir: Path, out_path: Path) -> None:
 
 # ── Stdlib zip ───────────────────────────────────────────────────────────────
 
-def build_stdlib_zip(out_path: Path) -> None:
-    """Compile stdlib .py → .pyc and pack at the zip root.
+def build_stdlib_zip(tp: TargetPython, out_path: Path) -> None:
+    """Compile target stdlib .py → .pyc and pack at the zip root.
 
     CPython's default `getpath` logic puts `pythonXY.zip` on `sys.path` and
     looks up modules via `zipimport` at the zip root (e.g. `encodings/__init__.pyc`
@@ -197,8 +302,13 @@ def build_stdlib_zip(out_path: Path) -> None:
     startup.
 
     Excludes test suites, tkinter, site-packages, etc. (see _common).
+    Reads .py sources from the vendored target tree so the hashes cover
+    exactly what the target binary will execute — not whatever the build
+    host happens to have installed.
     """
-    stdlib_src = Path(sysconfig.get_paths()["stdlib"])
+    stdlib_src = tp.stdlib_dir
+    if not stdlib_src.is_dir():
+        sys.exit(f"ERROR: target stdlib not found at {stdlib_src}")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -207,7 +317,8 @@ def build_stdlib_zip(out_path: Path) -> None:
         compiled: list[tuple[Path, str]] = []
 
         for py_file in sorted(stdlib_src.rglob("*.py")):
-            if any(part in STDLIB_EXCLUDES for part in py_file.relative_to(stdlib_src).parts):
+            rel_parts = py_file.relative_to(stdlib_src).parts
+            if any(part in STDLIB_EXCLUDES for part in rel_parts):
                 continue
             rel = py_file.relative_to(stdlib_src)
             arcname = rel.with_suffix(".pyc").as_posix()
@@ -239,8 +350,8 @@ def build_stdlib_zip(out_path: Path) -> None:
 
 # ── lib-dynload / DLLs ───────────────────────────────────────────────────────
 
-def copy_lib_dynload(out_dir: Path) -> Path:
-    """Copy the platform's extension-module directory into out_dir.
+def copy_lib_dynload(tp: TargetPython, out_dir: Path) -> Path:
+    """Copy the target platform's extension-module directory into out_dir.
 
     Returns the directory that was populated (always `<out_dir>/lib-dynload`
     regardless of platform — the Rust side picks the right subdir at runtime
@@ -266,14 +377,9 @@ def copy_lib_dynload(out_dir: Path) -> Path:
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
 
-    if sys.platform.startswith("win"):
-        src = Path(sys.prefix) / "DLLs"
-    else:
-        stdlib_src = Path(sysconfig.get_paths()["stdlib"])
-        src = stdlib_src / "lib-dynload"
-
+    src = tp.lib_dynload_dir
     if not src.is_dir():
-        raise RuntimeError(f"lib-dynload source not found: {src}")
+        sys.exit(f"ERROR: lib-dynload source not found: {src}")
 
     for item in src.iterdir():
         target = dest / item.name
@@ -333,13 +439,12 @@ def assert_no_pth_files(tree: Path, label: str) -> None:
 
 # ── libpython shared object ──────────────────────────────────────────────────
 
-def hash_libpython() -> tuple[str, str]:
-    """Hash the libpython shared object that will be bundled into the release
-    distribution, returning `(hex_digest, soname)`.
+def hash_libpython(tp: TargetPython) -> tuple[str, str]:
+    """Hash the target libpython shared object, returning `(hex_digest, soname)`.
 
     The soname must match exactly what `scripts/package.py` copies into
-    `python/lib/` (POSIX) or the dist root (Windows). Both scripts use the
-    same `sysconfig` probe so their views stay aligned.
+    `python/lib/` (POSIX) or the dist root (Windows). Both scripts use
+    `TargetPython.libpython_soname()` to stay aligned.
 
     The dynamic linker resolves this file before `main()` runs, so a
     tampered libpython with `__attribute__((constructor))` executes code
@@ -347,35 +452,36 @@ def hash_libpython() -> tuple[str, str]:
     defence-in-depth: we cannot prevent the pre-`main()` execution, but we
     can guarantee that a tampered distribution refuses to continue past the
     seal check.
+
+    On Linux, python-build-standalone ships an unstripped libpython;
+    `package.py` strips it before installing. We must reflect that strip in
+    the sealed hash — hash the post-strip bytes here using the same
+    `strip --strip-unneeded` command, on a temporary copy, so the seal
+    matches what ends up on disk. macOS and Windows are shipped as-is
+    (no strip step).
     """
-    if sys.platform.startswith("win"):
-        ver = sysconfig.get_config_var("VERSION") or sysconfig.get_python_version()
-        digits = ver.replace(".", "")
-        soname = f"python{digits}.dll"
-        candidate = Path(sys.prefix) / soname
-        if not candidate.exists():
-            sys.exit(f"FATAL: could not locate libpython for sealing at {candidate}")
-        return sha256_file(candidate), soname
-
-    libdir = sysconfig.get_config_var("LIBDIR") or ""
-    instsoname = sysconfig.get_config_var("INSTSONAME") or ""
-    if libdir and instsoname:
-        candidate = Path(libdir) / instsoname
-        if candidate.exists():
-            # Match package.py:_patch_rpath_linux, which resolves symlinks
-            # before copying: we hash the real versioned file and pin its
-            # soname as the expected filename at the dist path.
-            return sha256_file(candidate.resolve()), instsoname
-
-    # Fallback: scan sys.prefix/lib for libpython*.so*
-    for p in sorted((Path(sys.prefix) / "lib").glob("libpython*.so*")):
-        if p.is_file() and not p.is_symlink():
-            return sha256_file(p), p.name
-
-    sys.exit(
-        "FATAL: could not locate libpython shared object for sealing.\n"
-        "Ensure the Python development libraries are installed."
-    )
+    src = tp.libpython_path()
+    soname = tp.libpython_soname()
+    if tp.target_platform == "linux":
+        with tempfile.TemporaryDirectory() as td:
+            scratch = Path(td) / src.name
+            shutil.copy2(src, scratch)
+            try:
+                subprocess.run(
+                    ["strip", "--strip-unneeded", str(scratch)],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except FileNotFoundError:
+                sys.exit(
+                    "ERROR: `strip` not found on PATH but required to seal a Linux build "
+                    "(package.py strips libpython during install; the sealed hash must "
+                    "reflect the stripped bytes). Install binutils: "
+                    "`apt install binutils` / `pacman -S binutils`."
+                )
+            return sha256_file(scratch), soname
+    return sha256_file(src), soname
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -386,6 +492,14 @@ def main() -> None:
     game_dir = (repo_root / args.game).resolve()
     out_dir = (repo_root / args.out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    target_python_root = Path(args.target_python).resolve()
+    if not target_python_root.is_dir():
+        sys.exit(
+            f"ERROR: target python tree not found at {target_python_root}\n"
+            f"       Run: python3 scripts/bootstrap_target.py {args.platform} <arch>"
+        )
+    tp = TargetPython(target_python_root, args.platform)
 
     if not game_dir.is_dir():
         sys.exit(f"ERROR: game directory not found: {game_dir}")
@@ -399,12 +513,12 @@ def main() -> None:
     if not entry_point:
         sys.exit("ERROR: project.json is missing 'entry_point' — required for sealed release")
 
-    zip_name = stdlib_zip_name()
+    zip_name = tp.zip_name()
 
-    print(f"Bundling game + stdlib for sealed release")
+    print("Bundling game + stdlib for sealed release")
     print(f"  game:    {game_dir}")
+    print(f"  target:  {args.platform} python {tp.version_short}  ({target_python_root})")
     print(f"  out:     {out_dir}")
-    print(f"  python:  {python_xy()}")
 
     print("  [1/4] Compiling game .py → .pyc and zipping...")
     bundle_path = out_dir / "game.bundle"
@@ -412,13 +526,13 @@ def main() -> None:
 
     print(f"  [2/4] Compiling stdlib → {zip_name}...")
     stdlib_path = out_dir / zip_name
-    build_stdlib_zip(stdlib_path)
+    build_stdlib_zip(tp, stdlib_path)
 
     print("  [3/4] Copying lib-dynload extensions...")
-    dynload_dir = copy_lib_dynload(out_dir)
+    dynload_dir = copy_lib_dynload(tp, out_dir)
 
     print("  [4/4] Hashing libpython runtime...")
-    libpython_hash, libpython_soname = hash_libpython()
+    libpython_hash, libpython_soname = hash_libpython(tp)
 
     bundle_hash = sha256_file(bundle_path)
     stdlib_hash = sha256_file(stdlib_path)

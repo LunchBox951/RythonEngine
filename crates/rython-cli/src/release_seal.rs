@@ -504,13 +504,24 @@ mod tests {
     }
 
     // ── End-to-end verify_inner tests ────────────────────────────────────────
+    //
+    // The fixture below models a POSIX-layout sealed dist (lib-dynload under
+    // python/lib/pythonX.Y/). Windows uses python/DLLs/ instead — mirroring
+    // that layout end-to-end is a separate test surface we don't cover here,
+    // so the whole fixture + its verify_inner_* tests are cfg(not(windows)).
+    // The `absent_by_design_paths_layout` test below exercises the Windows
+    // branch of the path logic without needing a full fixture.
 
+    #[cfg(not(windows))]
     const ZIP_NAME: &str = "python313.zip";
+    #[cfg(not(windows))]
     const ENTRY: &str = "game.scripts.main";
+    #[cfg(not(windows))]
     const SONAME: &str = "libpython3.13.so.1.0";
 
     /// Build a minimal sealed-dist layout under `root` and return the four
     /// expected hex digests (bundle, stdlib, libdyn, libpython).
+    #[cfg(not(windows))]
     fn build_fixture(root: &Path) -> (String, String, String, String) {
         let bundle = root.join("game.bundle");
         write(&bundle, b"fake-bundle-bytes");
