@@ -95,6 +95,10 @@ class RendererBridge:
         Built-in ids ``"cube"`` and ``"sphere"`` are reserved and cannot be
         overwritten — passing either raises ``ValueError``.
 
+        In **headless mode** (``--headless``) there is no GPU renderer, so
+        registrations are drained and dropped each frame; Ready registrations
+        are logged at ``warn!`` level so the divergence is visible in CI logs.
+
         Args:
             mesh_id: Unique identifier string for the mesh.  Must be non-empty
                 and must not be ``"cube"`` or ``"sphere"``.

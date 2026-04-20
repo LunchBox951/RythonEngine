@@ -1,19 +1,63 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
+use parking_lot::RwLock;
 use pyo3::prelude::*;
 use rython_resources::{AssetHandle, ResourceManager, ResourceManagerConfig};
 
-static RESOURCE_MANAGER: OnceLock<Arc<ResourceManager>> = OnceLock::new();
+/// The active `ResourceManager` shared with the Python bridge.
+///
+/// This is a `RwLock<Option<_>>` (rather than a `OnceLock`) so the CLI can
+/// unconditionally install its explicit `Arc<ResourceManager>` even if the
+/// bridge was already touched (e.g. by a test importing `rython`, or by a
+/// hot-reloaded script calling `load_mesh` before the CLI had a chance to
+/// wire things up).  Silently dropping the CLI's Arc would orphan the
+/// bridge onto a different manager than the one the CLI polls each frame,
+/// leaving every Python handle stuck `Pending` forever.
+static RESOURCE_MANAGER: RwLock<Option<Arc<ResourceManager>>> = RwLock::new(None);
 
-fn resource_store() -> &'static Arc<ResourceManager> {
-    RESOURCE_MANAGER
-        .get_or_init(|| Arc::new(ResourceManager::new(ResourceManagerConfig::default())))
+/// Return a clone of the currently-active `Arc<ResourceManager>`.
+///
+/// If no manager has been installed yet, lazily initialize a default one so
+/// early callers (tests, hot-reloaded scripts) still resolve against *some*
+/// manager.  The CLI's subsequent `set_active_resources` call will replace
+/// this implicit manager with the real one.
+fn resource_store() -> Arc<ResourceManager> {
+    // Fast path: read lock, clone the Arc, drop the guard before returning.
+    if let Some(mgr) = RESOURCE_MANAGER.read().as_ref() {
+        return Arc::clone(mgr);
+    }
+    // Slow path: upgrade to write and install a default manager if still None.
+    let mut guard = RESOURCE_MANAGER.write();
+    if let Some(mgr) = guard.as_ref() {
+        return Arc::clone(mgr);
+    }
+    log::debug!(
+        "resources bridge: no active ResourceManager installed; initializing default manager lazily"
+    );
+    let mgr = Arc::new(ResourceManager::new(ResourceManagerConfig::default()));
+    *guard = Some(Arc::clone(&mgr));
+    mgr
 }
 
-/// Share the engine ResourceManager with the Python bridge.
-/// Must be called before ensure_rython_module().
+/// Share the engine `ResourceManager` with the Python bridge.
+///
+/// Overwrites any previously-installed manager unconditionally.  If a
+/// manager was already installed (for example because the bridge was
+/// touched before the CLI finished wiring), the swap is logged at info
+/// level so the transition is observable.
+///
+/// Should be called before `ensure_rython_module()`, but calling it later
+/// is safe — any `AssetHandle`s created against the previous manager will
+/// continue to be serviced by that manager via their internal `Arc`, but
+/// no *new* handles will be created against it.
 pub fn set_active_resources(manager: Arc<ResourceManager>) {
-    let _ = RESOURCE_MANAGER.set(manager);
+    let mut guard = RESOURCE_MANAGER.write();
+    if guard.is_some() {
+        log::info!(
+            "resources bridge: replacing previously-active ResourceManager with new instance"
+        );
+    }
+    *guard = Some(manager);
 }
 
 // ─── AssetHandle bridge ───────────────────────────────────────────────────────

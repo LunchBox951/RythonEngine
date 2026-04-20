@@ -241,9 +241,20 @@ fn build_engine(
     pc.register_map(default_map);
     let player_controller = Arc::new(std::sync::Mutex::new(pc));
 
-    // Construct a single Arc<ResourceManager> shared between:
-    //   - the scripting bridge (so Python handles resolve against the same cache)
-    //   - the engine module list (for Module lifecycle registration)
+    // Construct a single Arc<ResourceManager> shared with the scripting bridge
+    // so Python handles resolve against the same cache that the CLI polls each
+    // frame via `poll_completions()`.
+    //
+    // NOTE: we deliberately do NOT register `ResourceManager` as an engine
+    // module.  Doing so used to `Box::new(ResourceManager::new(...))` a second
+    // instance, silently breaking the stated "unified manager" invariant.  The
+    // Module lifecycle for `ResourceManager` is currently a no-op on load and
+    // only clears the cache on unload — neither of which the CLI depends on,
+    // since completion polling happens inline in the frame loop.  If
+    // `ResourceManager` ever needs to participate in module lifecycle, wrap
+    // the shared `Arc` in a thin `ResourceManagerModule` and register *that*
+    // with the same `Arc::clone(&resource_manager)` — never construct a
+    // second instance.
     let resource_manager = Arc::new(ResourceManager::new(Default::default()));
     set_active_resources(Arc::clone(&resource_manager));
 
@@ -256,7 +267,6 @@ fn build_engine(
             Arc::clone(&scene),
         )))
         .add_module(Box::new(PhysicsModule::new(Default::default())))
-        .add_module(Box::new(ResourceManager::new(Default::default())))
         .build()
         .expect("failed to build engine");
 
@@ -330,12 +340,35 @@ fn run_headless(engine_config: EngineConfig, scripting_config: ScriptingConfig) 
         // GPU renderer, so we drain and discard all entries (Ready, Pending, and
         // Failed alike) to keep the queue from growing unboundedly.  Pending
         // entries would otherwise accumulate every frame with no path to upload.
+        //
+        // Ready entries *would* have uploaded successfully in windowed mode, so
+        // we surface those at `warn!` level — otherwise the divergence is
+        // invisible in CI logs (which rarely enable `debug!`) and tests can
+        // appear to pass even though no mesh was ever registered.  Pending
+        // and Failed stay at `debug!` since neither would have succeeded this
+        // frame regardless.
         let pending = drain_pending_mesh_registrations();
         for entry in pending {
-            log::debug!(
-                "headless: skipping mesh upload for '{}' (no renderer)",
-                entry.id
-            );
+            match entry.handle.state() {
+                HandleState::Ready => {
+                    log::warn!(
+                        "headless: dropping Ready mesh registration for '{}' (no renderer available)",
+                        entry.id
+                    );
+                }
+                HandleState::Pending => {
+                    log::debug!(
+                        "headless: skipping Pending mesh upload for '{}' (no renderer)",
+                        entry.id
+                    );
+                }
+                HandleState::Failed => {
+                    log::debug!(
+                        "headless: skipping Failed mesh upload for '{}' (no renderer)",
+                        entry.id
+                    );
+                }
+            }
         }
 
         // Drain any draw commands emitted by Python scripts / UI code so the
@@ -535,6 +568,16 @@ impl App {
                                     entry.id
                                 );
                             }
+                        } else {
+                            // The handle transitioned between `state() == Ready`
+                            // and `get_data()` returning `Some` — most likely a
+                            // race with eviction or hot-reload.  The state is
+                            // unknowable at this point, so we drop the entry
+                            // rather than requeue (requeuing could livelock).
+                            log::warn!(
+                                "register_mesh: handle for '{}' transitioned during drain; dropped",
+                                entry.id
+                            );
                         }
                     }
                     HandleState::Pending => {
