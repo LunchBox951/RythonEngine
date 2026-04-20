@@ -10,6 +10,8 @@ class RendererBridge:
     Renderer bridge exposed as ``rython.renderer``.
 
     Draw calls queued here are flushed by the engine each frame.
+
+    Built-in mesh ids pre-uploaded by the engine: ``"cube"``, ``"sphere"``.
     """
 
     def draw_text(

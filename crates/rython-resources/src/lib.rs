@@ -142,6 +142,112 @@ pub fn generate_cube() -> MeshData {
     MeshData { vertices, indices }
 }
 
+/// Generate a unit UV sphere mesh centered at the origin (radius 0.5, extents ±0.5).
+///
+/// Uses default parameters: 16 stacks (latitude bands) and 32 slices
+/// (longitude bands).  Equivalent to `generate_uv_sphere_with(16, 32)`.
+pub fn generate_uv_sphere() -> MeshData {
+    generate_uv_sphere_with(16, 32)
+}
+
+/// Generate a unit UV sphere mesh with configurable tessellation.
+///
+/// # Parameters
+/// - `stacks`: number of latitude bands (rings).  Clamped to a minimum of 2.
+/// - `slices`: number of longitude bands (sectors).  Clamped to a minimum of 3.
+///
+/// # Geometry conventions
+/// - Radius 0.5, centered at the origin (same extent convention as `generate_cube()`).
+/// - Vertices are wound CCW when viewed from outside, matching wgpu's default
+///   back-face culling expectation.
+/// - The seam longitude column is duplicated so UV mapping is continuous.
+/// - North and south poles each get one vertex *per slice* so UV values at the
+///   poles are single-valued.
+/// - `tangents::compute_tangents` is called before returning.
+pub fn generate_uv_sphere_with(stacks: u32, slices: u32) -> MeshData {
+    use std::f32::consts::PI;
+
+    let stacks = if stacks < 2 {
+        log::warn!(
+            "generate_uv_sphere_with: stacks={stacks} is below minimum (2); clamping to 2"
+        );
+        2u32
+    } else {
+        stacks
+    };
+    let slices = if slices < 3 {
+        log::warn!(
+            "generate_uv_sphere_with: slices={slices} is below minimum (3); clamping to 3"
+        );
+        3u32
+    } else {
+        slices
+    };
+
+    // Vertex count: (stacks+1) rows × (slices+1) columns (seam column duplicated).
+    let vertex_count = (stacks + 1) * (slices + 1);
+    // Index count: stacks × slices × 6 (two CCW triangles per quad).
+    let index_count = stacks * slices * 6;
+
+    let mut vertices: Vec<Vertex> = Vec::with_capacity(vertex_count as usize);
+    let mut indices: Vec<u32> = Vec::with_capacity(index_count as usize);
+
+    // Build vertex grid: rows from top (stack=0, north pole) to bottom (stack=stacks).
+    for stack in 0..=stacks {
+        let phi = PI * (stack as f32) / (stacks as f32); // 0..PI
+        let sin_phi = phi.sin();
+        let cos_phi = phi.cos();
+        let v_coord = (stack as f32) / (stacks as f32); // 0..1 top→bottom
+
+        for slice in 0..=slices {
+            let theta = 2.0 * PI * (slice as f32) / (slices as f32); // 0..2PI
+            let sin_theta = theta.sin();
+            let cos_theta = theta.cos();
+            let u_coord = (slice as f32) / (slices as f32); // 0..1 left→right
+
+            // Unit-sphere position (radius 1), then scaled to 0.5.
+            let nx = sin_phi * cos_theta;
+            let ny = cos_phi;
+            let nz = sin_phi * sin_theta;
+
+            vertices.push(Vertex {
+                position: [nx * 0.5, ny * 0.5, nz * 0.5],
+                normal: [nx, ny, nz],
+                uv: [u_coord, v_coord],
+                tangent: [0.0; 3],
+                bitangent: [0.0; 3],
+                _pad: [0.0; 2],
+            });
+        }
+    }
+
+    // Build index buffer: two CCW triangles per quad, traversing the grid.
+    // Grid layout: vertex(stack, slice) = stack * (slices+1) + slice.
+    // CCW from outside: for a quad whose corners are (tl, tr, bl, br) the two
+    // triangles are [tl, bl, tr] and [tr, bl, br].
+    for stack in 0..stacks {
+        for slice in 0..slices {
+            let tl = stack * (slices + 1) + slice;
+            let tr = tl + 1;
+            let bl = tl + (slices + 1);
+            let br = bl + 1;
+
+            // Triangle 1: top-left, top-right, bottom-left  (CCW from outside)
+            indices.push(tl);
+            indices.push(tr);
+            indices.push(bl);
+
+            // Triangle 2: top-right, bottom-right, bottom-left
+            indices.push(tr);
+            indices.push(br);
+            indices.push(bl);
+        }
+    }
+
+    crate::tangents::compute_tangents(&mut vertices, &indices);
+    MeshData { vertices, indices }
+}
+
 /// Decoded PCM audio. Samples are f32 in [-1.0, 1.0], interleaved channels.
 pub struct SoundData {
     pub samples: Vec<f32>,
@@ -1938,5 +2044,152 @@ mod tests {
     fn t_res_25_decode_spritesheet_rejects_zero_grid() {
         assert!(decode_spritesheet("x.png", 0, 4).is_err());
         assert!(decode_spritesheet("x.png", 4, 0).is_err());
+    }
+
+    // ── generate_uv_sphere geometry tests ────────────────────────────────────
+
+    #[test]
+    fn test_generate_uv_sphere_vertex_and_index_counts() {
+        let stacks = 16u32;
+        let slices = 32u32;
+        let mesh = generate_uv_sphere_with(stacks, slices);
+        assert_eq!(
+            mesh.vertices.len(),
+            ((stacks + 1) * (slices + 1)) as usize,
+            "vertex count must be (stacks+1)*(slices+1)"
+        );
+        assert_eq!(
+            mesh.indices.len(),
+            (stacks * slices * 6) as usize,
+            "index count must be stacks*slices*6"
+        );
+    }
+
+    #[test]
+    fn test_generate_uv_sphere_indices_in_range() {
+        let mesh = generate_uv_sphere();
+        let n = mesh.vertices.len() as u32;
+        for &idx in &mesh.indices {
+            assert!(idx < n, "index {idx} out of range (vertex count {n})");
+        }
+    }
+
+    #[test]
+    fn test_generate_uv_sphere_normals_unit_length() {
+        let mesh = generate_uv_sphere();
+        for v in &mesh.vertices {
+            let [nx, ny, nz] = v.normal;
+            let len = (nx * nx + ny * ny + nz * nz).sqrt();
+            assert!(
+                (len - 1.0).abs() < 1e-5,
+                "sphere normal must be unit length, got {len}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_generate_uv_sphere_positions_on_sphere() {
+        let mesh = generate_uv_sphere();
+        for v in &mesh.vertices {
+            let [px, py, pz] = v.position;
+            let len = (px * px + py * py + pz * pz).sqrt();
+            assert!(
+                (len - 0.5).abs() < 1e-5,
+                "sphere position must have length 0.5, got {len}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_generate_uv_sphere_normal_matches_position() {
+        let mesh = generate_uv_sphere();
+        for v in &mesh.vertices {
+            let [px, py, pz] = v.position;
+            let pos_len = (px * px + py * py + pz * pz).sqrt();
+            let [nx, ny, nz] = v.normal;
+            // normal should equal position / |position|
+            let diff = [nx - px / pos_len, ny - py / pos_len, nz - pz / pos_len];
+            let err = (diff[0] * diff[0] + diff[1] * diff[1] + diff[2] * diff[2]).sqrt();
+            assert!(
+                err < 1e-5,
+                "sphere normal should equal normalize(position), err={err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_generate_uv_sphere_winding_outward() {
+        let mesh = generate_uv_sphere();
+        let indices = &mesh.indices;
+        let verts = &mesh.vertices;
+        assert!(indices.len() >= 3, "sphere must have at least one triangle");
+
+        // Find mid-band triangles (skip pole-adjacent ones where the cross
+        // product magnitude is near zero) and verify the face normal points
+        // outward relative to the face centroid.
+        let mut checked = 0usize;
+        for tri in indices.chunks(3) {
+            let i0 = tri[0] as usize;
+            let i1 = tri[1] as usize;
+            let i2 = tri[2] as usize;
+            let v0 = verts[i0].position;
+            let v1 = verts[i1].position;
+            let v2 = verts[i2].position;
+            let e1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
+            let e2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
+            let cross = [
+                e1[1] * e2[2] - e1[2] * e2[1],
+                e1[2] * e2[0] - e1[0] * e2[2],
+                e1[0] * e2[1] - e1[1] * e2[0],
+            ];
+            let cross_len =
+                (cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]).sqrt();
+            if cross_len < 1e-4 {
+                continue; // degenerate (pole) triangle — skip
+            }
+            let cx = (v0[0] + v1[0] + v2[0]) / 3.0;
+            let cy = (v0[1] + v1[1] + v2[1]) / 3.0;
+            let cz = (v0[2] + v1[2] + v2[2]) / 3.0;
+            let dot = cross[0] * cx + cross[1] * cy + cross[2] * cz;
+            assert!(
+                dot > 0.0,
+                "sphere triangle {checked}: face normal points inward (dot={dot:.6}, centroid=[{cx:.3},{cy:.3},{cz:.3}])"
+            );
+            checked += 1;
+            if checked >= 10 {
+                break;
+            }
+        }
+        assert!(checked > 0, "no non-degenerate sphere triangles found to check winding");
+    }
+
+    #[test]
+    fn test_generate_uv_sphere_degenerate_params_do_not_panic() {
+        // stacks=0, slices=0 — both below minimum, should clamp and succeed
+        let mesh0 = generate_uv_sphere_with(0, 0);
+        assert!(!mesh0.vertices.is_empty(), "degenerate(0,0) must produce vertices");
+        let n0 = mesh0.vertices.len() as u32;
+        for &idx in &mesh0.indices {
+            assert!(idx < n0, "degenerate(0,0) index {idx} out of range");
+        }
+
+        // stacks=1, slices=2 — both below minimum by one
+        let mesh1 = generate_uv_sphere_with(1, 2);
+        assert!(!mesh1.vertices.is_empty(), "degenerate(1,2) must produce vertices");
+        let n1 = mesh1.vertices.len() as u32;
+        for &idx in &mesh1.indices {
+            assert!(idx < n1, "degenerate(1,2) index {idx} out of range");
+        }
+    }
+
+    #[test]
+    fn test_generate_uv_sphere_vertex_byte_layout() {
+        let mesh = generate_uv_sphere();
+        let bytes: &[u8] = bytemuck::cast_slice(&mesh.vertices);
+        assert_eq!(
+            bytes.len(),
+            mesh.vertices.len() * 64,
+            "each sphere vertex must be exactly 64 bytes"
+        );
     }
 }
