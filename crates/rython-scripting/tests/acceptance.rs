@@ -2362,3 +2362,77 @@ hid_56 = rython.scene.subscribe('self_remove_56', self_removing_handler_56)
         );
     });
 }
+
+// ─── T-SCRIPT-57: Python InputMap subclass fires on_started callback ──────────
+
+#[test]
+fn t_script_57_input_map_subclass_callback() {
+    use rython_input::PlayerController;
+    use rython_scripting::{dispatch_input_events, set_active_player_controller};
+    use rython_window::{KeyCode, RawInputEvent};
+    use std::sync::Mutex as StdMutex;
+
+    let _lock = test_lock();
+    let scene = Arc::new(Scene::new());
+    setup(&scene);
+
+    // Fresh PlayerController for this test, shared with the bridge.
+    let pc = Arc::new(StdMutex::new(PlayerController::new(0)));
+    set_active_player_controller(Arc::clone(&pc));
+    // Clear any maps lingering from a previous test.
+    Python::attach(|py| {
+        py.run(c"import rython\nrython.input.clear_maps()", None, None)
+            .expect("clear_maps");
+    });
+
+    Python::attach(|py| {
+        py.run(
+            c"
+import rython
+
+jump_events_57 = []
+
+class GameplayMap(rython.InputMap):
+    def __init__(self, *args, **kwargs):
+        # Construction args (name/priority) were consumed by __new__.
+        self.jump = self.action('jump', kind='button')
+        self.jump.bind(rython.KeyCode.Space, triggers=[rython.Triggers.Pressed()])
+        self.jump.on_started(self._on_jump)
+    def _on_jump(self, value):
+        jump_events_57.append(('started', value.as_bool()))
+
+m = GameplayMap(name='gameplay-57', priority=0)
+rython.input.push_map(m)
+",
+            None,
+            None,
+        )
+        .expect("setup input map");
+    });
+
+    // Tick once to clear any initial state.
+    pc.lock().unwrap().tick(&[], 0.016);
+    let events_arc = pc.lock().unwrap().pending_events();
+    events_arc.lock().unwrap().clear();
+
+    // Simulate Space press.
+    pc.lock()
+        .unwrap()
+        .tick(&[RawInputEvent::KeyPressed(KeyCode::Space)], 0.016);
+    let events = std::mem::take(&mut *events_arc.lock().unwrap());
+
+    Python::attach(|py| {
+        dispatch_input_events(py, events);
+
+        let main = py.import("__main__").unwrap();
+        let fired: Vec<(String, bool)> = main.getattr("jump_events_57").unwrap().extract().unwrap();
+        assert_eq!(fired.len(), 1, "expected exactly one on_started call");
+        assert_eq!(fired[0], ("started".to_string(), true));
+    });
+
+    // Clean up so this test doesn't leak state into other tests.
+    Python::attach(|py| {
+        py.run(c"import rython\nrython.input.clear_maps()", None, None)
+            .expect("clear_maps");
+    });
+}

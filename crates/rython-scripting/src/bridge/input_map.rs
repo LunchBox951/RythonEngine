@@ -58,8 +58,8 @@ fn pushed_maps() -> &'static Arc<Mutex<Vec<Py<InputMap>>>> {
 // ─── Hardware enum wrappers ────────────────────────────────────────────────
 
 macro_rules! rython_enum {
-    ($name:ident { $($variant:ident),+ $(,)? }) => {
-        #[pyclass(eq, eq_int, from_py_object)]
+    ($name:ident, $py_name:literal { $($variant:ident),+ $(,)? }) => {
+        #[pyclass(eq, eq_int, from_py_object, name = $py_name)]
         #[derive(Clone, Copy, PartialEq, Eq, Debug)]
         pub enum $name {
             $($variant,)+
@@ -67,7 +67,7 @@ macro_rules! rython_enum {
     };
 }
 
-rython_enum!(KeyCodePy {
+rython_enum!(KeyCodePy, "KeyCode" {
     A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
     Key0, Key1, Key2, Key3, Key4, Key5, Key6, Key7, Key8, Key9,
     Space, Enter, Escape, Tab, Backspace,
@@ -106,7 +106,7 @@ impl From<KeyCodePy> for RKeyCode {
     }
 }
 
-rython_enum!(MouseButtonPy { Left, Right, Middle });
+rython_enum!(MouseButtonPy, "MouseButton" { Left, Right, Middle });
 
 impl From<MouseButtonPy> for RMouseButton {
     fn from(m: MouseButtonPy) -> Self {
@@ -118,7 +118,7 @@ impl From<MouseButtonPy> for RMouseButton {
     }
 }
 
-rython_enum!(MouseAxisPy { X, Y });
+rython_enum!(MouseAxisPy, "MouseAxis" { X, Y });
 
 impl From<MouseAxisPy> for MouseAxisType {
     fn from(m: MouseAxisPy) -> Self {
@@ -129,7 +129,7 @@ impl From<MouseAxisPy> for MouseAxisType {
     }
 }
 
-rython_enum!(GamepadButtonPy {
+rython_enum!(GamepadButtonPy, "GamepadButton" {
     South, East, West, North,
     LeftBumper, RightBumper,
     LeftTriggerButton, RightTriggerButton,
@@ -156,7 +156,7 @@ impl From<GamepadButtonPy> for GpButton {
     }
 }
 
-rython_enum!(GamepadAxisPy {
+rython_enum!(GamepadAxisPy, "GamepadAxis" {
     LeftStickX, LeftStickY, RightStickX, RightStickY, LeftTrigger, RightTrigger,
 });
 
@@ -174,7 +174,7 @@ impl From<GamepadAxisPy> for GamepadAxisType {
     }
 }
 
-rython_enum!(GamepadStickPy { LeftStick, RightStick });
+rython_enum!(GamepadStickPy, "GamepadStick" { LeftStick, RightStick });
 
 impl GamepadStickPy {
     fn axes(self) -> (GamepadAxisType, GamepadAxisType) {
@@ -702,8 +702,7 @@ fn pc_or_err() -> PyResult<&'static Arc<StdMutex<PlayerController>>> {
 }
 
 /// Push an `InputMap` instance onto the controller's context stack.
-#[pyfunction]
-pub fn push_map(py: Python<'_>, map: Py<InputMap>) -> PyResult<()> {
+pub(crate) fn push_map(py: Python<'_>, map: Py<InputMap>) -> PyResult<()> {
     let pc_arc = pc_or_err()?;
     let ctx = {
         let map_ref = map.bind(py).borrow();
@@ -718,8 +717,7 @@ pub fn push_map(py: Python<'_>, map: Py<InputMap>) -> PyResult<()> {
 }
 
 /// Pop a previously-pushed `InputMap` by id (name).
-#[pyfunction]
-pub fn pop_map(py: Python<'_>, id: &str) -> PyResult<()> {
+pub(crate) fn pop_map(py: Python<'_>, id: &str) -> PyResult<()> {
     let pc_arc = pc_or_err()?;
     {
         let mut pc = pc_arc.lock().unwrap_or_else(|p| p.into_inner());
@@ -734,8 +732,7 @@ pub fn pop_map(py: Python<'_>, id: &str) -> PyResult<()> {
 }
 
 /// Remove every pushed map.
-#[pyfunction]
-pub fn clear_maps(py: Python<'_>) -> PyResult<()> {
+pub(crate) fn clear_maps(py: Python<'_>) -> PyResult<()> {
     let pc_arc = pc_or_err()?;
     {
         let mut pc = pc_arc.lock().unwrap_or_else(|p| p.into_inner());
@@ -747,16 +744,14 @@ pub fn clear_maps(py: Python<'_>) -> PyResult<()> {
 }
 
 /// Ids of pushed maps in priority-descending order.
-#[pyfunction]
-pub fn active_maps() -> PyResult<Vec<String>> {
+pub(crate) fn active_maps() -> PyResult<Vec<String>> {
     let pc_arc = pc_or_err()?;
     let pc = pc_arc.lock().unwrap_or_else(|p| p.into_inner());
     Ok(pc.active_contexts())
 }
 
 /// Replace the hardware key at `(map_id, action_id, binding_index)` with `new_key`.
-#[pyfunction]
-pub fn rebind(
+pub(crate) fn rebind(
     map_id: &str,
     action_id: &str,
     binding_index: usize,
@@ -781,28 +776,11 @@ pub fn rebind(
 
 // ─── Callback dispatch ────────────────────────────────────────────────────
 
-/// Drain the controller's pending events and dispatch them to any Python
-/// callbacks attached to matching `(map, action, phase)` tuples.
-///
-/// Called from `main.rs` step 6 after releasing the `PlayerController` lock.
-/// This function itself acquires the GIL briefly per callback; callers that
-/// already hold the GIL can use `dispatch_input_events_with_gil`.
-pub fn dispatch_input_events(py: Python<'_>) {
-    let Some(pc_arc) = active_pc() else {
-        return;
-    };
-    let events = {
-        let pc = match pc_arc.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-        let arc = pc.pending_events();
-        let mut guard = match arc.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-        std::mem::take(&mut *guard)
-    };
+/// Dispatch an already-drained event vector to the Python callback lists
+/// attached to pushed maps. Callers (main.rs step 6) typically drain once
+/// and then fan the same vector into both scene-bus emission and this
+/// callback dispatcher.
+pub fn dispatch_input_events(py: Python<'_>, events: Vec<InputActionEvent>) {
     if events.is_empty() {
         return;
     }
@@ -873,11 +851,5 @@ pub fn register(py: Python<'_>, rython: &Bound<'_, PyModule>) -> PyResult<()> {
     rython.add("Modifiers", mods)?;
     let trigs = Py::new(py, TriggersFactory)?;
     rython.add("Triggers", trigs)?;
-
-    rython.add_function(wrap_pyfunction!(push_map, rython)?)?;
-    rython.add_function(wrap_pyfunction!(pop_map, rython)?)?;
-    rython.add_function(wrap_pyfunction!(clear_maps, rython)?)?;
-    rython.add_function(wrap_pyfunction!(active_maps, rython)?)?;
-    rython.add_function(wrap_pyfunction!(rebind, rython)?)?;
     Ok(())
 }

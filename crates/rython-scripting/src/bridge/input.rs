@@ -4,7 +4,9 @@ use parking_lot::Mutex;
 use pyo3::prelude::*;
 use rython_input::{ActionValue, InputSnapshot};
 
-use crate::bridge::input_map::ActionValuePy;
+use crate::bridge::input_map::{
+    self as im, ActionValuePy, InputMap,
+};
 
 static INPUT_SNAPSHOT: OnceLock<Arc<Mutex<InputSnapshot>>> = OnceLock::new();
 
@@ -57,6 +59,34 @@ impl InputBridge {
 
     fn released(&self, action: &str) -> bool {
         input_store().lock().released(action)
+    }
+
+    // ─── InputMap lifecycle ────────────────────────────────────────────────
+
+    fn push_map(&self, py: Python<'_>, map: Py<InputMap>) -> PyResult<()> {
+        im::push_map(py, map)
+    }
+
+    fn pop_map(&self, py: Python<'_>, id: &str) -> PyResult<()> {
+        im::pop_map(py, id)
+    }
+
+    fn clear_maps(&self, py: Python<'_>) -> PyResult<()> {
+        im::clear_maps(py)
+    }
+
+    fn active_maps(&self) -> PyResult<Vec<String>> {
+        im::active_maps()
+    }
+
+    fn rebind(
+        &self,
+        map_id: &str,
+        action_id: &str,
+        binding_index: usize,
+        new_key: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        im::rebind(map_id, action_id, binding_index, new_key)
     }
 
     fn __repr__(&self) -> String {

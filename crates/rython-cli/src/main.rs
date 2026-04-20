@@ -21,11 +21,12 @@ use rython_physics::PhysicsModule;
 use rython_renderer::{Camera, RendererConfig, RendererState};
 use rython_resources::ResourceManager;
 use rython_scripting::{
-    drain_draw_commands, drain_ui_draw_commands, flush_python_bg_completions,
-    flush_python_bg_tasks, flush_python_par_tasks, flush_python_seq_tasks,
-    flush_recurring_callbacks, flush_timers, get_scene_settings, reset_quit_requested,
-    set_active_audio, set_active_input, set_active_physics, set_active_ui, set_elapsed_secs,
-    was_quit_requested, ScriptingConfig, ScriptingModule,
+    dispatch_input_events, drain_draw_commands, drain_ui_draw_commands,
+    flush_python_bg_completions, flush_python_bg_tasks, flush_python_par_tasks,
+    flush_python_seq_tasks, flush_recurring_callbacks, flush_timers, get_scene_settings,
+    reset_quit_requested, set_active_audio, set_active_input, set_active_physics,
+    set_active_player_controller, set_active_ui, set_elapsed_secs, was_quit_requested,
+    ScriptingConfig, ScriptingModule,
 };
 use rython_ui::{Theme, UIManager};
 use rython_window::{KeyCode, MouseButton, RawInputEvent, WindowModule};
@@ -226,6 +227,7 @@ fn build_engine(
     // map.
     let pc = PlayerController::new(0);
     let player_controller = Arc::new(std::sync::Mutex::new(pc));
+    set_active_player_controller(Arc::clone(&player_controller));
 
     let engine = EngineBuilder::new()
         .with_config(engine_config.clone())
@@ -296,12 +298,13 @@ fn run_headless(engine_config: EngineConfig, scripting_config: ScriptingConfig) 
             };
             drop(pc);
             set_active_input(snapshot);
-            for ev in input_events {
+            for ev in &input_events {
                 scene.emit(
                     &format!("input:{}:{}", ev.action, ev.phase.as_str()),
-                    input_event_payload(&ev),
+                    input_event_payload(ev),
                 );
             }
+            Python::attach(|py| dispatch_input_events(py, input_events));
         }
         // Drain any draw commands emitted by Python scripts / UI code so the
         // static command queues don't grow unboundedly in headless mode.
@@ -443,12 +446,13 @@ impl App {
             if let Some(snapshot) = snapshot {
                 set_active_input(snapshot);
             }
-            for ev in input_events {
+            for ev in &input_events {
                 self.scene.emit(
                     &format!("input:{}:{}", ev.action, ev.phase.as_str()),
-                    input_event_payload(&ev),
+                    input_event_payload(ev),
                 );
             }
+            Python::attach(|py| dispatch_input_events(py, input_events));
         }
 
         // UI: route mouse move and clicks from accumulated events this frame
